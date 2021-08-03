@@ -252,19 +252,36 @@ func (t *table) fetchQueryData(input queryInput) (*index, []string) {
 	return nil, t.sortedKeys
 }
 
-func (t *table) getMatchedItem(input *queryInput, pk, startKey string) (map[string]*dynamodb.AttributeValue, bool) {
-	if !input.started && pk == startKey {
-		input.started = true
-		return map[string]*dynamodb.AttributeValue{}, false
+func prepareSearch(input *queryInput, index *index, k, startKey string) (string, bool) {
+	pk, ok := getPrimaryKey(index, k)
+	if !ok {
+		return pk, ok
 	}
 
+	if input.started {
+		return pk, true
+	}
+
+	if pk == startKey {
+		input.started = true
+	}
+
+	return "", false
+}
+
+func (t *table) getMatchedItem(input *queryInput, pk, startKey string) (map[string]*dynamodb.AttributeValue, bool) {
 	storedItem, ok := t.data[pk]
+
 	if ok && !(input.started && t.matchKey(*input, storedItem)) {
-		return map[string]*dynamodb.AttributeValue{}, false
+		return copyItem(storedItem), false
 	}
 
 	// TODO: use project info to create the copy
 	return copyItem(storedItem), true
+}
+
+func hasNextPage(count, limit int64, i, keysSize int) bool {
+	return count == limit && (keysSize-i) > int(limit)
 }
 
 func (t *table) searchData(input queryInput) ([]map[string]*dynamodb.AttributeValue, map[string]*dynamodb.AttributeValue) {
@@ -276,25 +293,24 @@ func (t *table) searchData(input queryInput) ([]map[string]*dynamodb.AttributeVa
 	startKey := t.parseStartKey(t.keySchema, exclusiveStartKey)
 	input.started = startKey == ""
 	last := map[string]*dynamodb.AttributeValue{}
+	sortedKeysSize := len(sortedKeys)
 
 	var count int64
 
-	for _, k := range sortedKeys {
-		pk, ok := getPrimaryKey(index, k)
+	for i, k := range sortedKeys {
+		pk, ok := prepareSearch(&input, index, k, startKey)
 		if !ok {
 			continue
 		}
 
 		item, matched := t.getMatchedItem(&input, pk, startKey)
-		if !matched {
-			continue
+		if matched {
+			items = append(items, item)
 		}
 
 		count++
 
-		items = append(items, item)
-
-		if count == limit {
+		if hasNextPage(count, limit, i, sortedKeysSize) {
 			last = item
 			break
 		}

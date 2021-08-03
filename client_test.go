@@ -893,7 +893,8 @@ func TestQueryWithContextPagination(t *testing.T) {
 	input.ExclusiveStartKey = out.LastEvaluatedKey
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
-	c.Empty(out.Items)
+	c.Len(out.Items, 1)
+	c.Equal("001", aws.StringValue(out.Items[0]["id"].S))
 }
 
 func TestQuerySyntaxError(t *testing.T) {

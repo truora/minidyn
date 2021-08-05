@@ -806,6 +806,7 @@ func TestQueryWithContext(t *testing.T) {
 	out, err := client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
+	c.Empty(out.LastEvaluatedKey)
 
 	input.FilterExpression = aws.String("#type = :type")
 
@@ -893,8 +894,43 @@ func TestQueryWithContextPagination(t *testing.T) {
 	input.ExclusiveStartKey = out.LastEvaluatedKey
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
+	c.Empty(out.Items)
+	c.Empty(out.LastEvaluatedKey)
+
+	err = createPokemon(client, pokemon{
+		ID:   "004",
+		Type: "fire",
+		Name: "Charmander",
+	})
+	c.NoError(err)
+
+	input.ExclusiveStartKey = nil
+	input.Limit = aws.Int64(4)
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 3)
+	c.Empty(out.LastEvaluatedKey)
+
+	// Query with FilterExpression
+	input.ExclusiveStartKey = nil
+	input.FilterExpression = aws.String("begins_with(#name, :letter)")
+	input.Limit = aws.Int64(2)
+	input.ExpressionAttributeValues[":letter"] = &dynamodb.AttributeValue{
+		S: aws.String("V"),
+	}
+	input.ExpressionAttributeNames["#name"] = aws.String("name")
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Empty(out.Items)
+	c.NotEmpty(out.LastEvaluatedKey)
+
+	input.ExclusiveStartKey = out.LastEvaluatedKey
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("001", aws.StringValue(out.Items[0]["id"].S))
+	c.Equal("003", aws.StringValue(out.Items[0]["id"].S))
 }
 
 func TestQuerySyntaxError(t *testing.T) {
@@ -967,6 +1003,13 @@ func TestScanWithContext(t *testing.T) {
 	c.NoError(err)
 	c.Len(out.Items, 3)
 
+	input.Limit = aws.Int64(1)
+	out, err = client.ScanWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 1)
+	c.NotEmpty(out.LastEvaluatedKey)
+
+	input.Limit = nil
 	input.FilterExpression = aws.String("#name = :name")
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
 		":name": {

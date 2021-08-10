@@ -252,19 +252,55 @@ func (t *table) fetchQueryData(input queryInput) (*index, []string) {
 	return nil, t.sortedKeys
 }
 
-func (t *table) getMatchedItem(input *queryInput, pk, startKey string) (map[string]*dynamodb.AttributeValue, bool) {
-	if !input.started && pk == startKey {
-		input.started = true
-		return map[string]*dynamodb.AttributeValue{}, false
+func prepareSearch(input *queryInput, index *index, k, startKey string) (string, bool) {
+	pk, ok := getPrimaryKey(index, k)
+	if !ok {
+		return pk, ok
 	}
 
+	if input.started {
+		return pk, true
+	}
+
+	if pk == startKey {
+		input.started = true
+	}
+
+	return "", false
+}
+
+func (t *table) getMatchedItemAndCount(input *queryInput, pk, startKey string) (map[string]*dynamodb.AttributeValue, interpreter.ExpressionType, bool) {
 	storedItem, ok := t.data[pk]
-	if ok && !(input.started && t.matchKey(*input, storedItem)) {
-		return map[string]*dynamodb.AttributeValue{}, false
+
+	lastMatchExpressionType, matched := t.matchKey(*input, storedItem)
+
+	if ok && !(input.started && matched) {
+		return copyItem(storedItem), lastMatchExpressionType, false
 	}
 
 	// TODO: use project info to create the copy
-	return copyItem(storedItem), true
+	return copyItem(storedItem), lastMatchExpressionType, true
+}
+
+func shouldReturnNextKey(item map[string]*dynamodb.AttributeValue, startKey string, count, limit, keysSize int64) bool {
+	if len(item) == 0 {
+		return false
+	}
+
+	// Make sure that if we are in the first page without pages, don't return a next key
+	if startKey == "" && limit != count && count < keysSize {
+		return false
+	}
+
+	return limit != 0 && limit <= keysSize
+}
+
+func shouldCountItem(expressionType interpreter.ExpressionType, matched bool) bool {
+	return expressionType == "" || expressionType == interpreter.ExpressionTypeFilter || (expressionType == interpreter.ExpressionTypeKey && matched)
+}
+
+func shouldBreakPage(count, limit int64) bool {
+	return limit != 0 && limit == count
 }
 
 func (t *table) searchData(input queryInput) ([]map[string]*dynamodb.AttributeValue, map[string]*dynamodb.AttributeValue) {
@@ -276,35 +312,37 @@ func (t *table) searchData(input queryInput) ([]map[string]*dynamodb.AttributeVa
 	startKey := t.parseStartKey(t.keySchema, exclusiveStartKey)
 	input.started = startKey == ""
 	last := map[string]*dynamodb.AttributeValue{}
+	sortedKeysSize := int64(len(sortedKeys))
 
 	var count int64
 
 	for _, k := range sortedKeys {
-		pk, ok := getPrimaryKey(index, k)
+		pk, ok := prepareSearch(&input, index, k, startKey)
 		if !ok {
 			continue
 		}
 
-		item, matched := t.getMatchedItem(&input, pk, startKey)
-		if !matched {
-			continue
+		item, expressionType, matched := t.getMatchedItemAndCount(&input, pk, startKey)
+		if matched {
+			items = append(items, item)
 		}
 
-		count++
+		if shouldCountItem(expressionType, matched) {
+			count++
+		}
 
-		items = append(items, item)
+		last = item
 
-		if count == limit {
-			last = item
+		if shouldBreakPage(count, limit) {
 			break
 		}
 	}
 
-	return items, t.getLastKey(last, index)
+	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, index)
 }
 
-func (t *table) getLastKey(item map[string]*dynamodb.AttributeValue, index *index) map[string]*dynamodb.AttributeValue {
-	if len(item) == 0 {
+func (t *table) getLastKey(item map[string]*dynamodb.AttributeValue, startKey string, limit, count, keysSize int64, index *index) map[string]*dynamodb.AttributeValue {
+	if !shouldReturnNextKey(item, startKey, count, limit, keysSize) {
 		return map[string]*dynamodb.AttributeValue{}
 	}
 
@@ -334,7 +372,8 @@ func (t *table) interpreterMatch(input interpreter.MatchInput) bool {
 	return matched
 }
 
-func (t *table) matchKey(input queryInput, item map[string]*dynamodb.AttributeValue) bool {
+func (t *table) matchKey(input queryInput, item map[string]*dynamodb.AttributeValue) (interpreter.ExpressionType, bool) {
+	var lastMatchExpressionType interpreter.ExpressionType
 	matched := input.Scan
 
 	if input.KeyConditionExpression != nil {
@@ -346,6 +385,7 @@ func (t *table) matchKey(input queryInput, item map[string]*dynamodb.AttributeVa
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
+		lastMatchExpressionType = interpreter.ExpressionTypeKey
 	}
 
 	if input.FilterExpression != nil {
@@ -357,6 +397,7 @@ func (t *table) matchKey(input queryInput, item map[string]*dynamodb.AttributeVa
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
+		lastMatchExpressionType = interpreter.ExpressionTypeFilter
 	}
 
 	if input.ConditionExpression != nil {
@@ -368,9 +409,10 @@ func (t *table) matchKey(input queryInput, item map[string]*dynamodb.AttributeVa
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
+		lastMatchExpressionType = interpreter.ExpressionTypeConditional
 	}
 
-	return matched
+	return lastMatchExpressionType, matched
 }
 
 func (t *table) setItem(key string, item map[string]*dynamodb.AttributeValue) {
@@ -407,7 +449,7 @@ func (t *table) put(input *dynamodb.PutItemInput) (map[string]*dynamodb.Attribut
 
 	// support conditional writes
 	if input.ConditionExpression != nil {
-		matched := t.matchKey(queryInput{
+		_, matched := t.matchKey(queryInput{
 			Index:                     primaryIndexName,
 			ExpressionAttributeValues: input.ExpressionAttributeValues,
 			Aliases:                   input.ExpressionAttributeNames,
@@ -462,7 +504,8 @@ func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 			Aliases:                   input.ExpressionAttributeNames,
 		}
 
-		if !t.matchKey(query, item) {
+		_, matched := t.matchKey(query, item)
+		if !matched {
 			return nil, &dynamodb.ConditionalCheckFailedException{Message_: aws.String(ErrConditionalRequestFailed.Error())}
 		}
 	}

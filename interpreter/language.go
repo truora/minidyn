@@ -17,7 +17,7 @@ type Language struct {
 func (li *Language) Match(input MatchInput) (bool, error) {
 	l := language.NewLexer(input.Expression)
 	p := language.NewParser(l)
-	program := p.ParseDynamoExpression()
+	conditional := p.ParseConditionalExpression()
 	env := language.NewEnvironment()
 
 	if len(p.Errors()) != 0 {
@@ -49,10 +49,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, fmt.Errorf("%w: %s", ErrUnsupportedFeature, err.Error())
 	}
 
-	result := language.Eval(program, env)
+	result := language.Eval(conditional, env)
 
 	if li.Debug {
-		fmt.Printf("evaluating: %q\nin: %s\n$>%s\n", program, env, result.Inspect())
+		fmt.Printf("evaluating: %q\nin: %s\n$>%s\n", conditional, env, result.Inspect())
 	}
 
 	if result.Type() == language.ObjectTypeError {

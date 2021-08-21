@@ -9,9 +9,7 @@ import (
 // Eval runs the expression in the environment
 func Eval(n Node, env *Environment) Object {
 	switch node := n.(type) {
-	case *DynamoExpression:
-		return Eval(node.Statement, env)
-	case *ExpressionStatement:
+	case *ConditionalExpression:
 		return Eval(node.Expression, env)
 	case *PrefixExpression:
 		return evalPrefixExpression(node, env)

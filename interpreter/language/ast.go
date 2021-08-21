@@ -5,24 +5,6 @@ import (
 	"strings"
 )
 
-// DynamoExpression the root node of the AST
-type DynamoExpression struct {
-	Statement Statement
-}
-
-func (de *DynamoExpression) String() string {
-	var out bytes.Buffer
-
-	out.WriteString(de.Statement.String())
-
-	return out.String()
-}
-
-// TokenLiteral returns the literal token of the node
-func (de *DynamoExpression) TokenLiteral() string {
-	return de.Statement.TokenLiteral()
-}
-
 // Node the AST node type
 type Node interface {
 	TokenLiteral() string
@@ -56,22 +38,22 @@ func (i *Identifier) TokenLiteral() string { return i.Token.Literal }
 
 func (i *Identifier) String() string { return i.Value }
 
-// ExpressionStatement is the expression node
-type ExpressionStatement struct {
+// ConditionalExpression is the conditional expression root node
+type ConditionalExpression struct {
 	Token      Token // the return token
 	Expression Expression
 }
 
-func (es *ExpressionStatement) statementNode() {
+func (es *ConditionalExpression) statementNode() {
 	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node
-func (es *ExpressionStatement) TokenLiteral() string { return es.Token.Literal }
+func (ce *ConditionalExpression) TokenLiteral() string { return ce.Token.Literal }
 
-func (es *ExpressionStatement) String() string {
-	if es.Expression != nil {
-		return es.Expression.String()
+func (ce *ConditionalExpression) String() string {
+	if ce.Expression != nil {
+		return ce.Expression.String()
 	}
 
 	return ""

@@ -90,27 +90,12 @@ func (p *Parser) nextToken() {
 	p.peekToken = p.l.NextToken()
 }
 
-// ParseDynamoExpression parse the given dynamodb expression
-func (p *Parser) ParseDynamoExpression() *DynamoExpression {
-	program := &DynamoExpression{}
+func (p *Parser) ParseConditionalExpression() *ConditionalExpression {
+	stmt := &ConditionalExpression{Token: p.curToken}
 
 	for p.curToken.Type != EOF {
-		stmt := p.parseExpressionStatement()
-		if stmt != nil {
-			program.Statement = stmt
-		}
+		stmt.Expression = p.parseExpression(precedenceValueLowset)
 
-		p.nextToken()
-	}
-
-	return program
-}
-
-func (p *Parser) parseExpressionStatement() *ExpressionStatement {
-	stmt := &ExpressionStatement{Token: p.curToken}
-	stmt.Expression = p.parseExpression(precedenceValueLowset)
-
-	if p.peekTokenIs(EOF) {
 		p.nextToken()
 	}
 

@@ -216,13 +216,13 @@ func TestEvalFunctions(t *testing.T) {
 func testEval(t *testing.T, input string, env *Environment) Object {
 	l := NewLexer(input)
 	p := NewParser(l)
-	program := p.ParseDynamoExpression()
+	conditional := p.ParseConditionalExpression()
 
 	if len(p.errors) != 0 {
 		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
 	}
 
-	return Eval(program, env)
+	return Eval(conditional, env)
 }
 
 func TestErrorHandling(t *testing.T) {
@@ -370,13 +370,13 @@ func BenchmarkEval(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		l := NewLexer(input)
 		p := NewParser(l)
-		program := p.ParseDynamoExpression()
+		conditional := p.ParseConditionalExpression()
 
 		if len(p.errors) != 0 {
 			b.Fatalf("parsing %s failed: %v", input, p.errors)
 		}
 
-		evaluated := Eval(program, env)
+		evaluated := Eval(conditional, env)
 		if evaluated != TRUE {
 			b.Fatal("expected to be true")
 		}

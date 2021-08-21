@@ -4,21 +4,8 @@ import (
 	"testing"
 )
 
-func TestDynamoExpression(t *testing.T) {
-	de := DynamoExpression{
-		Statement: &ExpressionStatement{
-			Token: Token{Type: IDENT, Literal: "a"},
-		},
-	}
-
-	tl := de.TokenLiteral()
-	if tl != "a" {
-		t.Fatalf("wrong token literal. expected=%q, got=%q", "a", tl)
-	}
-}
-
-func TestExpressionStatement(t *testing.T) {
-	es := ExpressionStatement{
+func TestConditionalExpression(t *testing.T) {
+	es := ConditionalExpression{
 		Token: Token{Type: IDENT, Literal: "a"},
 	}
 

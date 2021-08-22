@@ -129,6 +129,23 @@ func TestBetweenExpression(t *testing.T) {
 	be.expressionNode()
 }
 
+func TestUpdateExpression(t *testing.T) {
+	es := UpdateExpression{
+		Token: Token{Type: IDENT, Literal: "SET"},
+	}
+
+	tl := es.TokenLiteral()
+	if tl != "SET" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "a", tl)
+	}
+
+	es.statementNode()
+
+	if es.String() != "" {
+		t.Fatalf("empty expression expected ")
+	}
+}
+
 func BenchmarkCallExpression(b *testing.B) {
 	ce := CallExpression{
 		Token: Token{Type: LPAREN, Literal: "("},

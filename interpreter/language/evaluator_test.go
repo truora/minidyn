@@ -213,16 +213,44 @@ func TestEvalFunctions(t *testing.T) {
 	}
 }
 
-func testEval(t *testing.T, input string, env *Environment) Object {
-	l := NewLexer(input)
-	p := NewParser(l)
-	conditional := p.ParseConditionalExpression()
-
-	if len(p.errors) != 0 {
-		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
+func TestEvalUpdate(t *testing.T) {
+	tests := []struct {
+		input    string
+		envField string
+		expected Object
+	}{
+		{"SET :x = :val", ":x", &String{Value: "text"}},
+		{"SET :w = :val", ":w", &String{Value: "text"}},
+		{"SET :two = :one + :one", ":two", &Number{Value: 2}},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}},
 	}
 
-	return Eval(conditional, env)
+	env := NewEnvironment()
+
+	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
+		":x":   &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+		":val": &dynamodb.AttributeValue{S: aws.String("text")},
+		":one": &dynamodb.AttributeValue{N: aws.String("1")},
+	})
+	if err != nil {
+		t.Fatalf("error adding attributes %#v", err)
+	}
+
+	for _, tt := range tests {
+		result := testEvalUpdate(t, tt.input, env)
+		if isError(result) {
+			t.Fatalf("error evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
+		}
+
+		result, ok := env.Get(tt.envField)
+		if !ok {
+			t.Fatalf("env field %q not found, env=%s,", tt.envField, env.String())
+		}
+
+		if result.Inspect() != tt.expected.Inspect() {
+			t.Errorf("result has wrong value for %q. got=%v, want=%v", tt.envField, result, tt.expected)
+		}
+	}
 }
 
 func TestErrorHandling(t *testing.T) {
@@ -354,6 +382,71 @@ func TestIsString(t *testing.T) {
 	}
 }
 
+func TestUpdateEvalSyntaxError(t *testing.T) {
+	tests := []struct {
+		input           string
+		expectedMessage string
+	}{
+		{
+			":x > :a",
+			"unknown operator: >",
+		},
+		{
+			"SET",
+			"SET expression must have at least one action",
+		},
+		{
+			"SET x = size(:val)",
+			"unsupported expression: size(:val)",
+		},
+		{
+			"SET :one + :one = size(:val)",
+			"invalid assignation identifier: (:one + :one)",
+		},
+		{
+			"SET x = :val + :val",
+			"invalid operation: S + S",
+		},
+		{
+			"SET x = :val - :val",
+			"invalid operation: S - S",
+		},
+		{
+			"SET x = :val - :one + :one",
+			"invalid operation: S - N",
+		},
+		{
+			"SET x = :one + (:one - :val)",
+			"invalid operation: N - S",
+		},
+	}
+
+	env := NewEnvironment()
+
+	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
+		":x":   &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+		":val": &dynamodb.AttributeValue{S: aws.String("text")},
+		":one": &dynamodb.AttributeValue{N: aws.String("1")},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	for i, tt := range tests {
+		evaluated := testEvalUpdate(t, tt.input, env)
+
+		errObj, ok := evaluated.(*Error)
+		if !ok {
+			t.Errorf("(%d) no error object returned for %s. got=%T(%+v)", i, tt.input, evaluated, evaluated)
+			continue
+		}
+
+		if errObj.Message != tt.expectedMessage {
+			t.Errorf("wrong error message for %s. expected=%q, got=%q", tt.input, tt.expectedMessage, errObj.Message)
+		}
+	}
+}
+
 func BenchmarkEval(b *testing.B) {
 	input := ":a OR :b"
 
@@ -381,4 +474,28 @@ func BenchmarkEval(b *testing.B) {
 			b.Fatal("expected to be true")
 		}
 	}
+}
+
+func testEval(t *testing.T, input string, env *Environment) Object {
+	l := NewLexer(input)
+	p := NewParser(l)
+	conditional := p.ParseConditionalExpression()
+
+	if len(p.errors) != 0 {
+		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
+	}
+
+	return Eval(conditional, env)
+}
+
+func testEvalUpdate(t *testing.T, input string, env *Environment) Object {
+	l := NewLexer(input)
+	p := NewParser(l)
+	update := p.ParseUpdateExpression()
+
+	if len(p.errors) != 0 {
+		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
+	}
+
+	return EvalUpdate(update, env)
 }

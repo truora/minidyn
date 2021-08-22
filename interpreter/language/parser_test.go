@@ -174,6 +174,10 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 			"NOT :a > size(:s) OR size(:c) = :a",
 			"((NOT(:a > size(:s))) OR (size(:c) = :a))",
 		},
+		{
+			"a = :x + :y",
+			"(a = (:x + :y))",
+		},
 	}
 
 	for _, tt := range tests {
@@ -323,6 +327,32 @@ func testInfixExpression(t *testing.T, exp Expression, left interface{}, operato
 	}
 
 	return true
+}
+
+func TestParsingSetExpression(t *testing.T) {
+	setTests := []struct {
+		input       string
+		actionsSize int
+	}{
+		{"SET ProductCategory = :c", 1},
+		{"SET ProductCategory = :c, Price = :p", 2},
+	}
+
+	for _, tt := range setTests {
+		l := NewLexer(tt.input)
+		p := NewParser(l)
+		update := p.ParseUpdateExpression()
+		checkParserErrors(t, p)
+
+		opExp, ok := update.Expression.(*SetExpression)
+		if !ok {
+			t.Fatalf("exp is not SetExpression. got=%T(%s)", update.Expression, update.Expression)
+		}
+
+		if len(opExp.Expressions) != tt.actionsSize {
+			t.Fatalf("unexpected actions size. got=%d expected=(%d)", len(opExp.Expressions), tt.actionsSize)
+		}
+	}
 }
 
 func BenchmarkParser(b *testing.B) {

@@ -11,6 +11,8 @@ func Eval(n Node, env *Environment) Object {
 	switch node := n.(type) {
 	case *ConditionalExpression:
 		return Eval(node.Expression, env)
+	case *UpdateExpression:
+		return Eval(node.Expression, env)
 	case *PrefixExpression:
 		return evalPrefixExpression(node, env)
 	case *InfixExpression:
@@ -19,6 +21,22 @@ func Eval(n Node, env *Environment) Object {
 		return evalBetween(node, env)
 	case *CallExpression:
 		return evalFunctionCall(node, env)
+	case *Identifier:
+		return evalIdentifier(node, env)
+	}
+
+	return newError("unsupported expression: %s", n.String())
+}
+
+// EvalUpdate runs the update expression in the environment
+func EvalUpdate(n Node, env *Environment) Object {
+	switch node := n.(type) {
+	case *UpdateExpression:
+		return EvalUpdate(node.Expression, env)
+	case *SetExpression:
+		return evalSetExpression(node, env)
+	case *InfixExpression:
+		return evalInfixUpdate(node, env)
 	case *Identifier:
 		return evalIdentifier(node, env)
 	}
@@ -363,6 +381,85 @@ func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
 	}
 
 	return fn
+}
+
+func evalSetExpression(node *SetExpression, env *Environment) Object {
+	if len(node.Expressions) == 0 {
+		return newError("SET expression must have at least one action")
+	}
+
+	for _, act := range node.Expressions {
+		infix, ok := act.(*InfixExpression)
+		if !ok {
+			return newError("invalid infix action")
+		}
+
+		result := EvalUpdate(infix, env)
+		if isError(result) {
+			return result
+		}
+	}
+
+	return NULL
+}
+
+func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
+	switch node.Operator {
+	case "=":
+		id, ok := node.Left.(*Identifier)
+		if !ok {
+			return newError("invalid assignation identifier: %s", node.Left.String())
+		}
+
+		val := EvalUpdate(node.Right, env)
+		if isError(val) {
+			return val
+		}
+
+		env.Set(id.Value, val)
+	case "+":
+		augend, addend, errObj := evalArithmeticTerms(node, env)
+		if isError(errObj) {
+			return errObj
+		}
+
+		return &Number{Value: augend.Value + addend.Value}
+	case "-":
+		minuend, subtrahend, errObj := evalArithmeticTerms(node, env)
+		if isError(errObj) {
+			return errObj
+		}
+
+		return &Number{Value: minuend.Value - subtrahend.Value}
+	default:
+		return newError("unknown operator: %s", node.Operator)
+	}
+
+	return NULL
+}
+
+func evalArithmeticTerms(node *InfixExpression, env *Environment) (*Number, *Number, Object) {
+	leftTerm := EvalUpdate(node.Left, env)
+	if isError(leftTerm) {
+		return nil, nil, leftTerm
+	}
+
+	rightTerm := EvalUpdate(node.Right, env)
+	if isError(rightTerm) {
+		return nil, nil, rightTerm
+	}
+
+	leftNumber, ok := leftTerm.(*Number)
+	if !ok {
+		return nil, nil, newError("invalid operation: %s %s %s", leftTerm.Type(), node.Operator, rightTerm.Type())
+	}
+
+	rightNumber, ok := rightTerm.(*Number)
+	if !ok {
+		return nil, nil, newError("invalid operation: %s %s %s", leftTerm.Type(), node.Operator, rightTerm.Type())
+	}
+
+	return leftNumber, rightNumber, NULL
 }
 
 func evalExpressions(exps []Expression, env *Environment) []Object {

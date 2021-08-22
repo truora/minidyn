@@ -15,6 +15,8 @@ var singleChar = map[byte]TokenType{
 	'(': LPAREN,
 	')': RPAREN,
 	',': COMMA,
+	'+': PLUS,
+	'-': MINUS,
 }
 
 var especialChars = map[byte]bool{

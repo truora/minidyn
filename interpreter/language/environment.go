@@ -43,6 +43,17 @@ func (e *Environment) Set(name string, val Object) Object {
 	return val
 }
 
+// Apply assigns the environment field to the item
+func (e *Environment) Apply(item map[string]*dynamodb.AttributeValue, exclude map[string]bool) {
+	for k, v := range e.store {
+		if _, ok := exclude[k]; ok {
+			continue
+		}
+
+		item[k] = v.ToDynamoDB()
+	}
+}
+
 // Set assigns the value of the variable in the environment
 func (e *Environment) String() string {
 	out := []string{}

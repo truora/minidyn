@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 var (
@@ -76,6 +79,7 @@ var setTypes = map[ObjectType]bool{
 type Object interface {
 	Type() ObjectType
 	Inspect() string
+	ToDynamoDB() *dynamodb.AttributeValue
 }
 
 // ContainerObject abstraction of the object collections
@@ -100,6 +104,11 @@ func (i *Number) Type() ObjectType {
 	return ObjectTypeNumber
 }
 
+// ToDynamoDB returns the dynamodb attribute value
+func (i *Number) ToDynamoDB() *dynamodb.AttributeValue {
+	return &dynamodb.AttributeValue{N: aws.String(fmt.Sprintf("%f", i.Value))}
+}
+
 // Boolean is the representation of boolean
 type Boolean struct {
 	Value bool
@@ -113,6 +122,11 @@ func (b *Boolean) Inspect() string {
 // Type returns the object type
 func (b *Boolean) Type() ObjectType {
 	return ObjectTypeBoolean
+}
+
+// ToDynamoDB returns the dynamodb attribute value
+func (b *Boolean) ToDynamoDB() *dynamodb.AttributeValue {
+	return &dynamodb.AttributeValue{BOOL: aws.Bool(b.Value)}
 }
 
 func nativeBoolToBooleanObject(input bool) *Boolean {
@@ -136,6 +150,11 @@ func (b *Binary) Inspect() string {
 // Type returns the object type
 func (b *Binary) Type() ObjectType {
 	return ObjectTypeBinary
+}
+
+// ToDynamoDB returns the dynamodb attribute value
+func (b *Binary) ToDynamoDB() *dynamodb.AttributeValue {
+	return &dynamodb.AttributeValue{B: b.Value}
 }
 
 // Contains whether or not the obj is contained in the binary
@@ -164,6 +183,11 @@ func (n *Null) Inspect() string {
 	return "null"
 }
 
+// ToDynamoDB returns the dynamodb attribute value
+func (n *Null) ToDynamoDB() *dynamodb.AttributeValue {
+	return &dynamodb.AttributeValue{NULL: aws.Bool(true)}
+}
+
 // Error is the representation of errors
 type Error struct {
 	Message string
@@ -174,6 +198,11 @@ func (e *Error) Type() ObjectType { return ObjectTypeError }
 
 // Inspect returns the readable value of the object
 func (e *Error) Inspect() string { return "ERROR: " + e.Message }
+
+// ToDynamoDB returns the dynamodb attribute value
+func (e *Error) ToDynamoDB() *dynamodb.AttributeValue {
+	return nil
+}
 
 // String is the representation of strings
 type String struct {
@@ -198,6 +227,11 @@ func (s *String) Contains(obj Object) bool {
 	}
 
 	return strings.Contains(s.Value, str.Value)
+}
+
+// ToDynamoDB returns the dynamodb attribute value
+func (s *String) ToDynamoDB() *dynamodb.AttributeValue {
+	return &dynamodb.AttributeValue{S: aws.String(s.Value)}
 }
 
 // CanContain whether or not the string can contain the objType
@@ -237,6 +271,17 @@ func (m *Map) Type() ObjectType {
 	return ObjectTypeMap
 }
 
+// ToDynamoDB returns the dynamodb attribute value
+func (m *Map) ToDynamoDB() *dynamodb.AttributeValue {
+	attr := &dynamodb.AttributeValue{M: map[string]*dynamodb.AttributeValue{}}
+
+	for k, v := range m.Value {
+		attr.M[k] = v.ToDynamoDB()
+	}
+
+	return attr
+}
+
 // List is the representation of list
 type List struct {
 	Value []Object
@@ -263,6 +308,17 @@ func (l *List) Inspect() string {
 // Type returns the object type
 func (l *List) Type() ObjectType {
 	return ObjectTypeList
+}
+
+// ToDynamoDB returns the dynamodb attribute value
+func (l *List) ToDynamoDB() *dynamodb.AttributeValue {
+	attr := &dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{}}
+
+	for _, v := range l.Value {
+		attr.L = append(attr.L, v.ToDynamoDB())
+	}
+
+	return attr
 }
 
 // Contains whether or not the obj is contained in the list
@@ -342,6 +398,17 @@ func (ss *StringSet) Contains(obj Object) bool {
 	return ss.Value[str.Value]
 }
 
+// ToDynamoDB returns the dynamodb attribute value
+func (ss *StringSet) ToDynamoDB() *dynamodb.AttributeValue {
+	attr := &dynamodb.AttributeValue{SS: make([]*string, 0, len(ss.Value))}
+
+	for v := range ss.Value {
+		attr.SS = append(attr.SS, aws.String(v))
+	}
+
+	return attr
+}
+
 // CanContain whether or not the string set can contain the objType
 func (ss *StringSet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeString || objType == ObjectTypeStringSet
@@ -381,6 +448,11 @@ func containedInBinaryArray(container [][]byte, bin []byte) bool {
 	}
 
 	return false
+}
+
+// ToDynamoDB returns the dynamodb attribute value
+func (bs *BinarySet) ToDynamoDB() *dynamodb.AttributeValue {
+	return &dynamodb.AttributeValue{BS: bs.Value}
 }
 
 // Contains returns if the collection contains the object
@@ -443,6 +515,17 @@ func (ns *NumberSet) Inspect() string {
 // Type returns the object type
 func (ns *NumberSet) Type() ObjectType {
 	return ObjectTypeNumberSet
+}
+
+// ToDynamoDB returns the dynamodb attribute value
+func (ns *NumberSet) ToDynamoDB() *dynamodb.AttributeValue {
+	attr := &dynamodb.AttributeValue{NS: make([]*string, 0, len(ns.Value))}
+
+	for v := range ns.Value {
+		attr.NS = append(attr.NS, aws.String(fmt.Sprintf("%f", v)))
+	}
+
+	return attr
 }
 
 // Contains returns if the collection contains the object

@@ -41,6 +41,7 @@ type UpdateInput struct {
 	Expression string
 	Item       map[string]*dynamodb.AttributeValue
 	Attributes map[string]*dynamodb.AttributeValue
+	Aliases    map[string]*string
 }
 
 // Interpreter dynamodb expression interpreter interface

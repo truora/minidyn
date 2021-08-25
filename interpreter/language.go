@@ -18,24 +18,22 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	l := language.NewLexer(input.Expression)
 	p := language.NewParser(l)
 	conditional := p.ParseConditionalExpression()
-	env := language.NewEnvironment()
 
 	if len(p.Errors()) != 0 {
 		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
 	}
 
+	env := language.NewEnvironment()
+
+	aliases := map[string]string{}
+	for k, v := range input.Aliases {
+		aliases[k] = *v
+	}
+	env.Aliases = aliases
+
 	item := map[string]*dynamodb.AttributeValue{}
 
-	alises := map[string]string{}
-	for k, v := range input.Aliases {
-		alises[*v] = k
-	}
-
 	for field, val := range input.Item {
-		if n, ok := alises[field]; ok {
-			field = n
-		}
-
 		item[field] = val
 	}
 
@@ -67,7 +65,14 @@ func (li *Language) Update(input UpdateInput) error {
 	l := language.NewLexer(input.Expression)
 	p := language.NewParser(l)
 	update := p.ParseUpdateExpression()
+
+	aliases := map[string]string{}
+	for k, v := range input.Aliases {
+		aliases[k] = *v
+	}
+
 	env := language.NewEnvironment()
+	env.Aliases = aliases
 
 	if len(p.Errors()) != 0 {
 		return fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
@@ -104,7 +109,7 @@ func (li *Language) Update(input UpdateInput) error {
 		return fmt.Errorf("%w: %s", ErrSyntaxError, result.Inspect())
 	}
 
-	env.Apply(input.Item, attributes)
+	env.Apply(input.Item, aliases, attributes)
 
 	return nil
 }

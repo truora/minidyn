@@ -31,21 +31,23 @@ const (
 	precedenceValueComparators       // < <= > >=
 	precedenceValueOperators         // + -
 	precedenceValueCall              // myFunction(X)
+	precedenceValueINDEX             // [] .
 )
 
 var precedences = map[TokenType]int{
-	EQ:      precedenceValueEqualComparators,
-	NotEQ:   precedenceValueEqualComparators,
-	BETWEEN: precedenceValueBetweenComparator,
-	LT:      precedenceValueComparators,
-	GT:      precedenceValueComparators,
-	LTE:     precedenceValueComparators,
-	GTE:     precedenceValueComparators,
-	AND:     precedenceValueAND,
-	OR:      precedenceValueOR,
-	PLUS:    precedenceValueOperators,
-	MINUS:   precedenceValueOperators,
-	LPAREN:  precedenceValueCall,
+	EQ:       precedenceValueEqualComparators,
+	NotEQ:    precedenceValueEqualComparators,
+	BETWEEN:  precedenceValueBetweenComparator,
+	LT:       precedenceValueComparators,
+	GT:       precedenceValueComparators,
+	LTE:      precedenceValueComparators,
+	GTE:      precedenceValueComparators,
+	AND:      precedenceValueAND,
+	OR:       precedenceValueOR,
+	PLUS:     precedenceValueOperators,
+	MINUS:    precedenceValueOperators,
+	LPAREN:   precedenceValueCall,
+	LBRACKET: precedenceValueINDEX,
 }
 
 // NewParser creates a new parser
@@ -64,6 +66,7 @@ func NewParser(l *Lexer) *Parser {
 	p.infixParseFns = make(map[TokenType]infixParseFn)
 	p.registerInfix(EQ, p.parseInfixExpression)
 	p.registerInfix(NotEQ, p.parseInfixExpression)
+	p.registerInfix(LBRACKET, p.parseIndexExpression)
 	p.registerInfix(BETWEEN, p.parseBetweenExpression)
 	p.registerInfix(LT, p.parseInfixExpression)
 	p.registerInfix(GT, p.parseInfixExpression)
@@ -126,9 +129,8 @@ func (p *Parser) noPrefixParseFnError(t TokenType) {
 }
 
 func (p *Parser) parseExpression(precedence int) Expression {
-	prefix := p.prefixParseFns[p.curToken.Type]
-
-	if prefix == nil {
+	prefix, ok := p.prefixParseFns[p.curToken.Type]
+	if !ok {
 		p.noPrefixParseFnError(p.curToken.Type)
 
 		return nil
@@ -186,6 +188,19 @@ func (p *Parser) parseCallExpression(function Expression) Expression {
 	exp.Arguments = p.parseCallArguments()
 
 	return exp
+}
+
+func (p *Parser) parseIndexExpression(left Expression) Expression {
+	expression := &IndexExpression{Token: p.curToken, Left: left}
+	p.nextToken()
+
+	expression.Index = p.parseIdentifier()
+
+	if !p.expectPeek(RBRACKET) {
+		return nil
+	}
+
+	return expression
 }
 
 func (p *Parser) parseBetweenExpression(left Expression) Expression {

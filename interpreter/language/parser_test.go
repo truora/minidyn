@@ -86,6 +86,44 @@ func TestParsingInfixExpressions(t *testing.T) {
 	}
 }
 
+func TestParsingIndexExpressions(t *testing.T) {
+	indexTests := []struct {
+		input    string
+		left     interface{}
+		indexVal interface{}
+	}{
+		{"a[:i]", "a", ":i"},
+		{"#a[1]", "#a", "1"},
+		{"#a[1][2]", "(#a[1])", "2"},
+	}
+
+	for _, tt := range indexTests {
+		l := NewLexer(tt.input)
+		p := NewParser(l)
+		conditional := p.ParseConditionalExpression()
+		checkParserErrors(t, p)
+
+		opExp, ok := conditional.Expression.(*IndexExpression)
+		if !ok {
+			t.Fatalf("exp is not IndexExpression. got=%T(%s)", conditional.Expression, conditional.Expression)
+		}
+
+		testIndexExpression(t, opExp, tt.left, tt.indexVal)
+	}
+}
+
+func testIndexExpression(t *testing.T, opExp *IndexExpression, left, index interface{}) bool {
+	if !testLiteralExpression(t, opExp.Left, left) {
+		return true
+	}
+
+	if !testLiteralExpression(t, opExp.Index, index) {
+		return true
+	}
+
+	return false
+}
+
 func TestParsingBetweenExpression(t *testing.T) {
 	betweenTests := []struct {
 		input     string
@@ -107,9 +145,7 @@ func TestParsingBetweenExpression(t *testing.T) {
 			t.Fatalf("exp is not BetweenExpression. got=%T(%s)", conditional.Expression, conditional.Expression)
 		}
 
-		if !testBetweenExpression(t, opExp, tt.leftValue, tt.min, tt.max) {
-			return
-		}
+		testBetweenExpression(t, opExp, tt.leftValue, tt.min, tt.max)
 	}
 }
 
@@ -177,6 +213,10 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 		{
 			"a = :x + :y",
 			"(a = (:x + :y))",
+		},
+		{
+			"a[0][0]",
+			"((a[0])[0])",
 		},
 	}
 
@@ -262,18 +302,14 @@ func TestParsingErrors(t *testing.T) {
 func testIdentifier(t *testing.T, exp Expression, value string) bool {
 	ident, ok := exp.(*Identifier)
 	if !ok {
-		t.Errorf("exp not *Identifier. got=%T", exp)
 		return false
 	}
 
 	if ident.Value != value {
-		t.Errorf("ident.Value not %s. got=%s", value, ident.Value)
 		return false
 	}
 
 	if ident.TokenLiteral() != value {
-		t.Errorf("ident.TokenLiteral not %s. got=%s", value,
-			ident.TokenLiteral())
 		return false
 	}
 

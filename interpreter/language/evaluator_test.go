@@ -73,6 +73,9 @@ func TestEval(t *testing.T) {
 		// List
 		{":listA = :listB", FALSE},
 		{":listA = :listA", TRUE},
+		{":listA[0] = :listA[0]", TRUE},
+		{":listB[0] = :listA[0]", FALSE},
+		{":matrix[0][0] = :listA[0]", TRUE},
 		// StringSet
 		{":strSetA = :strSetB", FALSE},
 		{":strSetA = :strSetA", TRUE},
@@ -142,6 +145,11 @@ func TestEval(t *testing.T) {
 		},
 		":numSetB": &dynamodb.AttributeValue{
 			NS: []*string{aws.String("10"), aws.String("10"), aws.String("11")},
+		},
+		":matrix": &dynamodb.AttributeValue{
+			L: []*dynamodb.AttributeValue{
+				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{S: aws.String("a")}}},
+			},
 		},
 	})
 	if err != nil {
@@ -223,14 +231,27 @@ func TestEvalUpdate(t *testing.T) {
 		{"SET :w = :val", ":w", &String{Value: "text"}},
 		{"SET :two = :one + :one", ":two", &Number{Value: 2}},
 		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}},
+		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}},
+		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}},
+		{
+			"SET :matrix[0][0] = :one",
+			":matrix", &List{Value: []Object{&List{Value: []Object{&Number{Value: 1}}}}},
+		},
 	}
 
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":   &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
-		":val": &dynamodb.AttributeValue{S: aws.String("text")},
-		":one": &dynamodb.AttributeValue{N: aws.String("1")},
+		":x":    &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+		":val":  &dynamodb.AttributeValue{S: aws.String("text")},
+		":one":  &dynamodb.AttributeValue{N: aws.String("1")},
+		":list": &dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{N: aws.String("0")}}},
+		":matrix": &dynamodb.AttributeValue{
+			L: []*dynamodb.AttributeValue{
+				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{N: aws.String("0")}}},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
@@ -248,7 +269,7 @@ func TestEvalUpdate(t *testing.T) {
 		}
 
 		if result.Inspect() != tt.expected.Inspect() {
-			t.Errorf("result has wrong value for %q. got=%v, want=%v", tt.envField, result, tt.expected)
+			t.Errorf("result has wrong value for %q. got=%v, want=%v", tt.envField, result.Inspect(), tt.expected.Inspect())
 		}
 	}
 }
@@ -400,8 +421,8 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 			"unsupported expression: size(:val)",
 		},
 		{
-			"SET :one + :one = size(:val)",
-			"invalid assignation identifier: (:one + :one)",
+			"SET :one + :one = :val",
+			"invalid assignation to: ((:one + :one) = :val)",
 		},
 		{
 			"SET x = :val + :val",

@@ -100,6 +100,10 @@ func (l *Lexer) NextToken() Token {
 		tok = l.manageLessThanToken()
 	case '>':
 		tok = l.manageGreaterThanToken()
+	case '[':
+		tok = newToken(LBRACKET, l.ch)
+	case ']':
+		tok = newToken(RBRACKET, l.ch)
 	case 0:
 		tok.Literal = ""
 		tok.Type = EOF

@@ -49,6 +49,20 @@ const (
 	BETWEEN = "BETWEEN"
 	// IN compare operand against list of values
 	IN = "IN"
+
+	// SET update operation
+	SET = "SET"
+	// REMOVE update operation
+	REMOVE = "REMOVE"
+	// ADD update operation
+	ADD = "ADD"
+	// DELETE update operation
+	DELETE = "DELETE"
+
+	// PLUS adding operator
+	PLUS TokenType = "+"
+	// MINUS subtract operator
+	MINUS TokenType = "-"
 )
 
 var keywords = map[string]TokenType{
@@ -57,6 +71,10 @@ var keywords = map[string]TokenType{
 	"NOT":     NOT,
 	"BETWEEN": BETWEEN,
 	"IN":      IN,
+	"SET":     SET,
+	"REMOVE":  REMOVE,
+	"ADD":     ADD,
+	"DELETE":  DELETE,
 }
 
 // LookupIdent checks if the ident is a keyword

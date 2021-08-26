@@ -522,6 +522,7 @@ func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 		Expression: aws.StringValue(input.UpdateExpression),
 		Item:       item,
 		Attributes: input.ExpressionAttributeValues,
+		Aliases:    input.ExpressionAttributeNames,
 	})
 
 	t.setItem(key, item)

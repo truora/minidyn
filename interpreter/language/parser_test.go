@@ -9,17 +9,12 @@ func TestIdentifierExpression(t *testing.T) {
 	l := NewLexer(input)
 	p := NewParser(l)
 
-	program := p.ParseDynamoExpression()
+	conditional := p.ParseConditionalExpression()
 	checkParserErrors(t, p)
 
-	stmt, ok := program.Statement.(*ExpressionStatement)
+	ident, ok := conditional.Expression.(*Identifier)
 	if !ok {
-		t.Fatalf("program.Statement is not ExpressionStatement. got=%T", program.Statement)
-	}
-
-	ident, ok := stmt.Expression.(*Identifier)
-	if !ok {
-		t.Fatalf("exp not *Identifier. got=%T", stmt.Expression)
+		t.Fatalf("exp not *Identifier. got=%T", conditional.Expression)
 	}
 
 	if ident.Value != "foobar" {
@@ -44,17 +39,12 @@ func TestParsingPrefixExpressions(t *testing.T) {
 	for _, tt := range prefixTests {
 		l := NewLexer(tt.input)
 		p := NewParser(l)
-		program := p.ParseDynamoExpression()
+		conditional := p.ParseConditionalExpression()
 		checkParserErrors(t, p)
 
-		stmt, ok := program.Statement.(*ExpressionStatement)
+		exp, ok := conditional.Expression.(*PrefixExpression)
 		if !ok {
-			t.Fatalf("program.Statement is not ExpressionStatement. got=%T", program.Statement)
-		}
-
-		exp, ok := stmt.Expression.(*PrefixExpression)
-		if !ok {
-			t.Fatalf("stmt is not PrefixExpression. got=%T", stmt.Expression)
+			t.Fatalf("stmt is not PrefixExpression. got=%T", conditional.Expression)
 		}
 
 		if exp.Operator != tt.operator {
@@ -86,15 +76,10 @@ func TestParsingInfixExpressions(t *testing.T) {
 	for _, tt := range infixTests {
 		l := NewLexer(tt.input)
 		p := NewParser(l)
-		program := p.ParseDynamoExpression()
+		conditional := p.ParseConditionalExpression()
 		checkParserErrors(t, p)
 
-		stmt, ok := program.Statement.(*ExpressionStatement)
-		if !ok {
-			t.Fatalf("program.Statement is not ExpressionStatement. got=%T", program.Statement)
-		}
-
-		if !testInfixExpression(t, stmt.Expression, tt.leftValue,
+		if !testInfixExpression(t, conditional.Expression, tt.leftValue,
 			tt.operator, tt.rightValue) {
 			return
 		}
@@ -114,17 +99,12 @@ func TestParsingBetweenExpression(t *testing.T) {
 	for _, tt := range betweenTests {
 		l := NewLexer(tt.input)
 		p := NewParser(l)
-		program := p.ParseDynamoExpression()
+		conditional := p.ParseConditionalExpression()
 		checkParserErrors(t, p)
 
-		stmt, ok := program.Statement.(*ExpressionStatement)
+		opExp, ok := conditional.Expression.(*BetweenExpression)
 		if !ok {
-			t.Fatalf("program.Statement is not ExpressionStatement. got=%T", program.Statement)
-		}
-
-		opExp, ok := stmt.Expression.(*BetweenExpression)
-		if !ok {
-			t.Fatalf("exp is not BetweenExpression. got=%T(%s)", stmt.Expression, stmt.Expression)
+			t.Fatalf("exp is not BetweenExpression. got=%T(%s)", conditional.Expression, conditional.Expression)
 		}
 
 		if !testBetweenExpression(t, opExp, tt.leftValue, tt.min, tt.max) {
@@ -194,15 +174,19 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 			"NOT :a > size(:s) OR size(:c) = :a",
 			"((NOT(:a > size(:s))) OR (size(:c) = :a))",
 		},
+		{
+			"a = :x + :y",
+			"(a = (:x + :y))",
+		},
 	}
 
 	for _, tt := range tests {
 		l := NewLexer(tt.input)
 		p := NewParser(l)
-		program := p.ParseDynamoExpression()
+		conditional := p.ParseConditionalExpression()
 		checkParserErrors(t, p)
 
-		actual := program.String()
+		actual := conditional.String()
 		if actual != tt.expected {
 			t.Errorf("expected=%q, got=%q", tt.expected, actual)
 		}
@@ -213,20 +197,14 @@ func TestCallExpressionParsing(t *testing.T) {
 	input := "begins_with(:a, #s)"
 	l := NewLexer(input)
 	p := NewParser(l)
-	program := p.ParseDynamoExpression()
+	conditional := p.ParseConditionalExpression()
 
 	checkParserErrors(t, p)
 
-	stmt, ok := program.Statement.(*ExpressionStatement)
-	if !ok {
-		t.Fatalf("stmt is not ast.ExpressionStatement. got=%T",
-			program.Statement)
-	}
-
-	exp, ok := stmt.Expression.(*CallExpression)
+	exp, ok := conditional.Expression.(*CallExpression)
 	if !ok {
 		t.Fatalf("stmt.Expression is not ast.CallExpression. got=%T",
-			stmt.Expression)
+			conditional.Expression)
 	}
 
 	if !testIdentifier(t, exp.Function, "begins_with") {
@@ -247,6 +225,10 @@ func TestParsingErrors(t *testing.T) {
 		expected string
 	}{
 		{
+			"a != b",
+			"no prefix parse function for ILLEGAL found",
+		},
+		{
 			"=a",
 			"no prefix parse function for = found",
 		},
@@ -263,7 +245,7 @@ func TestParsingErrors(t *testing.T) {
 	for _, tt := range tests {
 		l := NewLexer(tt.input)
 		p := NewParser(l)
-		p.ParseDynamoExpression()
+		p.ParseConditionalExpression()
 
 		if len(p.errors) == 0 {
 			t.Errorf("no errors found")
@@ -347,11 +329,37 @@ func testInfixExpression(t *testing.T, exp Expression, left interface{}, operato
 	return true
 }
 
+func TestParsingSetExpression(t *testing.T) {
+	setTests := []struct {
+		input       string
+		actionsSize int
+	}{
+		{"SET ProductCategory = :c", 1},
+		{"SET ProductCategory = :c, Price = :p", 2},
+	}
+
+	for _, tt := range setTests {
+		l := NewLexer(tt.input)
+		p := NewParser(l)
+		update := p.ParseUpdateExpression()
+		checkParserErrors(t, p)
+
+		opExp, ok := update.Expression.(*SetExpression)
+		if !ok {
+			t.Fatalf("exp is not SetExpression. got=%T(%s)", update.Expression, update.Expression)
+		}
+
+		if len(opExp.Expressions) != tt.actionsSize {
+			t.Fatalf("unexpected actions size. got=%d expected=(%d)", len(opExp.Expressions), tt.actionsSize)
+		}
+	}
+}
+
 func BenchmarkParser(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		l := NewLexer(`attribute_exists(:b) AND begins_with(:b, #s) OR #c`)
 		p := NewParser(l)
-		p.ParseDynamoExpression()
+		p.ParseConditionalExpression()
 
 		if len(p.errors) != 0 {
 			b.Fatal("errors found")

@@ -3,6 +3,8 @@ package language
 import (
 	"bytes"
 	"strings"
+
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 // Function represents a function in the dynamodb expression
@@ -19,6 +21,11 @@ func (fn *Function) Inspect() string {
 // Type returns the object type
 func (fn *Function) Type() ObjectType {
 	return ObjectTypeFunction
+}
+
+// ToDynamoDB returns the dynamodb attribute value
+func (fn *Function) ToDynamoDB() *dynamodb.AttributeValue {
+	return nil
 }
 
 var (

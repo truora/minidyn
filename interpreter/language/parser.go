@@ -29,6 +29,7 @@ const (
 	precedenceValueEqualComparators  // = <>
 	precedenceValueBetweenComparator // BETWEEN
 	precedenceValueComparators       // < <= > >=
+	precedenceValueOperators         // + -
 	precedenceValueCall              // myFunction(X)
 )
 
@@ -42,6 +43,8 @@ var precedences = map[TokenType]int{
 	GTE:     precedenceValueComparators,
 	AND:     precedenceValueAND,
 	OR:      precedenceValueOR,
+	PLUS:    precedenceValueOperators,
+	MINUS:   precedenceValueOperators,
 	LPAREN:  precedenceValueCall,
 }
 
@@ -56,6 +59,7 @@ func NewParser(l *Lexer) *Parser {
 	p.registerPrefix(IDENT, p.parseIdentifier)
 	p.registerPrefix(NOT, p.parsePrefixExpression)
 	p.registerPrefix(LPAREN, p.parseGroupedExpression)
+	p.registerPrefix(SET, p.parseSetExpression)
 
 	p.infixParseFns = make(map[TokenType]infixParseFn)
 	p.registerInfix(EQ, p.parseInfixExpression)
@@ -68,6 +72,9 @@ func NewParser(l *Lexer) *Parser {
 	p.registerInfix(AND, p.parseInfixExpression)
 	p.registerInfix(OR, p.parseInfixExpression)
 	p.registerInfix(LPAREN, p.parseCallExpression)
+
+	p.registerInfix(PLUS, p.parseInfixExpression)
+	p.registerInfix(MINUS, p.parseInfixExpression)
 
 	// Read two tokens, so curToken and peekToken are both set
 	p.nextToken()
@@ -90,27 +97,12 @@ func (p *Parser) nextToken() {
 	p.peekToken = p.l.NextToken()
 }
 
-// ParseDynamoExpression parse the given dynamodb expression
-func (p *Parser) ParseDynamoExpression() *DynamoExpression {
-	program := &DynamoExpression{}
+func (p *Parser) ParseConditionalExpression() *ConditionalExpression {
+	stmt := &ConditionalExpression{Token: p.curToken}
 
 	for p.curToken.Type != EOF {
-		stmt := p.parseExpressionStatement()
-		if stmt != nil {
-			program.Statement = stmt
-		}
+		stmt.Expression = p.parseExpression(precedenceValueLowset)
 
-		p.nextToken()
-	}
-
-	return program
-}
-
-func (p *Parser) parseExpressionStatement() *ExpressionStatement {
-	stmt := &ExpressionStatement{Token: p.curToken}
-	stmt.Expression = p.parseExpression(precedenceValueLowset)
-
-	if p.peekTokenIs(EOF) {
 		p.nextToken()
 	}
 
@@ -238,6 +230,50 @@ func (p *Parser) parseCallArguments() []Expression {
 	}
 
 	return args
+}
+
+func (p *Parser) ParseUpdateExpression() *UpdateExpression {
+	stmt := &UpdateExpression{Token: p.curToken}
+
+	for p.curToken.Type != EOF {
+		stmt.Expression = p.parseExpression(precedenceValueLowset)
+
+		p.nextToken()
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseSetExpression() Expression {
+	expression := &SetExpression{
+		Token:       p.curToken,
+		Expressions: p.parseActions(),
+	}
+
+	return expression
+}
+
+func (p *Parser) parseActions() []Expression {
+	actions := []Expression{}
+
+	if p.peekTokenIs(EOF) {
+		return actions
+	}
+
+	p.nextToken()
+	actions = append(actions, p.parseExpression(precedenceValueLowset))
+
+	for p.peekTokenIs(COMMA) {
+		p.nextToken()
+		p.nextToken()
+		actions = append(actions, p.parseExpression(precedenceValueLowset))
+	}
+
+	if !p.expectPeek(EOF) {
+		return nil
+	}
+
+	return actions
 }
 
 // helpers

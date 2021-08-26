@@ -17,25 +17,23 @@ type Language struct {
 func (li *Language) Match(input MatchInput) (bool, error) {
 	l := language.NewLexer(input.Expression)
 	p := language.NewParser(l)
-	program := p.ParseDynamoExpression()
-	env := language.NewEnvironment()
+	conditional := p.ParseConditionalExpression()
 
 	if len(p.Errors()) != 0 {
 		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
 	}
 
+	env := language.NewEnvironment()
+
+	aliases := map[string]string{}
+	for k, v := range input.Aliases {
+		aliases[k] = *v
+	}
+	env.Aliases = aliases
+
 	item := map[string]*dynamodb.AttributeValue{}
 
-	alises := map[string]string{}
-	for k, v := range input.Aliases {
-		alises[*v] = k
-	}
-
 	for field, val := range input.Item {
-		if n, ok := alises[field]; ok {
-			field = n
-		}
-
 		item[field] = val
 	}
 
@@ -49,10 +47,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, fmt.Errorf("%w: %s", ErrUnsupportedFeature, err.Error())
 	}
 
-	result := language.Eval(program, env)
+	result := language.Eval(conditional, env)
 
 	if li.Debug {
-		fmt.Printf("evaluating: %q\nin: %s\n$>%s\n", program, env, result.Inspect())
+		fmt.Printf("evaluating: %q\nin: %s\n$>%s\n", conditional, env, result.Inspect())
 	}
 
 	if result.Type() == language.ObjectTypeError {
@@ -64,8 +62,54 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 
 // Update change the item with given expression and attributes
 func (li *Language) Update(input UpdateInput) error {
-	return fmt.Errorf(
-		"%w: language interpreter do not support updates",
-		ErrUnsupportedFeature,
-	)
+	l := language.NewLexer(input.Expression)
+	p := language.NewParser(l)
+	update := p.ParseUpdateExpression()
+
+	aliases := map[string]string{}
+	for k, v := range input.Aliases {
+		aliases[k] = *v
+	}
+
+	env := language.NewEnvironment()
+	env.Aliases = aliases
+
+	if len(p.Errors()) != 0 {
+		return fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
+	}
+
+	item := map[string]*dynamodb.AttributeValue{}
+
+	for field, val := range input.Item {
+		item[field] = val
+	}
+
+	err := env.AddAttributes(item)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrUnsupportedFeature, err.Error())
+	}
+
+	attributes := map[string]bool{}
+	for key := range input.Attributes {
+		attributes[key] = true
+	}
+
+	err = env.AddAttributes(input.Attributes)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrUnsupportedFeature, err.Error())
+	}
+
+	result := language.EvalUpdate(update, env)
+
+	if li.Debug {
+		fmt.Printf("evaluating: %q\nin: %s\n$>%s\n", update, env, result.Inspect())
+	}
+
+	if result.Type() == language.ObjectTypeError {
+		return fmt.Errorf("%w: %s", ErrSyntaxError, result.Inspect())
+	}
+
+	env.Apply(input.Item, aliases, attributes)
+
+	return nil
 }

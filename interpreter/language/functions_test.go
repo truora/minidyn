@@ -168,7 +168,7 @@ func TestContainsWithError(t *testing.T) {
 
 func TestObjectSize(t *testing.T) {
 	str := String{Value: "hello"}
-	expected := "5.000000"
+	expected := "5"
 
 	size := objectSize(&str)
 	if size.Inspect() != expected {

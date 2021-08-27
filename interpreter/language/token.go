@@ -39,6 +39,11 @@ const (
 	// RPAREN right parentheses delimiter
 	RPAREN TokenType = ")"
 
+	// LBRACKET left bracket delimiter
+	LBRACKET TokenType = "["
+	// RBRACKET right bracket delimiter
+	RBRACKET TokenType = "]"
+
 	// AND logical evaluation keyword
 	AND = "AND"
 	// OR logical evaluation keyword

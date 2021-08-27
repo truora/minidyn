@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -96,7 +97,7 @@ type Number struct {
 
 // Inspect returns the readable value of the object
 func (i *Number) Inspect() string {
-	return fmt.Sprintf("%f", i.Value)
+	return numToString(i.Value)
 }
 
 // Type returns the object type
@@ -106,7 +107,13 @@ func (i *Number) Type() ObjectType {
 
 // ToDynamoDB returns the dynamodb attribute value
 func (i *Number) ToDynamoDB() *dynamodb.AttributeValue {
-	return &dynamodb.AttributeValue{N: aws.String(fmt.Sprintf("%f", i.Value))}
+	str := numToString(i.Value)
+
+	return &dynamodb.AttributeValue{N: &str}
+}
+
+func numToString(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // Boolean is the representation of boolean
@@ -522,7 +529,9 @@ func (ns *NumberSet) ToDynamoDB() *dynamodb.AttributeValue {
 	attr := &dynamodb.AttributeValue{NS: make([]*string, 0, len(ns.Value))}
 
 	for v := range ns.Value {
-		attr.NS = append(attr.NS, aws.String(fmt.Sprintf("%f", v)))
+		str := numToString(v)
+
+		attr.NS = append(attr.NS, &str)
 	}
 
 	return attr

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strconv"
 )
 
 // Eval runs the expression in the environment
@@ -17,6 +18,8 @@ func Eval(n Node, env *Environment) Object {
 		return evalPrefixExpression(node, env)
 	case *InfixExpression:
 		return evalInfixParts(node, env)
+	case *IndexExpression:
+		return evalIndex(node, env)
 	case *BetweenExpression:
 		return evalBetween(node, env)
 	case *CallExpression:
@@ -288,6 +291,127 @@ func evalIdentifier(node *Identifier, env *Environment) Object {
 	return val
 }
 
+func evalIndex(node *IndexExpression, env *Environment) Object {
+	positions, l, errObj := evalIndexPositions(node, env)
+	if isError(errObj) {
+		return errObj
+	}
+
+	var obj Object = l
+	for _, pos := range positions {
+		obj = pos.Get(obj)
+		if isError(obj) {
+			return obj
+		}
+	}
+
+	return obj
+}
+
+type indexAccessor struct {
+	kind TokenType
+	val  interface{}
+}
+
+func (i indexAccessor) Get(container Object) Object {
+	switch c := container.(type) {
+	case *List:
+		pos, ok := i.val.(int64)
+		if i.kind == LBRACKET && ok {
+			return c.Value[pos]
+		}
+	}
+
+	return newError("index operator not supporter: %q", container.Type())
+}
+
+func (i indexAccessor) Set(container, val Object) Object {
+	switch c := container.(type) {
+	case *List:
+		pos, ok := i.val.(int64)
+		if i.kind == LBRACKET && ok {
+			if int64(len(c.Value)) > pos {
+				c.Value[pos] = val
+
+				return NULL
+			}
+
+			c.Value = append(c.Value, val)
+		}
+	}
+
+	return newError("index operator not supporter: %q", container.Type())
+}
+
+func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, *List, Object) {
+	positions := []indexAccessor{}
+
+	for {
+		switch node := n.(type) {
+		case *Identifier:
+			l, errObj := evalIndexListValue(n, env)
+			if isError(errObj) {
+				return nil, nil, errObj
+			}
+
+			return positions, l, nil
+		case *IndexExpression:
+			identifier, ok := node.Index.(*Identifier)
+			if !ok {
+				return nil, nil, newError("identifier expected: got %q", identifier.String())
+			}
+
+			pos, errObj := evalIndexValue(identifier, env)
+			if isError(errObj) {
+				return positions, nil, errObj
+			}
+
+			positions = append(positions, indexAccessor{val: int64(pos), kind: node.Token.Type})
+
+			n = node.Left
+		default:
+			return nil, nil, newError("index operator not supported: got %q", n.String())
+		}
+	}
+}
+
+func evalIndexListValue(node Expression, env *Environment) (*List, Object) {
+	listIdentifier, ok := node.(*Identifier)
+	if !ok {
+		return nil, newError("identifier expected: got %q", node.String())
+	}
+
+	list := evalIdentifier(listIdentifier, env)
+	if isError(list) {
+		return nil, list
+	}
+
+	l, ok := list.(*List)
+	if !ok {
+		return nil, newError("access element with [] is only supported for L: got %q", list.Type())
+	}
+
+	return l, nil
+}
+
+func evalIndexValue(node *Identifier, env *Environment) (int, Object) {
+	if n, err := strconv.Atoi(node.Token.Literal); err == nil {
+		return n, nil
+	}
+
+	obj := evalIdentifier(node, env)
+	if isError(obj) {
+		return 0, obj
+	}
+
+	number, ok := obj.(*Number)
+	if !ok {
+		return 0, newError("access element with [] only support N as index : got %q", obj.Type())
+	}
+
+	return int(number.Value), nil
+}
+
 func evalBetween(node *BetweenExpression, env *Environment) Object {
 	val := evalBetweenOperand(node.Left, env)
 	if isError(val) {
@@ -406,17 +530,28 @@ func evalSetExpression(node *SetExpression, env *Environment) Object {
 func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
 	switch node.Operator {
 	case "=":
-		id, ok := node.Left.(*Identifier)
-		if !ok {
-			return newError("invalid assignation identifier: %s", node.Left.String())
-		}
-
 		val := EvalUpdate(node.Right, env)
 		if isError(val) {
 			return val
 		}
 
-		env.Set(id.Value, val)
+		id, ok := node.Left.(*Identifier)
+		if ok {
+			env.Set(id.Value, val)
+			return NULL
+		}
+
+		indexField, ok := node.Left.(*IndexExpression)
+		if ok {
+			errObj := evalAssignIndex(indexField, []int{}, val, env)
+			if isError(errObj) {
+				return errObj
+			}
+
+			return NULL
+		}
+
+		return newError("invalid assignation to: %s", node.String())
 	case "+":
 		augend, addend, errObj := evalArithmeticTerms(node, env)
 		if isError(errObj) {
@@ -431,9 +566,32 @@ func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
 		}
 
 		return &Number{Value: minuend.Value - subtrahend.Value}
-	default:
-		return newError("unknown operator: %s", node.Operator)
 	}
+
+	return newError("unknown operator: %s", node.Operator)
+}
+
+func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object {
+	positions, l, errObj := evalIndexPositions(n, env)
+	if isError(errObj) {
+		return errObj
+	}
+
+	var obj Object = l
+
+	for _, pos := range positions[:len(positions)-1] {
+		l, ok := obj.(*List)
+		if !ok {
+			newError("index operator not supporter: %q", obj.Type())
+		}
+
+		obj = pos.Get(l)
+	}
+
+	l = obj.(*List)
+
+	pos := positions[len(positions)-1]
+	pos.Set(l, val)
 
 	return NULL
 }

@@ -114,11 +114,15 @@ func updateTestCaseVerify(tc updateTestCase, t *testing.T) {
 	interpeter := Language{}
 
 	err := interpeter.Update(tc.input)
-	if !errors.Is(err, tc.expectedErr) {
-		t.Errorf("%q failed with unexpected error; expected=%v, got=%v", tc.input.Expression, tc.expectedErr, err)
+	if tc.expectedErr != nil {
+		if !errors.Is(err, tc.expectedErr) {
+			t.Errorf("%q failed with unexpected error; expected=%v, got=%v", tc.input.Expression, tc.expectedErr, err)
+		}
+
+		return
 	}
 
-	if reflect.DeepEqual(tc.input.Item, tc.output) {
+	if !reflect.DeepEqual(tc.input.Item, tc.output) {
 		t.Errorf("%q return an unexpected result; expected=%v, got=%v", tc.input.Expression, tc.output, tc.input.Item)
 	}
 }

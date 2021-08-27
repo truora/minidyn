@@ -6,8 +6,8 @@ import (
 
 func TestNumberInspect(t *testing.T) {
 	n := Number{Value: 1.0}
-	if n.Inspect() != "1.000000" {
-		t.Fatalf("not equal actual=%s expected=%s", n.Inspect(), "1.000000")
+	if n.Inspect() != "1" {
+		t.Fatalf("not equal actual=%s expected=%s", n.Inspect(), "1")
 	}
 }
 
@@ -87,7 +87,7 @@ func TestListInspect(t *testing.T) {
 		},
 	}
 
-	expected := "[ Cookies<S> Coffee<S> 3.141590<N> ]"
+	expected := "[ Cookies<S> Coffee<S> 3.14159<N> ]"
 	if str.Inspect() != expected {
 		t.Fatalf("not equal actual=%s expected=%s", str.Inspect(), expected)
 	}

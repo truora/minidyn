@@ -81,6 +81,12 @@ func TestNextToken(t *testing.T) {
 			{AND, "AND"},
 			{IDENT, "c"},
 		},
+		`a[1]`: []testCase{
+			{IDENT, "a"},
+			{LBRACKET, "["},
+			{IDENT, "1"},
+			{RBRACKET, "]"},
+		},
 	}
 
 	for input, tests := range table {

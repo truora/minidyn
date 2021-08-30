@@ -48,6 +48,7 @@ var precedences = map[TokenType]int{
 	MINUS:    precedenceValueOperators,
 	LPAREN:   precedenceValueCall,
 	LBRACKET: precedenceValueINDEX,
+	DOT:      precedenceValueINDEX,
 }
 
 // NewParser creates a new parser
@@ -67,6 +68,7 @@ func NewParser(l *Lexer) *Parser {
 	p.registerInfix(EQ, p.parseInfixExpression)
 	p.registerInfix(NotEQ, p.parseInfixExpression)
 	p.registerInfix(LBRACKET, p.parseIndexExpression)
+	p.registerInfix(DOT, p.parseIndexExpression)
 	p.registerInfix(BETWEEN, p.parseBetweenExpression)
 	p.registerInfix(LT, p.parseInfixExpression)
 	p.registerInfix(GT, p.parseInfixExpression)
@@ -191,10 +193,15 @@ func (p *Parser) parseCallExpression(function Expression) Expression {
 }
 
 func (p *Parser) parseIndexExpression(left Expression) Expression {
-	expression := &IndexExpression{Token: p.curToken, Left: left}
+	expression := &IndexExpression{Token: p.curToken, Left: left, Type: ObjectTypeList}
 	p.nextToken()
 
 	expression.Index = p.parseIdentifier()
+
+	if expression.Token.Type == DOT {
+		expression.Type = ObjectTypeMap
+		return expression
+	}
 
 	if !p.expectPeek(RBRACKET) {
 		return nil

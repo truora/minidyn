@@ -70,11 +70,14 @@ func TestEval(t *testing.T) {
 		// Map
 		{":hashA = :hashB", FALSE},
 		{":hashA = :hashA", TRUE},
+		{":hashA.:a", TRUE},
 		// List
 		{":listA = :listB", FALSE},
 		{":listA = :listA", TRUE},
 		{":listA[0] = :listA[0]", TRUE},
 		{":listB[0] = :listA[0]", FALSE},
+		{":listB[:listIndex] = :listA[:listIndex]", FALSE},
+		{":matrix[0][0] = :listA[0]", TRUE},
 		{":matrix[0][0] = :listA[0]", TRUE},
 		// StringSet
 		{":strSetA = :strSetB", FALSE},
@@ -151,6 +154,7 @@ func TestEval(t *testing.T) {
 				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{S: aws.String("a")}}},
 			},
 		},
+		":listIndex": &dynamodb.AttributeValue{N: aws.String("0")},
 	})
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
@@ -238,6 +242,14 @@ func TestEvalUpdate(t *testing.T) {
 			"SET :matrix[0][0] = :one",
 			":matrix", &List{Value: []Object{&List{Value: []Object{&Number{Value: 1}}}}},
 		},
+		{
+			"SET :hash.a = :one",
+			":hash", &Map{Value: map[string]Object{"a": &Number{Value: 1}}},
+		},
+		{
+			"SET :hash.:mapField = :one",
+			":hash", &Map{Value: map[string]Object{"a": &Number{Value: 1}, "key": &Number{Value: 1}}},
+		},
 	}
 
 	env := NewEnvironment()
@@ -247,6 +259,12 @@ func TestEvalUpdate(t *testing.T) {
 		":val":  &dynamodb.AttributeValue{S: aws.String("text")},
 		":one":  &dynamodb.AttributeValue{N: aws.String("1")},
 		":list": &dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{N: aws.String("0")}}},
+		":hash": &dynamodb.AttributeValue{
+			M: map[string]*dynamodb.AttributeValue{
+				"a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+			},
+		},
+		":mapField": &dynamodb.AttributeValue{S: aws.String("key")},
 		":matrix": &dynamodb.AttributeValue{
 			L: []*dynamodb.AttributeValue{
 				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{N: aws.String("0")}}},

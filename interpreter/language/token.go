@@ -43,6 +43,8 @@ const (
 	LBRACKET TokenType = "["
 	// RBRACKET right bracket delimiter
 	RBRACKET TokenType = "]"
+	// DOT map index accessor
+	DOT TokenType = "."
 
 	// AND logical evaluation keyword
 	AND = "AND"

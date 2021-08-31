@@ -153,6 +153,7 @@ type IndexExpression struct {
 	Token Token // The [ token
 	Left  Expression
 	Index Expression
+	Type  ObjectType
 }
 
 func (ie *IndexExpression) expressionNode() {

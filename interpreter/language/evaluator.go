@@ -309,27 +309,33 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 }
 
 type indexAccessor struct {
-	kind TokenType
-	val  interface{}
+	kind     ObjectType
+	val      interface{}
+	operator Token
 }
 
 func (i indexAccessor) Get(container Object) Object {
 	switch c := container.(type) {
 	case *List:
 		pos, ok := i.val.(int64)
-		if i.kind == LBRACKET && ok {
+		if i.kind == ObjectTypeList && ok {
+			return c.Value[pos]
+		}
+	case *Map:
+		pos, ok := i.val.(string)
+		if i.kind == ObjectTypeMap && ok {
 			return c.Value[pos]
 		}
 	}
 
-	return newError("index operator not supporter: %q", container.Type())
+	return newError("index operator %s not supporter: %q", i.operator.Literal, container.Type())
 }
 
 func (i indexAccessor) Set(container, val Object) Object {
 	switch c := container.(type) {
 	case *List:
 		pos, ok := i.val.(int64)
-		if i.kind == LBRACKET && ok {
+		if i.kind == ObjectTypeList && ok {
 			if int64(len(c.Value)) > pos {
 				c.Value[pos] = val
 
@@ -338,35 +344,42 @@ func (i indexAccessor) Set(container, val Object) Object {
 
 			c.Value = append(c.Value, val)
 		}
+	case *Map:
+		pos, ok := i.val.(string)
+		if i.kind == ObjectTypeMap && ok {
+			c.Value[pos] = val
+		}
+
+		return NULL
 	}
 
 	return newError("index operator not supporter: %q", container.Type())
 }
 
-func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, *List, Object) {
+func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, Object, Object) {
 	positions := []indexAccessor{}
 
 	for {
 		switch node := n.(type) {
 		case *Identifier:
-			l, errObj := evalIndexListValue(n, env)
+			obj, errObj := evalIndexObj(n, env)
 			if isError(errObj) {
 				return nil, nil, errObj
 			}
 
-			return positions, l, nil
+			return positions, obj, nil
 		case *IndexExpression:
 			identifier, ok := node.Index.(*Identifier)
 			if !ok {
 				return nil, nil, newError("identifier expected: got %q", identifier.String())
 			}
 
-			pos, errObj := evalIndexValue(identifier, env)
+			pos, errObj := evalIndexValue(identifier, node, env)
 			if isError(errObj) {
 				return positions, nil, errObj
 			}
 
-			positions = append(positions, indexAccessor{val: int64(pos), kind: node.Token.Type})
+			positions = append(positions, pos)
 
 			n = node.Left
 		default:
@@ -375,28 +388,49 @@ func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, *List,
 	}
 }
 
-func evalIndexListValue(node Expression, env *Environment) (*List, Object) {
-	listIdentifier, ok := node.(*Identifier)
+func evalIndexObj(identifierExpression Expression, env *Environment) (Object, Object) {
+	identifier, ok := identifierExpression.(*Identifier)
 	if !ok {
-		return nil, newError("identifier expected: got %q", node.String())
+		return nil, newError("identifier expected: got %q", identifierExpression.String())
 	}
 
-	list := evalIdentifier(listIdentifier, env)
-	if isError(list) {
-		return nil, list
+	obj := evalIdentifier(identifier, env)
+	switch obj.(type) {
+	case *List:
+		return obj, nil
+	case *Map:
+		return obj, nil
+	case *Error:
+		return nil, obj
 	}
 
-	l, ok := list.(*List)
-	if !ok {
-		return nil, newError("access element with [] is only supported for L: got %q", list.Type())
-	}
-
-	return l, nil
+	return nil, newError("index operator not supported for %q", obj.Type())
 }
 
-func evalIndexValue(node *Identifier, env *Environment) (int, Object) {
+func evalIndexValue(node *Identifier, indexNode *IndexExpression, env *Environment) (indexAccessor, Object) {
+	switch indexNode.Type {
+	case ObjectTypeList:
+		pos, errObj := evalListIndexValue(node, env)
+		if isError(errObj) {
+			return indexAccessor{}, errObj
+		}
+
+		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token}, NULL
+	case ObjectTypeMap:
+		pos, errObj := evalMapIndexValue(node, env)
+		if isError(errObj) {
+			return indexAccessor{}, errObj
+		}
+
+		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token}, NULL
+	}
+
+	return indexAccessor{}, newError("index operator not supported: got %q", node.String())
+}
+
+func evalListIndexValue(node *Identifier, env *Environment) (int64, Object) {
 	if n, err := strconv.Atoi(node.Token.Literal); err == nil {
-		return n, nil
+		return int64(n), nil
 	}
 
 	obj := evalIdentifier(node, env)
@@ -406,10 +440,24 @@ func evalIndexValue(node *Identifier, env *Environment) (int, Object) {
 
 	number, ok := obj.(*Number)
 	if !ok {
-		return 0, newError("access element with [] only support N as index : got %q", obj.Type())
+		return 0, newError("access index with [] only support N as index : got %q", obj.Type())
 	}
 
-	return int(number.Value), nil
+	return int64(number.Value), nil
+}
+
+func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
+	obj := evalIdentifier(node, env)
+	if isError(obj) {
+		return "", obj
+	}
+
+	str, ok := obj.(*String)
+	if !ok {
+		return node.Token.Literal, nil
+	}
+
+	return str.Value, nil
 }
 
 func evalBetween(node *BetweenExpression, env *Environment) Object {
@@ -588,10 +636,8 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 		obj = pos.Get(l)
 	}
 
-	l = obj.(*List)
-
 	pos := positions[len(positions)-1]
-	pos.Set(l, val)
+	pos.Set(obj, val)
 
 	return NULL
 }

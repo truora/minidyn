@@ -133,7 +133,7 @@ func TestLanguageUpdate(t *testing.T) {
 			name: "successful",
 			input: UpdateInput{
 				TableName:  "test",
-				Expression: "SET two = :a + :a",
+				Expression: "SET two = :a + :a, a = :a",
 				Item: map[string]*dynamodb.AttributeValue{
 					"a": {
 						S: aws.String("a"),
@@ -147,7 +147,7 @@ func TestLanguageUpdate(t *testing.T) {
 			},
 			output: map[string]*dynamodb.AttributeValue{
 				"a": {
-					S: aws.String("a"),
+					N: aws.String("1"),
 				},
 				"two": {
 					N: aws.String("2"),

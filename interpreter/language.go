@@ -99,11 +99,11 @@ func (li *Language) Update(input UpdateInput) error {
 		return fmt.Errorf("%w: %s", ErrUnsupportedFeature, err.Error())
 	}
 
-	result := language.EvalUpdate(update, env)
-
 	if li.Debug {
-		fmt.Printf("evaluating: %q\nin: %s\n$>%s\n", update, env, result.Inspect())
+		fmt.Printf("evaluating: %q\nin: %s\n", update, env)
 	}
+
+	result := language.EvalUpdate(update, env)
 
 	if result.Type() == language.ObjectTypeError {
 		return fmt.Errorf("%w: %s", ErrSyntaxError, result.Inspect())

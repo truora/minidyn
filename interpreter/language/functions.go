@@ -9,8 +9,9 @@ import (
 
 // Function represents a function in the dynamodb expression
 type Function struct {
-	Name  string
-	Value func(...Object) Object
+	Name      string
+	Value     func(...Object) Object
+	ForUpdate bool
 }
 
 // Inspect returns the readable value of the object
@@ -53,6 +54,11 @@ var (
 		"size": &Function{
 			Name:  "size",
 			Value: objectSize,
+		},
+		"if_not_exists": &Function{
+			Name:      "if_not_exists",
+			Value:     ifNotExists,
+			ForUpdate: true,
 		},
 	}
 )
@@ -142,4 +148,14 @@ func objectSize(args ...Object) Object {
 	}
 
 	return newError("type not supported: size %s", path.Type())
+}
+
+func ifNotExists(args ...Object) Object {
+	obj := args[0]
+
+	if obj == nil || obj.Type() == ObjectTypeNull {
+		return args[1]
+	}
+
+	return obj
 }

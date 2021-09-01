@@ -40,6 +40,10 @@ func EvalUpdate(n Node, env *Environment) Object {
 		return evalSetExpression(node, env)
 	case *InfixExpression:
 		return evalInfixUpdate(node, env)
+	case *IndexExpression:
+		return evalIndex(node, env)
+	case *CallExpression:
+		return evalUpdateFunctionCall(node, env)
 	case *Identifier:
 		return evalIdentifier(node, env)
 	}
@@ -292,13 +296,15 @@ func evalIdentifier(node *Identifier, env *Environment) Object {
 }
 
 func evalIndex(node *IndexExpression, env *Environment) Object {
-	positions, l, errObj := evalIndexPositions(node, env)
+	positions, o, errObj := evalIndexPositions(node, env)
 	if isError(errObj) {
 		return errObj
 	}
 
-	var obj Object = l
-	for _, pos := range positions {
+	var obj Object = o
+	for i := len(positions) - 1; i >= 0; i-- {
+		pos := positions[i]
+
 		obj = pos.Get(obj)
 		if isError(obj) {
 			return obj
@@ -324,7 +330,12 @@ func (i indexAccessor) Get(container Object) Object {
 	case *Map:
 		pos, ok := i.val.(string)
 		if i.kind == ObjectTypeMap && ok {
-			return c.Value[pos]
+			val := c.Value[pos]
+			if val == nil {
+				return NULL
+			}
+
+			return val
 		}
 	}
 
@@ -531,6 +542,38 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 		return fn
 	}
 
+	funcObj, ok := fn.(*Function)
+	if !ok {
+		return newError("invalid function call; expression: " + node.String())
+	}
+
+	if funcObj.ForUpdate {
+		return newError("the function is not allowed in an condition expression; function: " + funcObj.Name)
+	}
+
+	args := evalExpressions(node.Arguments, env)
+	if len(args) == 1 && isError(args[0]) {
+		return args[0]
+	}
+
+	return fn.(*Function).Value(args...)
+}
+
+func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
+	fn := evalFunctionCallIdentifer(node, env)
+	if isError(fn) {
+		return fn
+	}
+
+	funcObj, ok := fn.(*Function)
+	if !ok {
+		return newError("invalid function call; expression: " + node.String())
+	}
+
+	if !funcObj.ForUpdate {
+		return newError("the function is not allowed in an update expression; function: " + funcObj.Name)
+	}
+
 	args := evalExpressions(node.Arguments, env)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
@@ -549,7 +592,7 @@ func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
 
 	fn, ok := functions[name]
 	if !ok {
-		return newError("function not found: " + name)
+		return newError("invalid function name; function: " + name)
 	}
 
 	return fn
@@ -620,24 +663,23 @@ func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
 }
 
 func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object {
-	positions, l, errObj := evalIndexPositions(n, env)
+	positions, o, errObj := evalIndexPositions(n, env)
 	if isError(errObj) {
 		return errObj
 	}
 
-	var obj Object = l
+	var obj Object = o
 
-	for _, pos := range positions[:len(positions)-1] {
-		l, ok := obj.(*List)
-		if !ok {
-			newError("index operator not supporter: %q", obj.Type())
+	for i := len(positions) - 1; i >= 0; i-- {
+		pos := positions[i]
+		if i == 0 {
+			pos.Set(obj, val)
+
+			break
 		}
 
-		obj = pos.Get(l)
+		obj = pos.Get(obj)
 	}
-
-	pos := positions[len(positions)-1]
-	pos.Set(obj, val)
 
 	return NULL
 }

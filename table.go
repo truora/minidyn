@@ -476,7 +476,7 @@ func (t *table) interpreterUpdate(input interpreter.UpdateInput) {
 	if err != nil {
 		nativeErr := t.nativeInterpreter.Update(input)
 		if nativeErr != nil {
-			panic(nativeErr)
+			panic(err)
 		}
 	}
 }

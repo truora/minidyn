@@ -153,7 +153,7 @@ func objectSize(args ...Object) Object {
 func ifNotExists(args ...Object) Object {
 	obj := args[0]
 
-	if obj.Type() == ObjectTypeNull {
+	if obj == nil || obj.Type() == ObjectTypeNull {
 		return args[1]
 	}
 

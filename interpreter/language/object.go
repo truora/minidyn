@@ -144,16 +144,6 @@ func nativeBoolToBooleanObject(input bool) *Boolean {
 	return FALSE
 }
 
-func nativeNilToNullObject(obj interface{}) Object {
-	if obj == nil {
-		return NULL
-	}
-
-	realObject := obj.(Object)
-
-	return realObject
-}
-
 // Binary is the representation of binaries
 type Binary struct {
 	Value []byte

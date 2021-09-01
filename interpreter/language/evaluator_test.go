@@ -71,6 +71,7 @@ func TestEval(t *testing.T) {
 		{":hashA = :hashB", FALSE},
 		{":hashA = :hashA", TRUE},
 		{":hashA.:a", TRUE},
+		{":nestedMap.lvl1.lvl2", TRUE},
 		// List
 		{":listA = :listB", FALSE},
 		{":listA = :listA", TRUE},
@@ -78,7 +79,7 @@ func TestEval(t *testing.T) {
 		{":listB[0] = :listA[0]", FALSE},
 		{":listB[:listIndex] = :listA[:listIndex]", FALSE},
 		{":matrix[0][0] = :listA[0]", TRUE},
-		{":matrix[0][0] = :listA[0]", TRUE},
+		{":matrix[0][1] = :txtB", TRUE},
 		// StringSet
 		{":strSetA = :strSetB", FALSE},
 		{":strSetA = :strSetA", TRUE},
@@ -151,10 +152,25 @@ func TestEval(t *testing.T) {
 		},
 		":matrix": &dynamodb.AttributeValue{
 			L: []*dynamodb.AttributeValue{
-				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{S: aws.String("a")}}},
+				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{
+					&dynamodb.AttributeValue{S: aws.String("a")},
+					&dynamodb.AttributeValue{S: aws.String("b")},
+				}},
+				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{
+					&dynamodb.AttributeValue{S: aws.String("c")},
+				}},
 			},
 		},
 		":listIndex": &dynamodb.AttributeValue{N: aws.String("0")},
+		":nestedMap": &dynamodb.AttributeValue{
+			M: map[string]*dynamodb.AttributeValue{
+				"lvl1": &dynamodb.AttributeValue{
+					M: map[string]*dynamodb.AttributeValue{
+						"lvl2": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+					},
+				},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
@@ -256,6 +272,10 @@ func TestEvalUpdate(t *testing.T) {
 			"SET :four = if_not_exists(:hash.not_found, :one) + :three",
 			":four", &Number{Value: 4},
 		},
+		{
+			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
+			":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},
+		},
 	}
 
 	env := NewEnvironment()
@@ -276,6 +296,15 @@ func TestEvalUpdate(t *testing.T) {
 				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{N: aws.String("0")}}},
 			},
 		},
+		":nestedMap": &dynamodb.AttributeValue{
+			M: map[string]*dynamodb.AttributeValue{
+				"lvl1": &dynamodb.AttributeValue{
+					M: map[string]*dynamodb.AttributeValue{
+						"lvl2": &dynamodb.AttributeValue{N: aws.String("0")},
+					},
+				},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
@@ -292,7 +321,7 @@ func TestEvalUpdate(t *testing.T) {
 			t.Fatalf("env field %q not found, env=%s,", tt.envField, env.String())
 		}
 
-		if result.Inspect() != tt.expected.Inspect() {
+		if result.ToDynamoDB() == tt.expected.ToDynamoDB() {
 			t.Errorf("result has wrong value for %q. got=%v, want=%v", tt.envField, result.Inspect(), tt.expected.Inspect())
 		}
 	}

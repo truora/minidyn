@@ -187,6 +187,22 @@ func TestObjectSize(t *testing.T) {
 		t.Fatalf("error expected: %s", size.Inspect())
 	}
 }
+
+func TestIfNotExists(t *testing.T) {
+	str := String{Value: "hello"}
+	val := ifNotExists(NULL, &str)
+
+	if str.Inspect() != val.Inspect() {
+		t.Fatalf("expected=%s, actual=%s", str, val.Inspect())
+	}
+
+	val = ifNotExists(&str, NULL)
+
+	if str.Inspect() != val.Inspect() {
+		t.Fatalf("expected=%s, actual=%s", str, val.Inspect())
+	}
+}
+
 func BenchmarkFunctionInspect(b *testing.B) {
 	fn := Function{
 		Name:  "attribute_exists",

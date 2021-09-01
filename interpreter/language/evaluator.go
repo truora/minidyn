@@ -40,6 +40,8 @@ func EvalUpdate(n Node, env *Environment) Object {
 		return evalSetExpression(node, env)
 	case *InfixExpression:
 		return evalInfixUpdate(node, env)
+	case *CallExpression:
+		return evalUpdateFunctionCall(node, env)
 	case *Identifier:
 		return evalIdentifier(node, env)
 	}
@@ -324,7 +326,7 @@ func (i indexAccessor) Get(container Object) Object {
 	case *Map:
 		pos, ok := i.val.(string)
 		if i.kind == ObjectTypeMap && ok {
-			return c.Value[pos]
+			return nativeNilToNullObject(c.Value[pos])
 		}
 	}
 
@@ -531,6 +533,38 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 		return fn
 	}
 
+	funcObj, ok := fn.(*Function)
+	if !ok {
+		return newError("invalid function call; expression: " + node.String())
+	}
+
+	if funcObj.ForUpdate {
+		return newError("the function is not allowed in an condition expression; function: " + funcObj.Name)
+	}
+
+	args := evalExpressions(node.Arguments, env)
+	if len(args) == 1 && isError(args[0]) {
+		return args[0]
+	}
+
+	return fn.(*Function).Value(args...)
+}
+
+func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
+	fn := evalFunctionCallIdentifer(node, env)
+	if isError(fn) {
+		return fn
+	}
+
+	funcObj, ok := fn.(*Function)
+	if !ok {
+		return newError("invalid function call; expression: " + node.String())
+	}
+
+	if !funcObj.ForUpdate {
+		return newError("the function is not allowed in an update expression; function: " + funcObj.Name)
+	}
+
 	args := evalExpressions(node.Arguments, env)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
@@ -549,7 +583,7 @@ func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
 
 	fn, ok := functions[name]
 	if !ok {
-		return newError("function not found: " + name)
+		return newError("invalid function name; function: " + name)
 	}
 
 	return fn

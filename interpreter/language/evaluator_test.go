@@ -236,6 +236,8 @@ func TestEvalUpdate(t *testing.T) {
 		{"SET :two = :one + :one", ":two", &Number{Value: 2}},
 		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}},
 		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}},
+		{"SET :newTwo = if_not_exists(not_found, :one) + :one", ":newTwo", &Number{Value: 2}},
+		{"SET :three = if_not_exists(:two, :one) + :one", ":three", &Number{Value: 3}},
 		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}},
 		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}},
 		{
@@ -249,6 +251,10 @@ func TestEvalUpdate(t *testing.T) {
 		{
 			"SET :hash.:mapField = :one",
 			":hash", &Map{Value: map[string]Object{"a": &Number{Value: 1}, "key": &Number{Value: 1}}},
+		},
+		{
+			"SET :four = if_not_exists(:hash.not_found, :one) + :three",
+			":four", &Number{Value: 4},
 		},
 	}
 
@@ -323,7 +329,7 @@ func TestErrorHandling(t *testing.T) {
 		},
 		{
 			"undefined(:a)",
-			"function not found: undefined",
+			"invalid function name; function: undefined",
 		},
 		{
 			"NOT :nil",
@@ -436,7 +442,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"SET x = size(:val)",
-			"unsupported expression: size(:val)",
+			"the function is not allowed in an update expression; function: size",
 		},
 		{
 			"SET :one + :one = :val",

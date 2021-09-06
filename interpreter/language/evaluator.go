@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 // Eval runs the expression in the environment
@@ -287,6 +288,12 @@ func equalObject(left, right Object) bool {
 }
 
 func evalIdentifier(node *Identifier, env *Environment) Object {
+	attributeName := strings.ToUpper(node.Token.Literal)
+
+	if IsReservedWord(attributeName) {
+		return newError(fmt.Sprintf("reserved word %s found in expression", attributeName))
+	}
+
 	val := env.Get(node.Value)
 	if isError(val) {
 		return val
@@ -530,6 +537,10 @@ func evalBetweenOperand(exp Expression, env *Environment) Object {
 	}
 
 	val := evalIdentifier(identifier, env)
+	if val.Type() == ObjectTypeError {
+		return val
+	}
+
 	if !comparableTypes[val.Type()] && !isUndefined(val) {
 		return newError("unexpected type: %q should be a comparable type(N,S,B) got %q", exp.String(), val.Type())
 	}

@@ -289,6 +289,16 @@ func (m *Map) ToDynamoDB() *dynamodb.AttributeValue {
 	return attr
 }
 
+// Get returns the contained object in the field
+func (m *Map) Get(field string) Object {
+	obj, ok := m.Value[field]
+	if !ok {
+		return NULL
+	}
+
+	return obj
+}
+
 // List is the representation of list
 type List struct {
 	Value []Object
@@ -326,6 +336,16 @@ func (l *List) ToDynamoDB() *dynamodb.AttributeValue {
 	}
 
 	return attr
+}
+
+// Get returns the contained object in the position
+func (l *List) Get(position int64) Object {
+	obj := l.Value[position]
+	if obj == nil {
+		return NULL
+	}
+
+	return obj
 }
 
 // Contains whether or not the obj is contained in the list

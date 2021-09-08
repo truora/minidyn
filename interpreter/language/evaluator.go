@@ -287,9 +287,9 @@ func equalObject(left, right Object) bool {
 }
 
 func evalIdentifier(node *Identifier, env *Environment) Object {
-	val, ok := env.Get(node.Value)
-	if !ok {
-		return NULL
+	val := env.Get(node.Value)
+	if isError(val) {
+		return val
 	}
 
 	return val
@@ -325,17 +325,12 @@ func (i indexAccessor) Get(container Object) Object {
 	case *List:
 		pos, ok := i.val.(int64)
 		if i.kind == ObjectTypeList && ok {
-			return c.Value[pos]
+			return c.Get(pos)
 		}
 	case *Map:
 		pos, ok := i.val.(string)
 		if i.kind == ObjectTypeMap && ok {
-			val := c.Value[pos]
-			if val == nil {
-				return NULL
-			}
-
-			return val
+			return c.Get(pos)
 		}
 	}
 
@@ -357,6 +352,7 @@ func (i indexAccessor) Set(container, val Object) Object {
 		}
 	case *Map:
 		pos, ok := i.val.(string)
+
 		if i.kind == ObjectTypeMap && ok {
 			c.Value[pos] = val
 		}
@@ -465,7 +461,12 @@ func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
 
 	str, ok := obj.(*String)
 	if !ok {
-		return node.Token.Literal, nil
+		name := node.Token.Literal
+		if alias, ok := env.Aliases[name]; ok {
+			name = alias
+		}
+
+		return name, nil
 	}
 
 	return str.Value, nil

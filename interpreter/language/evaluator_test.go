@@ -276,6 +276,14 @@ func TestEvalUpdate(t *testing.T) {
 			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
 			":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},
 		},
+		{
+			"SET :nestedMap.#pos = #pos + :one",
+			":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 2}}}}},
+		},
+		{
+			"SET :nestedMap.#secondLevel = #pos + :one",
+			":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 3}}}}},
+		},
 	}
 
 	env := NewEnvironment()
@@ -310,16 +318,18 @@ func TestEvalUpdate(t *testing.T) {
 		t.Fatalf("error adding attributes %#v", err)
 	}
 
+	env.Aliases = map[string]string{
+		"#pos":         ":nestedMap.lvl1.lvl2",
+		"#secondLevel": "lvl1.lvl2",
+	}
+
 	for _, tt := range tests {
 		result := testEvalUpdate(t, tt.input, env)
 		if isError(result) {
 			t.Fatalf("error evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
 		}
 
-		result, ok := env.Get(tt.envField)
-		if !ok {
-			t.Fatalf("env field %q not found, env=%s,", tt.envField, env.String())
-		}
+		result = env.Get(tt.envField)
 
 		if result.ToDynamoDB() == tt.expected.ToDynamoDB() {
 			t.Errorf("result has wrong value for %q. got=%v, want=%v", tt.envField, result.Inspect(), tt.expected.Inspect())
@@ -387,6 +397,10 @@ func TestErrorHandling(t *testing.T) {
 		{
 			":y BETWEEN :x AND :str",
 			"mismatch type: BETWEEN operands must have the same type",
+		},
+		{
+			":y.:str",
+			"index operator not supported for \"N\"",
 		},
 	}
 

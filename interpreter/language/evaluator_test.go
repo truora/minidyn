@@ -402,6 +402,10 @@ func TestErrorHandling(t *testing.T) {
 			":y.:str",
 			"index operator not supported for \"N\"",
 		},
+		{
+			"ROLE BETWEEN :x AND :str",
+			"reserved word ROLE found in expression",
+		},
 	}
 
 	env := NewEnvironment()

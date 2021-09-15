@@ -192,6 +192,7 @@ func TestEvalFunctions(t *testing.T) {
 		{"size(:s)", &Number{Value: 12}},
 		{"size(:bin)", &Number{Value: 3}},
 		{"attribute_exists(:n)", FALSE},
+		{"attribute_exists(h.notFound)", FALSE},
 		{"attribute_not_exists(:n)", TRUE},
 		{"begins_with(:s, :prefix)", TRUE},
 		{"contains(:s, :subtext)", TRUE},
@@ -511,6 +512,14 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 			"SET x = :one + (:one - :val)",
 			"invalid operation: N - S",
 		},
+		{
+			"SET h.bar = :one",
+			"index assignation for \"NULL\" type is not supported",
+		},
+		{
+			"SET notFound.bar = :one",
+			"index assignation for \"NULL\" type is not supported",
+		},
 	}
 
 	env := NewEnvironment()
@@ -519,6 +528,11 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		":x":   &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
 		":val": &dynamodb.AttributeValue{S: aws.String("text")},
 		":one": &dynamodb.AttributeValue{N: aws.String("1")},
+		":h": &dynamodb.AttributeValue{
+			M: map[string]*dynamodb.AttributeValue{
+				"a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+			},
+		},
 	})
 	if err != nil {
 		panic(err)

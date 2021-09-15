@@ -341,6 +341,10 @@ func (i indexAccessor) Get(container Object) Object {
 		}
 	}
 
+	if isUndefined(container) {
+		return container
+	}
+
 	return newError("index operator %s not supporter: %q", i.operator.Literal, container.Type())
 }
 
@@ -356,6 +360,8 @@ func (i indexAccessor) Set(container, val Object) Object {
 			}
 
 			c.Value = append(c.Value, val)
+
+			return NULL
 		}
 	case *Map:
 		pos, ok := i.val.(string)
@@ -367,7 +373,7 @@ func (i indexAccessor) Set(container, val Object) Object {
 		return NULL
 	}
 
-	return newError("index operator not supporter: %q", container.Type())
+	return newError("index assignation for %q type is not supported", container.Type())
 }
 
 func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, Object, Object) {
@@ -416,6 +422,10 @@ func evalIndexObj(identifierExpression Expression, env *Environment) (Object, Ob
 		return obj, nil
 	case *Error:
 		return nil, obj
+	}
+
+	if isUndefined(obj) {
+		return obj, nil
 	}
 
 	return nil, newError("index operator not supported for %q", obj.Type())
@@ -685,7 +695,10 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 	for i := len(positions) - 1; i >= 0; i-- {
 		pos := positions[i]
 		if i == 0 {
-			pos.Set(obj, val)
+			errObj := pos.Set(obj, val)
+			if isError(errObj) {
+				return errObj
+			}
 
 			break
 		}

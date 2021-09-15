@@ -45,7 +45,7 @@ func ensurePokemonTypeIndex(client dynamodbiface.DynamoDBAPI) error {
 	var aerr awserr.Error
 	ok := errors.As(err, &aerr)
 
-	if !ok || aerr.Code() != dynamodb.ErrCodeResourceInUseException {
+	if !ok || aerr.Code() != "ValidationException" {
 		return err
 	}
 

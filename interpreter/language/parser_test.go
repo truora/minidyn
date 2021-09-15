@@ -9,21 +9,16 @@ func TestIdentifierExpression(t *testing.T) {
 	l := NewLexer(input)
 	p := NewParser(l)
 
-	conditional := p.ParseConditionalExpression()
-	checkParserErrors(t, p)
+	p.ParseConditionalExpression()
 
-	ident, ok := conditional.Expression.(*Identifier)
-	if !ok {
-		t.Fatalf("exp not *Identifier. got=%T", conditional.Expression)
+	errors := p.Errors()
+	if len(errors) == 0 {
+		t.Fatalf("condition expression with only an identifier must fail")
 	}
 
-	if ident.Value != "foobar" {
-		t.Errorf("ident.Value not %s. got=%s", "foobar", ident.Value)
-	}
-
-	if ident.TokenLiteral() != "foobar" {
-		t.Errorf("ident.TokenLiteral not %s. got=%s", "foobar",
-			ident.TokenLiteral())
+	expect := "Syntax error; token: <EOF>, near: \"foobar\""
+	if errors[0] != expect {
+		t.Fatalf("expect error to be equal to %s got=%s", expect, errors[0])
 	}
 }
 

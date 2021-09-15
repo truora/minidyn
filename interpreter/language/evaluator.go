@@ -12,7 +12,7 @@ import (
 func Eval(n Node, env *Environment) Object {
 	switch node := n.(type) {
 	case *ConditionalExpression:
-		return Eval(node.Expression, env)
+		return evalConditional(node, env)
 	case *UpdateExpression:
 		return Eval(node.Expression, env)
 	case *PrefixExpression:
@@ -96,6 +96,19 @@ func matchTypes(typ ObjectType, objs ...Object) bool {
 	}
 
 	return true
+}
+
+func evalConditional(n *ConditionalExpression, env *Environment) Object {
+	obj := Eval(n.Expression, env)
+	if isError(obj) {
+		return obj
+	}
+
+	if obj.Type() != ObjectTypeBoolean {
+		return newError("a condition must evaluate to a BOOL, %q evaluates to %q", n.String(), obj.Type())
+	}
+
+	return obj
 }
 
 func evalPrefixExpression(node *PrefixExpression, env *Environment) Object {

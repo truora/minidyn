@@ -13,8 +13,6 @@ func TestEval(t *testing.T) {
 		input    string
 		expected Object
 	}{
-		{":a", TRUE},
-		{":b", FALSE},
 		{"NOT :a", FALSE},
 		{"NOT :b", TRUE},
 		{"NOT NOT :a", TRUE},
@@ -189,8 +187,8 @@ func TestEvalFunctions(t *testing.T) {
 		input    string
 		expected Object
 	}{
-		{"size(:s)", &Number{Value: 12}},
-		{"size(:bin)", &Number{Value: 3}},
+		{"size(:s) = :sSize", TRUE},
+		{"size(:bin) = :binSize", TRUE},
 		{"attribute_exists(:n)", FALSE},
 		{"attribute_exists(h.notFound)", FALSE},
 		{"attribute_not_exists(:n)", TRUE},
@@ -207,8 +205,10 @@ func TestEvalFunctions(t *testing.T) {
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
 		":s":       &dynamodb.AttributeValue{S: aws.String("HELLO WORLD!")},
+		":sSize":   &dynamodb.AttributeValue{N: aws.String("12")},
 		":type":    &dynamodb.AttributeValue{S: aws.String("S")},
 		":bin":     &dynamodb.AttributeValue{B: []byte{10, 10, 10}},
+		":binSize": &dynamodb.AttributeValue{N: aws.String("3")},
 		":prefix":  &dynamodb.AttributeValue{S: aws.String("HELLO")},
 		":subtext": &dynamodb.AttributeValue{S: aws.String("ELL")},
 		":element": &dynamodb.AttributeValue{S: aws.String("a")},

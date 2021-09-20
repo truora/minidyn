@@ -439,6 +439,64 @@ func TestErrorHandling(t *testing.T) {
 	}
 }
 
+func TestEvalReservedKeywords(t *testing.T) {
+	tests := []struct {
+		input           string
+		expectedMessage string
+	}{
+		{
+			"size = :x",
+			"reserved word SIZE found in expression",
+		},
+		{
+			"hash = :x",
+			"reserved word HASH found in expression",
+		},
+		{
+			":obj.size = :x",
+			"",
+		},
+	}
+
+	env := NewEnvironment()
+
+	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
+		":y":   &dynamodb.AttributeValue{N: aws.String("25")},
+		":str": &dynamodb.AttributeValue{S: aws.String("TEXT")},
+		":obj": &dynamodb.AttributeValue{
+			M: map[string]*dynamodb.AttributeValue{
+				"a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+			},
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	for i, tt := range tests {
+		evaluated := testEval(t, tt.input, env)
+
+		if tt.expectedMessage == "" {
+			errObj, ok := evaluated.(*Error)
+			if ok {
+				t.Errorf("(%d) error not expected for %q. got=%s", i, tt.input, errObj.Message)
+			}
+
+			continue
+		}
+
+		errObj, ok := evaluated.(*Error)
+		if !ok {
+			t.Errorf("(%d) no error object returned for %s. got=%T(%+v)", i, tt.input, evaluated, evaluated)
+			continue
+		}
+
+		if errObj.Message != tt.expectedMessage {
+			t.Errorf("wrong error message for %s. expected=%q, got=%q", tt.input, tt.expectedMessage, errObj.Message)
+		}
+	}
+}
+
 func TestIsError(t *testing.T) {
 	b := isError(nil)
 	if b {

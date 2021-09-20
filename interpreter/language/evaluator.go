@@ -26,7 +26,7 @@ func Eval(n Node, env *Environment) Object {
 	case *CallExpression:
 		return evalFunctionCall(node, env)
 	case *Identifier:
-		return evalIdentifier(node, env)
+		return evalIdentifier(node, env, true)
 	}
 
 	return newError("unsupported expression: %s", n.String())
@@ -46,7 +46,7 @@ func EvalUpdate(n Node, env *Environment) Object {
 	case *CallExpression:
 		return evalUpdateFunctionCall(node, env)
 	case *Identifier:
-		return evalIdentifier(node, env)
+		return evalIdentifier(node, env, true)
 	}
 
 	return newError("unsupported expression: %s", n.String())
@@ -300,10 +300,10 @@ func equalObject(left, right Object) bool {
 	return reflect.DeepEqual(left, right)
 }
 
-func evalIdentifier(node *Identifier, env *Environment) Object {
+func evalIdentifier(node *Identifier, env *Environment, toplevel bool) Object {
 	attributeName := strings.ToUpper(node.Token.Literal)
 
-	if IsReservedWord(attributeName) {
+	if toplevel && IsReservedWord(attributeName) {
 		return newError(fmt.Sprintf("reserved word %s found in expression", attributeName))
 	}
 
@@ -427,7 +427,7 @@ func evalIndexObj(identifierExpression Expression, env *Environment) (Object, Ob
 		return nil, newError("identifier expected: got %q", identifierExpression.String())
 	}
 
-	obj := evalIdentifier(identifier, env)
+	obj := evalIdentifier(identifier, env, true)
 	switch obj.(type) {
 	case *List:
 		return obj, nil
@@ -470,7 +470,7 @@ func evalListIndexValue(node *Identifier, env *Environment) (int64, Object) {
 		return int64(n), nil
 	}
 
-	obj := evalIdentifier(node, env)
+	obj := evalIdentifier(node, env, true)
 	if isError(obj) {
 		return 0, obj
 	}
@@ -484,7 +484,7 @@ func evalListIndexValue(node *Identifier, env *Environment) (int64, Object) {
 }
 
 func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
-	obj := evalIdentifier(node, env)
+	obj := evalIdentifier(node, env, false)
 	if isError(obj) {
 		return "", obj
 	}
@@ -559,7 +559,7 @@ func evalBetweenOperand(exp Expression, env *Environment) Object {
 		return newError("identifier expected: got %q", exp.String())
 	}
 
-	val := evalIdentifier(identifier, env)
+	val := evalIdentifier(identifier, env, true)
 	if val.Type() == ObjectTypeError {
 		return val
 	}

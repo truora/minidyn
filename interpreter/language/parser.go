@@ -105,6 +105,13 @@ func (p *Parser) nextToken() {
 func (p *Parser) ParseConditionalExpression() *ConditionalExpression {
 	stmt := &ConditionalExpression{Token: p.curToken}
 
+	if p.curToken.Type == IDENT && p.peekToken.Type == EOF {
+		msg := fmt.Sprintf("Syntax error; token: <EOF>, near: %q", p.curToken.Literal)
+		p.errors = append(p.errors, msg)
+
+		return stmt
+	}
+
 	for p.curToken.Type != EOF {
 		stmt.Expression = p.parseExpression(precedenceValueLowset)
 

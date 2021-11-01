@@ -22,15 +22,15 @@ const (
 )
 
 var (
-	// emulatedInternalServeError represents the error for dynamodb internal server error
-	emulatedInternalServeError = awserr.New(dynamodb.ErrCodeInternalServerError, "emulated error", nil)
+	// EmulatedInternalServeError represents the error for dynamodb internal server error
+	EmulatedInternalServeError = awserr.New(dynamodb.ErrCodeInternalServerError, "emulated error", nil)
 	// ErrForcedFailure when the error is forced
 	// Deprecated: use EmulateFailure instead
 	ErrForcedFailure = errors.New("forced failure response")
 
 	emulatingErrors = map[FailureCondition]error{
 		FailureConditionNone:                nil,
-		FailureConditionInternalServerError: emulatedInternalServeError,
+		FailureConditionInternalServerError: EmulatedInternalServeError,
 		FailureConditionDeprecated:          ErrForcedFailure,
 	}
 )

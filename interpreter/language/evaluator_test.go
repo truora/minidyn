@@ -45,6 +45,8 @@ func TestEval(t *testing.T) {
 		{":txtA = :txtA", TRUE},
 		{":txtB = :nullField", FALSE},
 		{":nullField = :txtB", FALSE},
+		{"#alias_field_name <> :txtA", TRUE},
+		{"#alias_field_name = :txtA", FALSE},
 		// Binaries
 		{":binA < :binB", TRUE},
 		{":binA <= :binB", TRUE},
@@ -90,6 +92,10 @@ func TestEval(t *testing.T) {
 	}
 
 	env := NewEnvironment()
+
+	env.Aliases = map[string]string{
+		"#alias_field_name": "field_name",
+	}
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
 		":a":        &dynamodb.AttributeValue{BOOL: aws.Bool(true)},

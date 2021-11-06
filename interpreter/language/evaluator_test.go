@@ -13,13 +13,13 @@ func TestEval(t *testing.T) {
 		input    string
 		expected Object
 	}{
-		{"NOT :a", FALSE},
-		{"NOT :b", TRUE},
-		{"NOT NOT :a", TRUE},
-		{":x = :y", FALSE},
+		{":a = :a", TRUE},
+		{"NOT :a = :a", FALSE},
 		{":a = :b", FALSE},
-		{":a AND :b", FALSE},
-		{":a OR :b", TRUE},
+		{":a = :a AND :b = :b", TRUE},
+		{":a = :a AND :a = :b", FALSE},
+		{":a = :a OR :a = :b", TRUE},
+		{":x = :y", FALSE},
 		// Numbers
 		{":s = :b", FALSE},
 		{":x < :y", TRUE},
@@ -92,79 +92,79 @@ func TestEval(t *testing.T) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":a":        &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
-		":b":        &dynamodb.AttributeValue{BOOL: aws.Bool(false)},
-		":s":        &dynamodb.AttributeValue{S: aws.String("HELLO WORLD!")},
-		":x":        &dynamodb.AttributeValue{N: aws.String("24")},
-		":y":        &dynamodb.AttributeValue{N: aws.String("25")},
-		":z":        &dynamodb.AttributeValue{N: aws.String("26")},
-		":txtA":     &dynamodb.AttributeValue{S: aws.String("a")},
-		":txtB":     &dynamodb.AttributeValue{S: aws.String("b")},
-		":txtC":     &dynamodb.AttributeValue{S: aws.String("c")},
-		":binA":     &dynamodb.AttributeValue{B: []byte("a")},
-		":binB":     &dynamodb.AttributeValue{B: []byte("b")},
-		":binC":     &dynamodb.AttributeValue{B: []byte("c")},
-		":nil":      &dynamodb.AttributeValue{NULL: aws.Bool(true)},
-		":otherNil": &dynamodb.AttributeValue{NULL: aws.Bool(true)},
-		":hashA": &dynamodb.AttributeValue{
+		":a":        {BOOL: aws.Bool(true)},
+		":b":        {BOOL: aws.Bool(false)},
+		":s":        {S: aws.String("HELLO WORLD!")},
+		":x":        {N: aws.String("24")},
+		":y":        {N: aws.String("25")},
+		":z":        {N: aws.String("26")},
+		":txtA":     {S: aws.String("a")},
+		":txtB":     {S: aws.String("b")},
+		":txtC":     {S: aws.String("c")},
+		":binA":     {B: []byte("a")},
+		":binB":     {B: []byte("b")},
+		":binC":     {B: []byte("c")},
+		":nil":      {NULL: aws.Bool(true)},
+		":otherNil": {NULL: aws.Bool(true)},
+		":hashA": {
 			M: map[string]*dynamodb.AttributeValue{
-				":a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+				":a": {BOOL: aws.Bool(true)},
 			},
 		},
-		":hashB": &dynamodb.AttributeValue{
+		":hashB": {
 			M: map[string]*dynamodb.AttributeValue{
-				":b": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+				":b": {BOOL: aws.Bool(true)},
 			},
 		},
-		":listA": &dynamodb.AttributeValue{
+		":listA": {
 			L: []*dynamodb.AttributeValue{
 				{S: aws.String("a")},
 				{S: aws.String("b")},
 				{S: aws.String("c")},
 			},
 		},
-		":listB": &dynamodb.AttributeValue{
+		":listB": {
 			L: []*dynamodb.AttributeValue{
 				{S: aws.String("x")},
 				{S: aws.String("y")},
 				{S: aws.String("z")},
 			},
 		},
-		":strSetA": &dynamodb.AttributeValue{
+		":strSetA": {
 			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
 		},
-		":strSetB": &dynamodb.AttributeValue{
+		":strSetB": {
 			SS: []*string{aws.String("x"), aws.String("x"), aws.String("y")},
 		},
-		":binSetA": &dynamodb.AttributeValue{
+		":binSetA": {
 			BS: [][]byte{[]byte("a"), []byte("a"), []byte("b")},
 		},
-		":binSetB": &dynamodb.AttributeValue{
+		":binSetB": {
 			BS: [][]byte{[]byte("x"), []byte("x"), []byte("y")},
 		},
-		":numSetA": &dynamodb.AttributeValue{
+		":numSetA": {
 			NS: []*string{aws.String("1"), aws.String("2"), aws.String("4")},
 		},
-		":numSetB": &dynamodb.AttributeValue{
+		":numSetB": {
 			NS: []*string{aws.String("10"), aws.String("10"), aws.String("11")},
 		},
-		":matrix": &dynamodb.AttributeValue{
+		":matrix": {
 			L: []*dynamodb.AttributeValue{
-				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{
-					&dynamodb.AttributeValue{S: aws.String("a")},
-					&dynamodb.AttributeValue{S: aws.String("b")},
+				{L: []*dynamodb.AttributeValue{
+					{S: aws.String("a")},
+					{S: aws.String("b")},
 				}},
-				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{
-					&dynamodb.AttributeValue{S: aws.String("c")},
+				{L: []*dynamodb.AttributeValue{
+					{S: aws.String("c")},
 				}},
 			},
 		},
-		":listIndex": &dynamodb.AttributeValue{N: aws.String("0")},
-		":nestedMap": &dynamodb.AttributeValue{
+		":listIndex": {N: aws.String("0")},
+		":nestedMap": {
 			M: map[string]*dynamodb.AttributeValue{
-				"lvl1": &dynamodb.AttributeValue{
+				"lvl1": {
 					M: map[string]*dynamodb.AttributeValue{
-						"lvl2": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+						"lvl2": {BOOL: aws.Bool(true)},
 					},
 				},
 			},
@@ -204,29 +204,29 @@ func TestEvalFunctions(t *testing.T) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":s":       &dynamodb.AttributeValue{S: aws.String("HELLO WORLD!")},
-		":sSize":   &dynamodb.AttributeValue{N: aws.String("12")},
-		":type":    &dynamodb.AttributeValue{S: aws.String("S")},
-		":bin":     &dynamodb.AttributeValue{B: []byte{10, 10, 10}},
-		":binSize": &dynamodb.AttributeValue{N: aws.String("3")},
-		":prefix":  &dynamodb.AttributeValue{S: aws.String("HELLO")},
-		":subtext": &dynamodb.AttributeValue{S: aws.String("ELL")},
-		":element": &dynamodb.AttributeValue{S: aws.String("a")},
-		":num":     &dynamodb.AttributeValue{N: aws.String("1")},
-		":list": &dynamodb.AttributeValue{
+		":s":       {S: aws.String("HELLO WORLD!")},
+		":sSize":   {N: aws.String("12")},
+		":type":    {S: aws.String("S")},
+		":bin":     {B: []byte{10, 10, 10}},
+		":binSize": {N: aws.String("3")},
+		":prefix":  {S: aws.String("HELLO")},
+		":subtext": {S: aws.String("ELL")},
+		":element": {S: aws.String("a")},
+		":num":     {N: aws.String("1")},
+		":list": {
 			L: []*dynamodb.AttributeValue{
 				{S: aws.String("a")},
 				{S: aws.String("b")},
 				{S: aws.String("c")},
 			},
 		},
-		":strSet": &dynamodb.AttributeValue{
+		":strSet": {
 			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
 		},
-		":binSet": &dynamodb.AttributeValue{
-			BS: [][]byte{[]byte{10, 10, 10}},
+		":binSet": {
+			BS: [][]byte{{10, 10, 10}},
 		},
-		":numSet": &dynamodb.AttributeValue{
+		":numSet": {
 			NS: []*string{aws.String("1"), aws.String("2"), aws.String("4")},
 		},
 	})
@@ -290,26 +290,26 @@ func TestEvalUpdate(t *testing.T) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":    &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
-		":val":  &dynamodb.AttributeValue{S: aws.String("text")},
-		":one":  &dynamodb.AttributeValue{N: aws.String("1")},
-		":list": &dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{N: aws.String("0")}}},
-		":hash": &dynamodb.AttributeValue{
+		":x":    {BOOL: aws.Bool(true)},
+		":val":  {S: aws.String("text")},
+		":one":  {N: aws.String("1")},
+		":list": {L: []*dynamodb.AttributeValue{{N: aws.String("0")}}},
+		":hash": {
 			M: map[string]*dynamodb.AttributeValue{
-				"a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+				"a": {BOOL: aws.Bool(true)},
 			},
 		},
-		":mapField": &dynamodb.AttributeValue{S: aws.String("key")},
-		":matrix": &dynamodb.AttributeValue{
+		":mapField": {S: aws.String("key")},
+		":matrix": {
 			L: []*dynamodb.AttributeValue{
-				&dynamodb.AttributeValue{L: []*dynamodb.AttributeValue{&dynamodb.AttributeValue{N: aws.String("0")}}},
+				{L: []*dynamodb.AttributeValue{{N: aws.String("0")}}},
 			},
 		},
-		":nestedMap": &dynamodb.AttributeValue{
+		":nestedMap": {
 			M: map[string]*dynamodb.AttributeValue{
-				"lvl1": &dynamodb.AttributeValue{
+				"lvl1": {
 					M: map[string]*dynamodb.AttributeValue{
-						"lvl2": &dynamodb.AttributeValue{N: aws.String("0")},
+						"lvl2": {N: aws.String("0")},
 					},
 				},
 			},
@@ -357,11 +357,11 @@ func TestErrorHandling(t *testing.T) {
 		},
 		{
 			":x AND :y",
-			"unknown operator: N AND N",
+			"syntax error; token: :x",
 		},
 		{
 			"NOT :x",
-			"unknown operator: NOT N",
+			"syntax error; token: :x",
 		},
 		{
 			"size(:a)",
@@ -373,19 +373,27 @@ func TestErrorHandling(t *testing.T) {
 		},
 		{
 			"NOT :nil",
-			"unknown operator: NOT NULL",
+			"syntax error; token: :nil",
 		},
 		{
 			"NOT :notfound",
-			"unknown operator: NOT NULL",
+			"syntax error; token: :notfound",
+		},
+		{
+			"size(:notfound) AND :a = :b",
+			"type not supported: size NULL",
+		},
+		{
+			":a = :b AND size(:notfound)",
+			"type not supported: size NULL",
 		},
 		{
 			"size(:notfound) AND :a",
-			"type not supported: size NULL",
+			"syntax error; token: :a",
 		},
 		{
 			":a AND size(:notfound)",
-			"type not supported: size NULL",
+			"syntax error; token: :a",
 		},
 		{
 			"NOT size(:notfound)",
@@ -412,13 +420,13 @@ func TestErrorHandling(t *testing.T) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":a":   &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
-		":b":   &dynamodb.AttributeValue{BOOL: aws.Bool(false)},
-		":x":   &dynamodb.AttributeValue{N: aws.String("24")},
-		":y":   &dynamodb.AttributeValue{N: aws.String("25")},
-		":z":   &dynamodb.AttributeValue{N: aws.String("26")},
-		":str": &dynamodb.AttributeValue{S: aws.String("TEXT")},
-		":nil": &dynamodb.AttributeValue{NULL: aws.Bool(true)},
+		":a":   {BOOL: aws.Bool(true)},
+		":b":   {BOOL: aws.Bool(false)},
+		":x":   {N: aws.String("24")},
+		":y":   {N: aws.String("25")},
+		":z":   {N: aws.String("26")},
+		":str": {S: aws.String("TEXT")},
+		":nil": {NULL: aws.Bool(true)},
 	})
 	if err != nil {
 		panic(err)
@@ -461,11 +469,11 @@ func TestEvalReservedKeywords(t *testing.T) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":y":   &dynamodb.AttributeValue{N: aws.String("25")},
-		":str": &dynamodb.AttributeValue{S: aws.String("TEXT")},
-		":obj": &dynamodb.AttributeValue{
+		":y":   {N: aws.String("25")},
+		":str": {S: aws.String("TEXT")},
+		":obj": {
 			M: map[string]*dynamodb.AttributeValue{
-				"a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+				"a": {BOOL: aws.Bool(true)},
 			},
 		},
 	})
@@ -583,12 +591,12 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":   &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
-		":val": &dynamodb.AttributeValue{S: aws.String("text")},
-		":one": &dynamodb.AttributeValue{N: aws.String("1")},
-		":h": &dynamodb.AttributeValue{
+		":x":   {BOOL: aws.Bool(true)},
+		":val": {S: aws.String("text")},
+		":one": {N: aws.String("1")},
+		":h": {
 			M: map[string]*dynamodb.AttributeValue{
-				"a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
+				"a": {BOOL: aws.Bool(true)},
 			},
 		},
 	})
@@ -617,8 +625,8 @@ func BenchmarkEval(b *testing.B) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":a": &dynamodb.AttributeValue{BOOL: aws.Bool(true)},
-		":b": &dynamodb.AttributeValue{BOOL: aws.Bool(false)},
+		":a": {BOOL: aws.Bool(true)},
+		":b": {BOOL: aws.Bool(false)},
 	})
 	if err != nil {
 		b.Fatal(err)

@@ -225,8 +225,10 @@ func evalNullInfixExpression(operator string, left, right Object) Object {
 }
 
 func evalComparableInfixExpression(operator string, left, right Object) Object {
-	if isUndefined(left) || isUndefined(right) {
-		return FALSE
+	oneSideIsUndefined := isUndefined(left) || isUndefined(right)
+
+	if oneSideIsUndefined {
+		return evalNullInfixExpression(operator, left, right)
 	}
 
 	switch left.Type() {

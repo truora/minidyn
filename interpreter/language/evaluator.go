@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+var (
+	syntaxErrorTemplate = "syntax error; token: %s" // TODO: See how to add ", near: %s" to the error
+)
+
 // Eval runs the expression in the environment
 func Eval(n Node, env *Environment) Object {
 	switch node := n.(type) {
@@ -88,6 +92,12 @@ func isComparable(obj Object) bool {
 	return comparableTypes[obj.Type()] || isUndefined(obj)
 }
 
+func isExpressionIdentifier(expr Expression) bool {
+	_, ok := expr.(*Identifier)
+
+	return ok
+}
+
 func matchTypes(typ ObjectType, objs ...Object) bool {
 	for _, o := range objs {
 		if typ != o.Type() {
@@ -112,6 +122,10 @@ func evalConditional(n *ConditionalExpression, env *Environment) Object {
 }
 
 func evalPrefixExpression(node *PrefixExpression, env *Environment) Object {
+	if isExpressionIdentifier(node.Right) {
+		return newError(syntaxErrorTemplate, node.Right.String())
+	}
+
 	right := Eval(node.Right, env)
 	if isError(right) {
 		return right
@@ -136,6 +150,11 @@ func evalBangOperatorExpression(right Object) Object {
 }
 
 func evalInfixParts(node *InfixExpression, env *Environment) Object {
+	syntaxObj := checkSyntaxInfixParts(node)
+	if isError(syntaxObj) {
+		return syntaxObj
+	}
+
 	left := Eval(node.Left, env)
 	if isError(left) {
 		return left
@@ -147,6 +166,24 @@ func evalInfixParts(node *InfixExpression, env *Environment) Object {
 	}
 
 	return evalInfixExpression(node.Operator, left, right)
+}
+
+func checkSyntaxInfixParts(node *InfixExpression) Object {
+	isLeftIdentifier := isExpressionIdentifier(node.Left)
+	isRightIdentifier := isExpressionIdentifier(node.Right)
+	_, operatorIsKeyword := keywords[node.Operator]
+
+	expr := node.Right
+
+	if isLeftIdentifier {
+		expr = node.Left
+	}
+
+	if operatorIsKeyword && (isLeftIdentifier || isRightIdentifier) {
+		return newError(syntaxErrorTemplate, expr.String())
+	}
+
+	return nil
 }
 
 func evalInfixExpression(operator string, left, right Object) Object {

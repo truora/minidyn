@@ -3,6 +3,7 @@ package minidyn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -113,14 +114,28 @@ func getPokemonsByType(client dynamodbiface.DynamoDBAPI, typ string) ([]map[stri
 func setupClient(table string) dynamodbiface.DynamoDBAPI {
 	dynamodbEndpoint := os.Getenv("LOCAL_DYNAMODB_ENDPOINT")
 	if dynamodbEndpoint != "" {
-		config := &aws.Config{}
-		config.Endpoint = aws.String(dynamodbEndpoint)
-
-		return dynamodb.New(session.Must(session.NewSession(config)))
+		return setupDynamoDBLocal(dynamodbEndpoint)
 	}
 
 	client := NewClient()
 	setupNativeInterpreter(client.GetNativeInterpreter(), table)
+
+	return client
+}
+
+func setupDynamoDBLocal(endpoint string) dynamodbiface.DynamoDBAPI {
+	config := &aws.Config{}
+	// this allow us to test with dynamodb-local
+	config.Endpoint = aws.String(endpoint)
+	config.MaxRetries = aws.Int(1)
+
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Println("settings dynamodb-local tables failed:", err)
+		}
+	}()
+
+	client := dynamodb.New(session.Must(session.NewSession(config)))
 
 	return client
 }
@@ -1211,7 +1226,7 @@ func TestDescribeTableFail(t *testing.T) {
 
 func TestBatchWriteItemWithContext(t *testing.T) {
 	c := require.New(t)
-	client := NewClient()
+	client := setupClient(tableName)
 
 	err := ensurePokemonTable(client)
 	c.NoError(err)
@@ -1255,30 +1270,109 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 
 	output, err := client.BatchWriteItemWithContext(context.Background(), input)
 	c.NoError(err)
-	c.NotEmpty(output.ItemCollectionMetrics)
 
-	collectionKeys, ok := output.ItemCollectionMetrics["table"]
-	c.True(ok)
-	c.Equal(1, len(collectionKeys))
+	c.Equal(itemCollectionMetrics, output.ItemCollectionMetrics)
 
-	key, ok := collectionKeys[0].ItemCollectionKey["report_id"]
-	c.True(ok)
-	c.NotEmpty(key.S)
-	c.Equal("1234", *key.S)
+	c.NotEmpty(getPokemon(client, "001"))
 
-	ReturnUnprocessedItemsInBatch = true
-
-	defer func() { ReturnUnprocessedItemsInBatch = false }()
-
-	output, err = client.BatchWriteItemWithContext(context.Background(), input)
+	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]*dynamodb.WriteRequest{
+			tableName: []*dynamodb.WriteRequest{
+				&dynamodb.WriteRequest{
+					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
+						"id": &dynamodb.AttributeValue{S: aws.String("001")},
+					}},
+				},
+			},
+		},
+	})
 	c.NoError(err)
-	c.NotEmpty(output.UnprocessedItems)
 
-	ActiveForceFailure(client)
-	defer DeactiveForceFailure(client)
+	c.Empty(getPokemon(client, "001"))
+
+	delete(item, "id")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), input)
-	c.Equal(ErrForcedFailure, err)
+	c.Contains(err.Error(), "ValidationException: The number of conditions on the keys is invalid")
+
+	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]*dynamodb.WriteRequest{
+			tableName: []*dynamodb.WriteRequest{
+				&dynamodb.WriteRequest{
+					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
+						"id":   &dynamodb.AttributeValue{S: aws.String("001")},
+						"type": &dynamodb.AttributeValue{S: aws.String("grass")},
+					}},
+					PutRequest: &dynamodb.PutRequest{Item: item},
+				},
+			},
+		},
+	})
+	c.Contains(err.Error(), "ValidationException: Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes")
+
+	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]*dynamodb.WriteRequest{
+			tableName: []*dynamodb.WriteRequest{
+				&dynamodb.WriteRequest{},
+			},
+		},
+	})
+	c.Contains(err.Error(), "ValidationException: Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes")
+
+	item, err = dynamodbattribute.MarshalMap(m)
+	c.NoError(err)
+
+	for i := 0; i < batchRequestsLimit; i++ {
+		requests = append(requests, &dynamodb.WriteRequest{
+			PutRequest: &dynamodb.PutRequest{Item: item},
+		})
+	}
+
+	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]*dynamodb.WriteRequest{
+			tableName: requests,
+		},
+	})
+	c.Contains(err.Error(), "ValidationException: Too many items requested for the BatchWriteItem call")
+}
+
+func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	m := pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	}
+
+	item, err := dynamodbattribute.MarshalMap(m)
+	c.NoError(err)
+
+	requests := []*dynamodb.WriteRequest{
+		&dynamodb.WriteRequest{
+			PutRequest: &dynamodb.PutRequest{
+				Item: item,
+			},
+		},
+	}
+
+	EmulateFailure(client, FailureConditionInternalServerError)
+	defer EmulateFailure(client, FailureConditionNone)
+
+	input := &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]*dynamodb.WriteRequest{
+			tableName: requests,
+		},
+	}
+
+	output, err := client.BatchWriteItemWithContext(context.Background(), input)
+	c.NoError(err)
+
+	c.NotEmpty(output.UnprocessedItems)
 }
 
 func TestTransactWriteItemsWithContext(t *testing.T) {

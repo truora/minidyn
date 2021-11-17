@@ -12,7 +12,10 @@ import (
 	"github.com/truora/minidyn/interpreter"
 )
 
-const primaryIndexName = ""
+const (
+	primaryIndexName   = ""
+	batchRequestsLimit = 25
+)
 
 var (
 	// ErrMissingKeys when missing table keys
@@ -23,9 +26,6 @@ var (
 	ErrResourceNotFoundException = errors.New("requested resource not found")
 	// ErrConditionalRequestFailed when the conditional write is not meet
 	ErrConditionalRequestFailed = errors.New("the conditional request failed")
-
-	// ReturnUnprocessedItemsInBatch bool to control when the BatchWriteItemWithContext should return unprocessed items
-	ReturnUnprocessedItemsInBatch = false
 )
 
 // Client define a mock struct to be used
@@ -463,21 +463,104 @@ func SetItemCollectionMetrics(client dynamodbiface.DynamoDBAPI, itemCollectionMe
 
 // BatchWriteItemWithContext mock response for dynamodb
 func (fd *Client) BatchWriteItemWithContext(ctx aws.Context, input *dynamodb.BatchWriteItemInput, opts ...request.Option) (*dynamodb.BatchWriteItemOutput, error) {
-	if fd.forceFailureErr != nil {
-		return nil, fd.forceFailureErr
-	}
-	//TODO: Implement batch write
+	return fd.BatchWriteItem(input)
+}
 
-	if ReturnUnprocessedItemsInBatch {
-		return &dynamodb.BatchWriteItemOutput{
-			UnprocessedItems:      input.RequestItems,
-			ItemCollectionMetrics: fd.itemCollectionMetrics}, nil
+// BatchWriteItem mock response for dynamodb
+func (fd *Client) BatchWriteItem(input *dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+	if err := validateBatchWriteItemInput(input); err != nil {
+		return &dynamodb.BatchWriteItemOutput{}, err
+	}
+
+	unprocessed := map[string][]*dynamodb.WriteRequest{}
+
+	for table, reqs := range input.RequestItems {
+		for _, req := range reqs {
+			err := executeBatchWriteRequest(fd, aws.String(table), req)
+			err = handleBatchWriteRequestError(table, req, unprocessed, err)
+			if err != nil {
+				return &dynamodb.BatchWriteItemOutput{}, err
+			}
+		}
 	}
 
 	return &dynamodb.BatchWriteItemOutput{
-		UnprocessedItems:      nil,
+		UnprocessedItems:      unprocessed,
 		ItemCollectionMetrics: fd.itemCollectionMetrics,
 	}, nil
+}
+
+func validateBatchWriteItemInput(input *dynamodb.BatchWriteItemInput) error {
+	err := input.Validate()
+	if err != nil {
+		return err
+	}
+
+	count := 0
+	for _, reqs := range input.RequestItems {
+		for _, req := range reqs {
+			if req.DeleteRequest != nil && req.PutRequest != nil {
+				return awserr.New("ValidationException", "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes", nil)
+			}
+
+			if req.DeleteRequest == nil && req.PutRequest == nil {
+				return awserr.New("ValidationException", "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes", nil)
+			}
+
+			count++
+		}
+	}
+
+	if count > batchRequestsLimit {
+		return awserr.New("ValidationException", "Too many items requested for the BatchWriteItem call", nil)
+	}
+
+	return nil
+}
+
+func executeBatchWriteRequest(fd *Client, table *string, req *dynamodb.WriteRequest) error {
+	if req.PutRequest != nil {
+		_, err := fd.PutItem(&dynamodb.PutItemInput{
+			Item:      req.PutRequest.Item,
+			TableName: table,
+		})
+
+		return err
+	}
+
+	if req.DeleteRequest != nil {
+		_, err := fd.DeleteItem(&dynamodb.DeleteItemInput{
+			Key:       req.DeleteRequest.Key,
+			TableName: table,
+		})
+
+		return err
+	}
+
+	return nil
+}
+
+func handleBatchWriteRequestError(table string, req *dynamodb.WriteRequest, unprocessed map[string][]*dynamodb.WriteRequest, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var aerr awserr.Error
+	if ok := errors.As(err, &aerr); !ok {
+		return err
+	}
+
+	if !(aerr.Code() == dynamodb.ErrCodeInternalServerError || aerr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException) {
+		return err
+	}
+
+	if _, ok := unprocessed[table]; !ok {
+		unprocessed[table] = []*dynamodb.WriteRequest{}
+	}
+
+	unprocessed[table] = append(unprocessed[table], req)
+
+	return nil
 }
 
 // TransactWriteItems mock response for dynamodb

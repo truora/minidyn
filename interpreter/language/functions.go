@@ -60,6 +60,11 @@ var (
 			Value:     ifNotExists,
 			ForUpdate: true,
 		},
+		"list_append": &Function{
+			Name:      "list_append",
+			Value:     listAppend,
+			ForUpdate: true,
+		},
 	}
 )
 
@@ -158,4 +163,21 @@ func ifNotExists(args ...Object) Object {
 	}
 
 	return obj
+}
+
+func listAppend(args ...Object) Object {
+	value1 := args[0]
+	if value1.Type() != ObjectTypeList {
+		return newError("list_append is not supported for list1=%s", value1.Type())
+	}
+
+	value2 := args[1]
+	if value2.Type() != ObjectTypeList {
+		return newError("list_append is not supported for list2=%s", value2.Type())
+	}
+
+	list1 := value1.(*List)
+	list2 := value2.(*List)
+
+	return &List{Value: append(list1.Value, list2.Value...)}
 }

@@ -72,11 +72,18 @@ func TestStringContains(t *testing.T) {
 func TestMapInspect(t *testing.T) {
 	str := Map{Value: map[string]Object{
 		":a": TRUE,
+		":b": FALSE,
+		":m": &Map{
+			Value: map[string]Object{
+				":x": TRUE,
+				":y": FALSE,
+			},
+		},
 	}}
-	expected := "{\n  \":a\" : true<BOOL>,\n}"
+	expected := "{\n\t\":a\" : true<BOOL>,\n\t\":b\" : false<BOOL>,\n\t\":m\" : {\n\t\t\":x\" : true<BOOL>,\n\t\t\":y\" : false<BOOL>,\n\t}<M>,\n}"
 
 	if str.Inspect() != expected {
-		t.Fatalf("not equal actual=%s expected=%s", str.Inspect(), expected)
+		t.Fatalf("not equal actual=%q expected=%q", str.Inspect(), expected)
 	}
 }
 

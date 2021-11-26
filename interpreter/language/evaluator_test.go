@@ -248,51 +248,7 @@ func TestEvalFunctions(t *testing.T) {
 	}
 }
 
-func TestEvalUpdate(t *testing.T) {
-	tests := []struct {
-		input    string
-		envField string
-		expected Object
-	}{
-		{"SET :x = :val", ":x", &String{Value: "text"}},
-		{"SET :w = :val", ":w", &String{Value: "text"}},
-		{"SET :two = :one + :one", ":two", &Number{Value: 2}},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}},
-		{"SET :newTwo = if_not_exists(not_found, :one) + :one", ":newTwo", &Number{Value: 2}},
-		{"SET :three = if_not_exists(:two, :one) + :one", ":three", &Number{Value: 3}},
-		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}},
-		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}},
-		{
-			"SET :matrix[0][0] = :one",
-			":matrix", &List{Value: []Object{&List{Value: []Object{&Number{Value: 1}}}}},
-		},
-		{
-			"SET :hash.a = :one",
-			":hash", &Map{Value: map[string]Object{"a": &Number{Value: 1}}},
-		},
-		{
-			"SET :hash.:mapField = :one",
-			":hash", &Map{Value: map[string]Object{"a": &Number{Value: 1}, "key": &Number{Value: 1}}},
-		},
-		{
-			"SET :four = if_not_exists(:hash.not_found, :one) + :three",
-			":four", &Number{Value: 4},
-		},
-		{
-			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
-			":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},
-		},
-		{
-			"SET :nestedMap.#pos = #pos + :one",
-			":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 2}}}}},
-		},
-		{
-			"SET :nestedMap.#secondLevel = #pos + :one",
-			":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 3}}}}},
-		},
-	}
-
+func startEvalUpdateEnv(t *testing.T) *Environment {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
@@ -330,7 +286,76 @@ func TestEvalUpdate(t *testing.T) {
 		"#secondLevel": "lvl1.lvl2",
 	}
 
+	return env
+}
+
+func TestEvalUpdate(t *testing.T) {
+	tests := []struct {
+		input    string
+		envField string
+		expected Object
+		keepEnv  bool
+	}{
+		{"SET :x = :val", ":x", &String{Value: "text"}, true},
+		{"SET :w = :val", ":w", &String{Value: "text"}, true},
+		{"SET :two = :one + :one", ":two", &Number{Value: 2}, true},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
+		{"SET :newTwo = if_not_exists(not_found, :one) + :one", ":newTwo", &Number{Value: 2}, true},
+		{"SET :three = if_not_exists(:two, :one) + :one", ":three", &Number{Value: 3}, true},
+		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}, true},
+		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}, true},
+		{
+			"SET :matrix[0][0] = :one",
+			":matrix",
+			&List{Value: []Object{&List{Value: []Object{&Number{Value: 1}}}}},
+			false,
+		},
+		{
+			"SET :hash.a = :one",
+			":hash",
+			&Map{Value: map[string]Object{"a": &Number{Value: 1}}},
+			false,
+		},
+		{
+			"SET :hash.:mapField = :one",
+			":hash",
+			&Map{Value: map[string]Object{"a": &Boolean{Value: true}, "key": &Number{Value: 1}}},
+			false,
+		},
+		{
+			"SET :two = if_not_exists(:hash.not_found, :one) + :one",
+			":two",
+			&Number{Value: 2},
+			false,
+		},
+		{
+			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
+			":nestedMap",
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},
+			false,
+		},
+		{
+			"SET :nestedMap.#pos = #pos + :one",
+			":nestedMap",
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, ":nestedMap.lvl1.lvl2": &Number{Value: 1}}},
+			false,
+		},
+		{
+			"SET :nestedMap.#secondLevel = #pos + :one",
+			":nestedMap",
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, "lvl1.lvl2": &Number{Value: 1}}},
+			false,
+		},
+	}
+
+	env := startEvalUpdateEnv(t)
+
 	for _, tt := range tests {
+		if !tt.keepEnv {
+			env = startEvalUpdateEnv(t)
+		}
+
 		result := testEvalUpdate(t, tt.input, env)
 		if isError(result) {
 			t.Fatalf("error evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
@@ -338,8 +363,8 @@ func TestEvalUpdate(t *testing.T) {
 
 		result = env.Get(tt.envField)
 
-		if result.ToDynamoDB() == tt.expected.ToDynamoDB() {
-			t.Errorf("result has wrong value for %q. got=%v, want=%v", tt.envField, result.Inspect(), tt.expected.Inspect())
+		if result.Inspect() != tt.expected.Inspect() {
+			t.Errorf("result has wrong value for %q in %q. got=%v, want=%v", tt.envField, tt.input, result.Inspect(), tt.expected.Inspect())
 		}
 	}
 }

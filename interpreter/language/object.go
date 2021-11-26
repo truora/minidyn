@@ -255,14 +255,31 @@ type Map struct {
 func (m *Map) Inspect() string {
 	var out bytes.Buffer
 
-	out.WriteString("{")
+	out.WriteString("{\n")
 
-	for k, obj := range m.Value {
-		out.WriteString("\n  \"")
+	keys := make([]string, 0, len(m.Value))
+
+	for k := range m.Value {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		obj := m.Value[k]
+
+		out.WriteString("\t\"")
 		out.WriteString(k)
 		out.WriteString("\" : ")
 
-		out.WriteString(obj.Inspect())
+		str := obj.Inspect()
+
+		if obj.Type() == ObjectTypeMap {
+			str = strings.ReplaceAll(str, "\n", "\n\t")
+		}
+
+		out.WriteString(str)
+
 		out.WriteString("<")
 		out.WriteString(string(obj.Type()))
 		out.WriteString(">,\n")

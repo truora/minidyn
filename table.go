@@ -365,7 +365,7 @@ func (t *table) interpreterMatch(input interpreter.MatchInput) bool {
 
 		matched, nativeErr = t.nativeInterpreter.Match(input)
 		if nativeErr != nil {
-			panic(err)
+			panic(fmt.Errorf("lang interpreter error: %v\nnative interpreter error: %v", err, nativeErr))
 		}
 	}
 
@@ -476,7 +476,7 @@ func (t *table) interpreterUpdate(input interpreter.UpdateInput) {
 	if err != nil {
 		nativeErr := t.nativeInterpreter.Update(input)
 		if nativeErr != nil {
-			panic(err)
+			panic(fmt.Errorf("lang interpreter error: %v\nnative interpreter error: %v", err, nativeErr))
 		}
 	}
 }

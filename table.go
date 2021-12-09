@@ -1,6 +1,7 @@
 package minidyn
 
 import (
+	"errors"
 	"sort"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -471,14 +472,17 @@ func (t *table) put(input *dynamodb.PutItemInput) (map[string]*dynamodb.Attribut
 	return item, nil
 }
 
-func (t *table) interpreterUpdate(input interpreter.UpdateInput) {
+func (t *table) interpreterUpdate(input interpreter.UpdateInput) error {
 	err := t.langInterpreter.Update(input)
-	if err != nil {
+
+	if err != nil && errors.Is(err, interpreter.ErrUnsupportedFeature) {
 		nativeErr := t.nativeInterpreter.Update(input)
 		if nativeErr != nil {
 			panic(err)
 		}
 	}
+
+	return err
 }
 
 func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.AttributeValue, error) {
@@ -517,13 +521,16 @@ func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 
 	oldItem := copyItem(item)
 
-	t.interpreterUpdate(interpreter.UpdateInput{
+	err := t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.name,
 		Expression: aws.StringValue(input.UpdateExpression),
 		Item:       item,
 		Attributes: input.ExpressionAttributeValues,
 		Aliases:    input.ExpressionAttributeNames,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	t.setItem(key, item)
 

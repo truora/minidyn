@@ -63,7 +63,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 // Update change the item with given expression and attributes
 func (li *Language) Update(input UpdateInput) error {
 	l := language.NewLexer(input.Expression)
-	p := language.NewParser(l)
+	p := language.NewUpdateParser(l)
 	update := p.ParseUpdateExpression()
 
 	aliases := map[string]string{}

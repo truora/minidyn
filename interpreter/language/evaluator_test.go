@@ -255,6 +255,7 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 		":x":    {BOOL: aws.Bool(true)},
 		":val":  {S: aws.String("text")},
 		":one":  {N: aws.String("1")},
+		":bin":  {B: []byte("c")},
 		":list": {L: []*dynamodb.AttributeValue{{N: aws.String("0")}}},
 		":hash": {
 			M: map[string]*dynamodb.AttributeValue{
@@ -276,6 +277,15 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 				},
 			},
 		},
+		":strSet": {
+			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
+		},
+		":binSet": {
+			BS: [][]byte{[]byte("a"), []byte("b")},
+		},
+		":numSet": {
+			NS: []*string{aws.String("2"), aws.String("4")},
+		},
 	})
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
@@ -289,7 +299,7 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 	return env
 }
 
-func TestEvalUpdate(t *testing.T) {
+func TestEvalSetUpdate(t *testing.T) {
 	tests := []struct {
 		input    string
 		envField string
@@ -347,6 +357,40 @@ func TestEvalUpdate(t *testing.T) {
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, "lvl1.lvl2": &Number{Value: 1}}},
 			false,
 		},
+	}
+
+	env := startEvalUpdateEnv(t)
+
+	for _, tt := range tests {
+		if !tt.keepEnv {
+			env = startEvalUpdateEnv(t)
+		}
+
+		result := testEvalUpdate(t, tt.input, env)
+		if isError(result) {
+			t.Fatalf("error evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
+		}
+
+		result = env.Get(tt.envField)
+
+		if result.Inspect() != tt.expected.Inspect() {
+			t.Errorf("result has wrong value for %q in %q. got=%v, want=%v", tt.envField, tt.input, result.Inspect(), tt.expected.Inspect())
+		}
+	}
+}
+
+func TestEvalAddUpdate(t *testing.T) {
+	tests := []struct {
+		input    string
+		envField string
+		expected Object
+		keepEnv  bool
+	}{
+		{"ADD :one :one", ":one", &Number{Value: 2}, false},
+		{"ADD :numSet :one", ":numSet", &NumberSet{Value: map[float64]bool{1: true, 2: true, 4: true}}, false},
+		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, false},
+		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": true, "b": true, "text": true}}, false},
+		{"ADD newVal :val", ":val", &String{Value: "text"}, false},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -578,8 +622,8 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		expectedMessage string
 	}{
 		{
-			":x > :a",
-			"unknown operator: >",
+			":one + :one",
+			"invalid update expression: (:one + :one)",
 		},
 		{
 			"SET",
@@ -591,7 +635,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"SET :one + :one = :val",
-			"invalid assignation to: ((:one + :one) = :val)",
+			"invalid assignation to: SET ((:one + :one) = :val)",
 		},
 		{
 			"SET x = :val + :val",
@@ -617,6 +661,10 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 			"SET notFound.bar = :one",
 			"index assignation for \"NULL\" type is not supported",
 		},
+		{
+			"ADD :voidVal :one",
+			"an operand in the update expression has an incorrect data type",
+		},
 	}
 
 	env := NewEnvironment()
@@ -630,6 +678,9 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 				"a": {BOOL: aws.Bool(true)},
 			},
 		},
+		":voidVal": {
+			NULL: aws.Bool(true),
+		},
 	})
 	if err != nil {
 		panic(err)
@@ -640,12 +691,12 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 
 		errObj, ok := evaluated.(*Error)
 		if !ok {
-			t.Errorf("(%d) no error object returned for %s. got=%T(%+v)", i, tt.input, evaluated, evaluated)
+			t.Errorf("(%d) no error object returned for %q. got=%T(%+v)", i, tt.input, evaluated, evaluated)
 			continue
 		}
 
 		if errObj.Message != tt.expectedMessage {
-			t.Errorf("wrong error message for %s. expected=%q, got=%q", tt.input, tt.expectedMessage, errObj.Message)
+			t.Errorf("wrong error message for %q. expected=%q, got=%q", tt.input, tt.expectedMessage, errObj.Message)
 		}
 	}
 }
@@ -693,7 +744,7 @@ func testEval(t *testing.T, input string, env *Environment) Object {
 
 func testEvalUpdate(t *testing.T, input string, env *Environment) Object {
 	l := NewLexer(input)
-	p := NewParser(l)
+	p := NewUpdateParser(l)
 	update := p.ParseUpdateExpression()
 
 	if len(p.errors) != 0 {

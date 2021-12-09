@@ -207,10 +207,6 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 			"((NOT(:a > size(:s))) OR (size(:c) = :a))",
 		},
 		{
-			"a = :x + :y",
-			"(a = (:x + :y))",
-		},
-		{
 			"a[0][0]",
 			"((a[0])[0])",
 		},
@@ -219,6 +215,30 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 	for _, tt := range tests {
 		l := NewLexer(tt.input)
 		p := NewParser(l)
+		conditional := p.ParseConditionalExpression()
+		checkParserErrors(t, p)
+
+		actual := conditional.String()
+		if actual != tt.expected {
+			t.Errorf("expected=%q, got=%q", tt.expected, actual)
+		}
+	}
+}
+
+func TestOperatorPrecedenceUpdateParsing(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			"SET a = :x + :y",
+			"(SET (a = (:x + :y)))",
+		},
+	}
+
+	for _, tt := range tests {
+		l := NewLexer(tt.input)
+		p := NewUpdateParser(l)
 		conditional := p.ParseConditionalExpression()
 		checkParserErrors(t, p)
 
@@ -368,17 +388,44 @@ func TestParsingSetExpression(t *testing.T) {
 	}{
 		{"SET ProductCategory = :c", 1},
 		{"SET ProductCategory = :c, Price = :p", 2},
+		{"SET ProductCategory = :c + :one", 1},
 	}
 
 	for _, tt := range setTests {
 		l := NewLexer(tt.input)
-		p := NewParser(l)
+		p := NewUpdateParser(l)
 		update := p.ParseUpdateExpression()
 		checkParserErrors(t, p)
 
-		opExp, ok := update.Expression.(*SetExpression)
+		opExp, ok := update.Expression.(*UpdateExpression)
 		if !ok {
-			t.Fatalf("exp is not SetExpression. got=%T(%s)", update.Expression, update.Expression)
+			t.Fatalf("exp is not UpdateExpression. got=%T(%s)", update.Expression, update.Expression)
+		}
+
+		if len(opExp.Expressions) != tt.actionsSize {
+			t.Fatalf("unexpected actions size. got=%d expected=(%d)", len(opExp.Expressions), tt.actionsSize)
+		}
+	}
+}
+
+func TestParsingAddExpression(t *testing.T) {
+	setTests := []struct {
+		input       string
+		actionsSize int
+	}{
+		{"ADD ProductTotal :c", 1},
+		{"ADD ProductTotal :c, Price :p", 2},
+	}
+
+	for _, tt := range setTests {
+		l := NewLexer(tt.input)
+		p := NewUpdateParser(l)
+		update := p.ParseUpdateExpression()
+		checkParserErrors(t, p)
+
+		opExp, ok := update.Expression.(*UpdateExpression)
+		if !ok {
+			t.Fatalf("exp is not UpdateExpression. got=%T(%s)", update.Expression, update.Expression)
 		}
 
 		if len(opExp.Expressions) != tt.actionsSize {

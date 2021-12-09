@@ -309,7 +309,12 @@ func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 	}
 
 	item, err := table.update(input)
+
 	if err != nil {
+		if errors.Is(err, interpreter.ErrSyntaxError) {
+			return nil, awserr.New("ValidationException", err.Error(), nil)
+		}
+
 		return nil, err
 	}
 

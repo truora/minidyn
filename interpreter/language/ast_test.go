@@ -139,10 +139,8 @@ func TestUpdateExpression(t *testing.T) {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "a", tl)
 	}
 
-	es.statementNode()
-
-	if es.String() != "" {
-		t.Fatalf("empty expression expected ")
+	if es.String() != "()" {
+		t.Fatalf("unexpected expression representation. expected=%q, got=%q", "SET ()", es.String())
 	}
 }
 

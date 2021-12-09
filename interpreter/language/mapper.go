@@ -102,7 +102,7 @@ func mapAttributeToStringSet(val *dynamodb.AttributeValue) (Object, error) {
 
 func mapAttributeToBinarySet(val *dynamodb.AttributeValue) (Object, error) {
 	bs := BinarySet{
-		Value: make([][]byte, len(val.BS)),
+		Value: make([][]byte, 0, len(val.BS)),
 	}
 
 	for _, val := range val.BS {

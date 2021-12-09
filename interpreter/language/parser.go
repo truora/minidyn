@@ -62,7 +62,6 @@ func NewParser(l *Lexer) *Parser {
 	p.registerPrefix(IDENT, p.parseIdentifier)
 	p.registerPrefix(NOT, p.parsePrefixExpression)
 	p.registerPrefix(LPAREN, p.parseGroupedExpression)
-	p.registerPrefix(SET, p.parseSetExpression)
 
 	p.infixParseFns = make(map[TokenType]infixParseFn)
 	p.registerInfix(EQ, p.parseInfixExpression)
@@ -76,6 +75,32 @@ func NewParser(l *Lexer) *Parser {
 	p.registerInfix(GTE, p.parseInfixExpression)
 	p.registerInfix(AND, p.parseInfixExpression)
 	p.registerInfix(OR, p.parseInfixExpression)
+	p.registerInfix(LPAREN, p.parseCallExpression)
+
+	// Read two tokens, so curToken and peekToken are both set
+	p.nextToken()
+	p.nextToken()
+
+	return p
+}
+
+// NewUpdateParser creates a new parser for update expressions
+func NewUpdateParser(l *Lexer) *Parser {
+	p := &Parser{
+		l:      l,
+		errors: []string{},
+	}
+
+	p.prefixParseFns = map[TokenType]prefixParseFn{}
+	p.registerPrefix(IDENT, p.parseIdentifier)
+
+	p.registerPrefix(LPAREN, p.parseGroupedExpression)
+	p.registerPrefix(SET, p.parseUpdateActionExpression)
+	p.registerPrefix(ADD, p.parseUpdateActionExpression)
+
+	p.infixParseFns = make(map[TokenType]infixParseFn)
+	p.registerInfix(LBRACKET, p.parseIndexExpression)
+	p.registerInfix(DOT, p.parseIndexExpression)
 	p.registerInfix(LPAREN, p.parseCallExpression)
 
 	p.registerInfix(PLUS, p.parseInfixExpression)
@@ -261,8 +286,8 @@ func (p *Parser) parseCallArguments() []Expression {
 	return args
 }
 
-func (p *Parser) ParseUpdateExpression() *UpdateExpression {
-	stmt := &UpdateExpression{Token: p.curToken}
+func (p *Parser) ParseUpdateExpression() *UpdateStatement {
+	stmt := &UpdateStatement{Token: p.curToken}
 
 	for p.curToken.Type != EOF {
 		stmt.Expression = p.parseExpression(precedenceValueLowset)
@@ -273,16 +298,16 @@ func (p *Parser) ParseUpdateExpression() *UpdateExpression {
 	return stmt
 }
 
-func (p *Parser) parseSetExpression() Expression {
-	expression := &SetExpression{
+func (p *Parser) parseUpdateActionExpression() Expression {
+	expression := &UpdateExpression{
 		Token:       p.curToken,
-		Expressions: p.parseActions(),
+		Expressions: p.parseActions(p.curToken),
 	}
 
 	return expression
 }
 
-func (p *Parser) parseActions() []Expression {
+func (p *Parser) parseActions(token Token) []Expression {
 	actions := []Expression{}
 
 	if p.peekTokenIs(EOF) {
@@ -290,12 +315,40 @@ func (p *Parser) parseActions() []Expression {
 	}
 
 	p.nextToken()
-	actions = append(actions, p.parseExpression(precedenceValueLowset))
+
+	action := &ActionExpression{
+		Token: token,
+		Left:  p.parseExpression(precedenceValueLowset),
+	}
+
+	if token.Type == SET && !p.expectPeek(EQ) {
+		return nil
+	}
+
+	p.nextToken()
+
+	action.Right = p.parseExpression(precedenceValueLowset)
+
+	actions = append(actions, action)
 
 	for p.peekTokenIs(COMMA) {
 		p.nextToken()
 		p.nextToken()
-		actions = append(actions, p.parseExpression(precedenceValueLowset))
+
+		action := &ActionExpression{
+			Token: token,
+			Left:  p.parseExpression(precedenceValueLowset),
+		}
+
+		if token.Type == SET && !p.expectPeek(EQ) {
+			return nil
+		}
+
+		p.nextToken()
+
+		action.Right = p.parseExpression(precedenceValueLowset)
+
+		actions = append(actions, action)
 	}
 
 	if !p.expectPeek(EOF) {

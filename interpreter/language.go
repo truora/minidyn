@@ -75,7 +75,12 @@ func (li *Language) Update(input UpdateInput) error {
 	env.Aliases = aliases
 
 	if len(p.Errors()) != 0 {
-		return fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
+		errType := ErrSyntaxError
+		if p.IsUnsupportedExpression() {
+			errType = ErrUnsupportedFeature
+		}
+
+		return fmt.Errorf("%w: %s", errType, strings.Join(p.Errors(), "\n"))
 	}
 
 	item := map[string]*dynamodb.AttributeValue{}

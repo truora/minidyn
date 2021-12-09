@@ -11,6 +11,8 @@ type Parser struct {
 	peekToken Token
 	errors    []string
 
+	unsupported bool
+
 	prefixParseFns map[TokenType]prefixParseFn
 	infixParseFns  map[TokenType]infixParseFn
 }
@@ -97,6 +99,8 @@ func NewUpdateParser(l *Lexer) *Parser {
 	p.registerPrefix(LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(SET, p.parseUpdateActionExpression)
 	p.registerPrefix(ADD, p.parseUpdateActionExpression)
+	p.registerPrefix(REMOVE, p.parseUnsupportedExpression)
+	p.registerPrefix(DELETE, p.parseUnsupportedExpression)
 
 	p.infixParseFns = make(map[TokenType]infixParseFn)
 	p.registerInfix(LBRACKET, p.parseIndexExpression)
@@ -111,6 +115,11 @@ func NewUpdateParser(l *Lexer) *Parser {
 	p.nextToken()
 
 	return p
+}
+
+// IsUnsupportedExpression return if the parsed expression is not a supported feature
+func (p *Parser) IsUnsupportedExpression() bool {
+	return p.unsupported
 }
 
 func (p *Parser) parseIdentifier() Expression {
@@ -296,6 +305,15 @@ func (p *Parser) ParseUpdateExpression() *UpdateStatement {
 	}
 
 	return stmt
+}
+
+func (p *Parser) parseUnsupportedExpression() Expression {
+	msg := fmt.Sprintf("the %s expression is not supported yet", p.curToken.Type)
+	p.errors = append(p.errors, msg)
+
+	p.unsupported = true
+
+	return nil
 }
 
 func (p *Parser) parseUpdateActionExpression() Expression {

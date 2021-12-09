@@ -480,6 +480,8 @@ func (t *table) interpreterUpdate(input interpreter.UpdateInput) error {
 		if nativeErr != nil {
 			panic(err)
 		}
+
+		return nil
 	}
 
 	return err

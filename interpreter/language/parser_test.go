@@ -434,6 +434,36 @@ func TestParsingAddExpression(t *testing.T) {
 	}
 }
 
+func TestParsingUnsupportedExpressions(t *testing.T) {
+	setTests := []struct {
+		input string
+		msg   string
+	}{
+		{"REMOVE ProductTotal[:c]", "the REMOVE expression is not supported yet"},
+		{"DELETE ProductTotal :c", "the DELETE expression is not supported yet"},
+	}
+
+	for _, tt := range setTests {
+		l := NewLexer(tt.input)
+		p := NewUpdateParser(l)
+		p.ParseUpdateExpression()
+
+		errors := p.Errors()
+
+		if len(errors) == 0 {
+			t.Fatalf("the %q expression should fail", tt.input)
+		}
+
+		if errors[0] != tt.msg {
+			t.Fatalf("unexpected message. expect=%s got=%s", tt.input, errors[0])
+		}
+
+		if !p.unsupported {
+			t.Fatalf("the error should be unsupported")
+		}
+	}
+}
+
 func BenchmarkParser(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		l := NewLexer(`attribute_exists(:b) AND begins_with(:b, #s) OR #c`)

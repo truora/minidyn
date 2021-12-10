@@ -90,6 +90,12 @@ type ContainerObject interface {
 	CanContain(objType ObjectType) bool
 }
 
+// AppendableObject abstraction of the object collections
+type AppendableObject interface {
+	Object
+	Add(obj Object) Object
+}
+
 // Number is the representation of numbers
 type Number struct {
 	Value float64
@@ -114,6 +120,18 @@ func (i *Number) ToDynamoDB() *dynamodb.AttributeValue {
 
 func numToString(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// Add if the obj is an number it adds the value to the number
+func (i *Number) Add(obj Object) Object {
+	n, ok := obj.(*Number)
+	if !ok {
+		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	}
+
+	i.Value += n.Value
+
+	return NULL
 }
 
 // Boolean is the representation of boolean
@@ -385,6 +403,13 @@ func (l *List) CanContain(objType ObjectType) bool {
 	return !(objType == ObjectTypeList || objType == ObjectTypeMap || setTypes[objType])
 }
 
+// Add if the obj adds the value to the list
+func (l *List) Add(obj Object) Object {
+	l.Value = append(l.Value, obj)
+
+	return NULL
+}
+
 // StringSet is the representation of map
 type StringSet struct {
 	Value map[string]bool
@@ -458,6 +483,18 @@ func (ss *StringSet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeString || objType == ObjectTypeStringSet
 }
 
+// Add if the obj is an string it adds the value to Set
+func (ss *StringSet) Add(obj Object) Object {
+	s, ok := obj.(*String)
+	if !ok {
+		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	}
+
+	ss.Value[s.Value] = true
+
+	return NULL
+}
+
 // BinarySet is the representation of a binary set
 type BinarySet struct {
 	Value [][]byte
@@ -527,6 +564,22 @@ func (bs *BinarySet) Contains(obj Object) bool {
 // CanContain whether or not the binary set can contain the objType
 func (bs *BinarySet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeBinary || objType == ObjectTypeBinarySet
+}
+
+// Add if the obj is an binary it adds the value to Set
+func (bs *BinarySet) Add(obj Object) Object {
+	bin, ok := obj.(*Binary)
+	if !ok {
+		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	}
+
+	if bs.Contains(bin) {
+		return NULL
+	}
+
+	bs.Value = append(bs.Value, bin.Value)
+
+	return NULL
 }
 
 // NumberSet is the representation of a number set
@@ -602,4 +655,16 @@ func (ns *NumberSet) Contains(obj Object) bool {
 // CanContain whether or not the number set can contain the objType
 func (ns *NumberSet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeNumber || objType == ObjectTypeNumberSet
+}
+
+// Add if the obj is an number it adds the value to Set
+func (ns *NumberSet) Add(obj Object) Object {
+	n, ok := obj.(*Number)
+	if !ok {
+		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	}
+
+	ns.Value[n.Value] = true
+
+	return NULL
 }

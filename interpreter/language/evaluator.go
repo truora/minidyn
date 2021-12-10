@@ -17,8 +17,6 @@ func Eval(n Node, env *Environment) Object {
 	switch node := n.(type) {
 	case *ConditionalExpression:
 		return evalConditional(node, env)
-	case *UpdateExpression:
-		return Eval(node.Expression, env)
 	case *PrefixExpression:
 		return evalPrefixExpression(node, env)
 	case *InfixExpression:
@@ -39,10 +37,13 @@ func Eval(n Node, env *Environment) Object {
 // EvalUpdate runs the update expression in the environment
 func EvalUpdate(n Node, env *Environment) Object {
 	switch node := n.(type) {
-	case *UpdateExpression:
-		return EvalUpdate(node.Expression, env)
-	case *SetExpression:
-		return evalSetExpression(node, env)
+	case *UpdateStatement:
+		ue, ok := node.Expression.(*UpdateExpression)
+		if !ok {
+			return newError("invalid update expression: %s", n.String())
+		}
+
+		return evalUpdateExpression(ue, env)
 	case *InfixExpression:
 		return evalInfixUpdate(node, env)
 	case *IndexExpression:
@@ -672,18 +673,18 @@ func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
 	return fn
 }
 
-func evalSetExpression(node *SetExpression, env *Environment) Object {
+func evalUpdateExpression(node *UpdateExpression, env *Environment) Object {
 	if len(node.Expressions) == 0 {
-		return newError("SET expression must have at least one action")
+		return newError(node.TokenLiteral() + " expression must have at least one action")
 	}
 
 	for _, act := range node.Expressions {
-		infix, ok := act.(*InfixExpression)
+		action, ok := act.(*ActionExpression)
 		if !ok {
 			return newError("invalid infix action")
 		}
 
-		result := EvalUpdate(infix, env)
+		result := evalAction(action, env)
 		if isError(result) {
 			return result
 		}
@@ -692,9 +693,9 @@ func evalSetExpression(node *SetExpression, env *Environment) Object {
 	return NULL
 }
 
-func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
-	switch node.Operator {
-	case "=":
+func evalAction(node *ActionExpression, env *Environment) Object {
+	switch node.Token.Type {
+	case SET:
 		val := EvalUpdate(node.Right, env)
 		if isError(val) {
 			return val
@@ -717,6 +718,37 @@ func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
 		}
 
 		return newError("invalid assignation to: %s", node.String())
+	case ADD:
+		val := EvalUpdate(node.Right, env)
+		if isError(val) {
+			return val
+		}
+
+		id, ok := node.Left.(*Identifier)
+		if ok {
+			obj := env.Get(id.Value)
+
+			if obj == NULL {
+				env.Set(id.Value, val)
+				return obj
+			}
+
+			addObj, ok := obj.(AppendableObject)
+			if !ok {
+				return newError("an operand in the update expression has an incorrect data type")
+			}
+
+			return addObj.Add(val)
+		}
+
+		return NULL
+	}
+
+	return newError("unknown update action type: %s", node.Token.Literal)
+}
+
+func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
+	switch node.Operator {
 	case "+":
 		augend, addend, errObj := evalArithmeticTerms(node, env)
 		if isError(errObj) {

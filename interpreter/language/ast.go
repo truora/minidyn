@@ -202,13 +202,34 @@ func (ce *BetweenExpression) String() string {
 	return out.String()
 }
 
-// UpdateExpression is the update expression root node
-type UpdateExpression struct {
+// UpdateStatement is the update expression root node
+type UpdateStatement struct {
 	Token      Token // the action token
 	Expression Expression
 }
 
-func (ue *UpdateExpression) statementNode() {
+func (us *UpdateStatement) statementNode() {
+	_ = 1 // HACK for passing coverage
+}
+
+// TokenLiteral returns the literal token of the node
+func (us *UpdateStatement) TokenLiteral() string { return us.Token.Literal }
+
+func (us *UpdateStatement) String() string {
+	if us.Expression != nil {
+		return us.Expression.String()
+	}
+
+	return ""
+}
+
+// UpdateExpression is the update expression
+type UpdateExpression struct {
+	Token       Token // set
+	Expressions []Expression
+}
+
+func (ue *UpdateExpression) expressionNode() {
 	_ = 1 // HACK for passing coverage
 }
 
@@ -216,34 +237,49 @@ func (ue *UpdateExpression) statementNode() {
 func (ue *UpdateExpression) TokenLiteral() string { return ue.Token.Literal }
 
 func (ue *UpdateExpression) String() string {
-	if ue.Expression != nil {
-		return ue.Expression.String()
+	var out bytes.Buffer
+
+	out.WriteString("(")
+	for _, exp := range ue.Expressions {
+		out.WriteString(exp.String())
 	}
+	out.WriteString(")")
 
-	return ""
+	return out.String()
 }
 
-// SetExpression is the set expression
-type SetExpression struct {
-	Token       Token // set
-	Expressions []Expression
+// ActionExpression is the action expression of an update expression
+type ActionExpression struct {
+	Token Token // ADD REMOVE DELETE
+	Left  Expression
+	Right Expression
 }
 
-func (st *SetExpression) expressionNode() {
+func (st *ActionExpression) expressionNode() {
 	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node
-func (st *SetExpression) TokenLiteral() string { return st.Token.Literal }
+func (st *ActionExpression) TokenLiteral() string { return st.Token.Literal }
 
-func (st *SetExpression) String() string {
+func (st *ActionExpression) String() string {
 	var out bytes.Buffer
 
-	out.WriteString("SET (")
-	out.WriteString(st.Token.Literal)
-	for _, exp := range st.Expressions {
-		out.WriteString(exp.String())
+	out.WriteString(st.TokenLiteral())
+
+	out.WriteString(" (")
+
+	out.WriteString(st.Left.String())
+
+	sep := ", "
+	if st.Token.Type == SET {
+		sep = " = "
 	}
+
+	out.WriteString(sep)
+
+	out.WriteString(st.Right.String())
+
 	out.WriteString(")")
 
 	return out.String()

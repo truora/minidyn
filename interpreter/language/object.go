@@ -405,6 +405,13 @@ func (l *List) CanContain(objType ObjectType) bool {
 
 // Add if the obj adds the value to the list
 func (l *List) Add(obj Object) Object {
+	if obj.Type() == ObjectTypeList {
+		list := obj.(*List)
+		l.Value = append(l.Value, list.Value...)
+
+		return NULL
+	}
+
 	l.Value = append(l.Value, obj)
 
 	return NULL
@@ -485,14 +492,26 @@ func (ss *StringSet) CanContain(objType ObjectType) bool {
 
 // Add if the obj is an string it adds the value to Set
 func (ss *StringSet) Add(obj Object) Object {
-	s, ok := obj.(*String)
-	if !ok {
-		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	switch obj.Type() {
+	case ObjectTypeStringSet:
+		ssInput, ok := obj.(*StringSet)
+		if ok {
+			for str := range ssInput.Value {
+				ss.Value[str] = true
+			}
+
+			return NULL
+		}
+	case ObjectTypeString:
+		str, ok := obj.(*String)
+		if ok {
+			ss.Value[str.Value] = true
+
+			return NULL
+		}
 	}
 
-	ss.Value[s.Value] = true
-
-	return NULL
+	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
 }
 
 // BinarySet is the representation of a binary set
@@ -568,18 +587,34 @@ func (bs *BinarySet) CanContain(objType ObjectType) bool {
 
 // Add if the obj is an binary it adds the value to Set
 func (bs *BinarySet) Add(obj Object) Object {
-	bin, ok := obj.(*Binary)
-	if !ok {
-		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	switch obj.Type() {
+	case ObjectTypeBinarySet:
+		bsInput, ok := obj.(*BinarySet)
+		if ok {
+			for _, bin := range bsInput.Value {
+				if containedInBinaryArray(bs.Value, bin) {
+					continue
+				}
+
+				bs.Value = append(bs.Value, bin)
+			}
+
+			return NULL
+		}
+	case ObjectTypeBinary:
+		bin, ok := obj.(*Binary)
+		if ok {
+			if bs.Contains(bin) {
+				return NULL
+			}
+
+			bs.Value = append(bs.Value, bin.Value)
+
+			return NULL
+		}
 	}
 
-	if bs.Contains(bin) {
-		return NULL
-	}
-
-	bs.Value = append(bs.Value, bin.Value)
-
-	return NULL
+	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
 }
 
 // NumberSet is the representation of a number set
@@ -657,14 +692,26 @@ func (ns *NumberSet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeNumber || objType == ObjectTypeNumberSet
 }
 
-// Add if the obj is an number it adds the value to Set
+// Add if the obj is an number or number set it adds the value to Set
 func (ns *NumberSet) Add(obj Object) Object {
-	n, ok := obj.(*Number)
-	if !ok {
-		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	switch obj.Type() {
+	case ObjectTypeNumberSet:
+		nsInput, ok := obj.(*NumberSet)
+		if ok {
+			for str := range nsInput.Value {
+				ns.Value[str] = true
+			}
+
+			return NULL
+		}
+	case ObjectTypeNumber:
+		n, ok := obj.(*Number)
+		if ok {
+			ns.Value[n.Value] = true
+
+			return NULL
+		}
 	}
 
-	ns.Value[n.Value] = true
-
-	return NULL
+	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
 }

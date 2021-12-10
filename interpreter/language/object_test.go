@@ -11,6 +11,19 @@ func TestNumberInspect(t *testing.T) {
 	}
 }
 
+func TestNumberAdd(t *testing.T) {
+	n := Number{Value: 1.0}
+
+	obj := n.Add(&Number{Value: 1.0})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if n.Value != 2 {
+		t.Fatalf("result object should be 2, got=%q", n.Inspect())
+	}
+}
+
 func TestBooleanInspect(t *testing.T) {
 	boolean := Boolean{Value: true}
 	if boolean.Inspect() != "true" {
@@ -124,6 +137,28 @@ func TestListContains(t *testing.T) {
 	}
 }
 
+func TestListAdd(t *testing.T) {
+	l := List{Value: []Object{&String{Value: "Cookies"}}}
+
+	obj := l.Add(&String{Value: "Orange"})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(l.Value) != 2 {
+		t.Fatalf("result object should be 2 elements, got=%q", l.Inspect())
+	}
+
+	obj = l.Add(&List{Value: []Object{&String{Value: "Cookies"}}})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(l.Value) != 3 {
+		t.Fatalf("result object should be 3 elements, got=%q", l.Inspect())
+	}
+}
+
 func TestStringSetInspect(t *testing.T) {
 	strSet := StringSet{
 		Value: map[string]bool{
@@ -164,6 +199,28 @@ func TestStringSetContains(t *testing.T) {
 
 	if strSet.Contains(&Number{Value: 10}) {
 		t.Fatalf("should be false")
+	}
+}
+
+func TestStringSetAdd(t *testing.T) {
+	ss := StringSet{Value: map[string]bool{"Cookies": true}}
+
+	obj := ss.Add(&String{Value: "Orange"})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ss.Value) != 2 {
+		t.Fatalf("result object should be 2 elements, got=%q", ss.Inspect())
+	}
+
+	obj = ss.Add(&StringSet{Value: map[string]bool{"Milk": true}})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ss.Value) != 3 {
+		t.Fatalf("result object should be 3 elements, got=%q", ss.Inspect())
 	}
 }
 
@@ -250,6 +307,28 @@ func TestNumberSetContains(t *testing.T) {
 
 	if strSet.Contains(&String{Value: "1"}) {
 		t.Fatalf("should be false")
+	}
+}
+
+func TestNumberSetAdd(t *testing.T) {
+	ns := NumberSet{Value: map[float64]bool{1: true}}
+
+	obj := ns.Add(&Number{Value: 2})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ns.Value) != 2 {
+		t.Fatalf("result object should be 2 elements, got=%q", ns.Inspect())
+	}
+
+	obj = ns.Add(&NumberSet{Value: map[float64]bool{3: true}})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ns.Value) != 3 {
+		t.Fatalf("result object should be 3 elements, got=%q", ns.Inspect())
 	}
 }
 

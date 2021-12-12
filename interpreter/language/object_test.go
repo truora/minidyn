@@ -224,6 +224,28 @@ func TestStringSetAdd(t *testing.T) {
 	}
 }
 
+func TestStringSetDelete(t *testing.T) {
+	ss := StringSet{Value: map[string]bool{"Cookies": true, "Orange": true, "Milk": true}}
+
+	obj := ss.Delete(&String{Value: "Orange"})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ss.Value) != 2 {
+		t.Fatalf("result object should have 2 elements, got=%q", ss.Inspect())
+	}
+
+	obj = ss.Delete(&StringSet{Value: map[string]bool{"Milk": true, "Cookies": true}})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ss.Value) != 0 {
+		t.Fatalf("result object should be empty SS, got=%q", ss.Inspect())
+	}
+}
+
 func TestBinarySetInspect(t *testing.T) {
 	strSet := BinarySet{
 		Value: [][]byte{
@@ -264,6 +286,74 @@ func TestBinarySetContains(t *testing.T) {
 
 	if strSet.Contains(&Number{Value: 10}) {
 		t.Fatalf("should be false")
+	}
+}
+
+func TestBinaryAdd(t *testing.T) {
+	bs := BinarySet{
+		Value: [][]byte{
+			[]byte("Cookies"),
+		},
+	}
+
+	obj := bs.Add(&Binary{Value: []byte("Coffee")})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(bs.Value) != 2 {
+		t.Fatalf("result object should have 2 elements, got=%q", bs.Inspect())
+	}
+
+	more := &BinarySet{
+		Value: [][]byte{
+			[]byte("Cookies"),
+			[]byte("Milk"),
+		},
+	}
+
+	obj = bs.Add(more)
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(bs.Value) != 3 {
+		t.Fatalf("result object should have 3 elements, got=%q", bs.Inspect())
+	}
+}
+
+func TestBinarySetRemove(t *testing.T) {
+	bs := BinarySet{
+		Value: [][]byte{
+			[]byte("Cookies"),
+			[]byte("Coffee"),
+			[]byte("Milk"),
+		},
+	}
+
+	obj := bs.Delete(&Binary{Value: []byte("Coffee")})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(bs.Value) != 2 {
+		t.Fatalf("result object should have 2 elements, got=%q", bs.Inspect())
+	}
+
+	rest := &BinarySet{
+		Value: [][]byte{
+			[]byte("Cookies"),
+			[]byte("Milk"),
+		},
+	}
+
+	obj = bs.Delete(rest)
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(bs.Value) != 0 {
+		t.Fatalf("result object should be empty elements, got=%q", bs.Inspect())
 	}
 }
 
@@ -329,6 +419,28 @@ func TestNumberSetAdd(t *testing.T) {
 
 	if len(ns.Value) != 3 {
 		t.Fatalf("result object should be 3 elements, got=%q", ns.Inspect())
+	}
+}
+
+func TestNumberSetDelete(t *testing.T) {
+	ns := NumberSet{Value: map[float64]bool{1: true, 2: true, 3: true}}
+
+	obj := ns.Delete(&Number{Value: 2})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ns.Value) != 2 {
+		t.Fatalf("result object should have 2 elements, got=%q", ns.Inspect())
+	}
+
+	obj = ns.Delete(&NumberSet{Value: map[float64]bool{1: true, 3: true}})
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(ns.Value) != 0 {
+		t.Fatalf("result object should be empty, got=%q", ns.Inspect())
 	}
 }
 

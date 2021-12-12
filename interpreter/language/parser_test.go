@@ -440,7 +440,6 @@ func TestParsingUnsupportedExpressions(t *testing.T) {
 		msg   string
 	}{
 		{"REMOVE ProductTotal[:c]", "the REMOVE expression is not supported yet"},
-		{"DELETE ProductTotal :c", "the DELETE expression is not supported yet"},
 	}
 
 	for _, tt := range setTests {

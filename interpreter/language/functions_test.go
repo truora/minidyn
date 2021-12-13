@@ -203,6 +203,37 @@ func TestIfNotExists(t *testing.T) {
 	}
 }
 
+func TestListAppend(t *testing.T) {
+	testCases := map[string]struct {
+		arg1   Object
+		arg2   Object
+		result Object
+	}{
+		`success`: {
+			arg1:   &List{Value: []Object{&String{Value: "a"}}},
+			arg2:   &List{Value: []Object{&String{Value: "b"}}},
+			result: &List{Value: []Object{&String{Value: "a"}, &String{Value: "b"}}},
+		},
+		`arg1_no_list`: {
+			arg1:   &String{Value: "a"},
+			arg2:   &List{Value: []Object{&String{Value: "b"}}},
+			result: &Error{Message: "list_append is not supported for list1=S"},
+		},
+		`arg2_no_list`: {
+			arg1:   &List{Value: []Object{&String{Value: "a"}}},
+			arg2:   &String{Value: "b"},
+			result: &Error{Message: "list_append is not supported for list2=S"},
+		},
+	}
+
+	for _, tt := range testCases {
+		r := listAppend(tt.arg1, tt.arg2)
+		if tt.result.Inspect() != r.Inspect() {
+			t.Fatalf("expected=%s, actual=%s", tt.result.Inspect(), r.Inspect())
+		}
+	}
+}
+
 func BenchmarkFunctionInspect(b *testing.B) {
 	fn := Function{
 		Name:  "attribute_exists",

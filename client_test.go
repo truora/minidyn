@@ -558,6 +558,31 @@ func TestPutAndGetItem(t *testing.T) {
 	c.Contains(err.Error(), ErrMissingKeys.Error())
 }
 
+func TestGetItemWithUnusedAttributes(t *testing.T) {
+	c := require.New(t)
+
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	input := &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"id": {
+				S: aws.String("001"),
+			},
+		},
+		ExpressionAttributeNames: map[string]*string{
+			"#name": aws.String("name"),
+		},
+	}
+
+	_, err = client.GetItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
+}
+
 func TestPutItemWithConditions(t *testing.T) {
 	c := require.New(t)
 
@@ -586,6 +611,14 @@ func TestPutItemWithConditions(t *testing.T) {
 
 	_, err = client.PutItemWithContext(context.Background(), input)
 	c.Error(err)
+
+	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
+		":not_used": {NULL: aws.Bool(true)},
+	}
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), unusedExpressionAttributeValuesMsg)
 }
 
 func TestUpdateItemWithContext(t *testing.T) {
@@ -673,6 +706,25 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 			},
 		},
 		ConditionExpression:       aws.String("attribute_exists(id)"),
+		ReturnValues:              aws.String("UPDATED_NEW"),
+		UpdateExpression:          aws.String(uexpr),
+		ExpressionAttributeValues: expr,
+		ExpressionAttributeNames: map[string]*string{
+			"#id": aws.String("id"),
+		},
+	}
+
+	_, err = client.UpdateItemWithContext(context.Background(), input)
+	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
+
+	input = &dynamodb.UpdateItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"id": {
+				S: aws.String("404"),
+			},
+		},
+		ConditionExpression:       aws.String("attribute_exists(#id)"),
 		ReturnValues:              aws.String("UPDATED_NEW"),
 		UpdateExpression:          aws.String(uexpr),
 		ExpressionAttributeValues: expr,
@@ -841,6 +893,12 @@ func TestQueryWithContext(t *testing.T) {
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
 	c.Empty(out.Items)
+
+	input.ExpressionAttributeNames["#not_used"] = aws.String("hello")
+
+	_, err = client.QueryWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 }
 
 func TestQueryWithContextPagination(t *testing.T) {
@@ -1039,6 +1097,14 @@ func TestScanWithContext(t *testing.T) {
 	c.NoError(err)
 	c.Len(out.Items, 1)
 
+	input.ExpressionAttributeNames["#not_used"] = aws.String("hello")
+
+	_, err = client.ScanWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
+
+	delete(input.ExpressionAttributeNames, "#not_used")
+
 	if fclient, isFake := client.(*Client); isFake {
 		ActiveForceFailure(fclient)
 
@@ -1154,6 +1220,14 @@ func TestDeleteItemWithConditions(t *testing.T) {
 
 	_, err = client.DeleteItemWithContext(context.Background(), input)
 	c.Contains(err.Error(), dynamodb.ErrCodeConditionalCheckFailedException)
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#not_used": aws.String("hello"),
+	}
+
+	_, err = client.DeleteItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 }
 
 func TestDeleteItemWithContextWithReturnValues(t *testing.T) {

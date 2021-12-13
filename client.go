@@ -2,6 +2,8 @@ package minidyn
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -13,8 +15,10 @@ import (
 )
 
 const (
-	primaryIndexName   = ""
-	batchRequestsLimit = 25
+	primaryIndexName                   = ""
+	batchRequestsLimit                 = 25
+	unusedExpressionAttributeNamesMsg  = "Value provided in ExpressionAttributeNames unused in expressions"
+	unusedExpressionAttributeValuesMsg = "Value provided in ExpressionAttributeValues unused in expressions"
 )
 
 var (
@@ -211,7 +215,13 @@ func (fd *Client) DescribeTableWithContext(ctx aws.Context, input *dynamodb.Desc
 
 // PutItem mock response for dynamodb
 func (fd *Client) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-	if err := input.Validate(); err != nil {
+	err := input.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ConditionExpression))
+	if err != nil {
 		return nil, err
 	}
 
@@ -241,7 +251,13 @@ func (fd *Client) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInp
 
 // DeleteItem mock response for dynamodb
 func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
-	if err := input.Validate(); err != nil {
+	err := input.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ConditionExpression))
+	if err != nil {
 		return nil, err
 	}
 
@@ -292,7 +308,13 @@ func (fd *Client) DeleteItemWithContext(ctx aws.Context, input *dynamodb.DeleteI
 
 // UpdateItem mock response for dynamodb
 func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-	if err := input.Validate(); err != nil {
+	err := input.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.UpdateExpression), aws.StringValue(input.ConditionExpression))
+	if err != nil {
 		return nil, err
 	}
 
@@ -332,7 +354,13 @@ func (fd *Client) UpdateItemWithContext(ctx aws.Context, input *dynamodb.UpdateI
 
 // GetItem mock response for dynamodb
 func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-	if err := input.Validate(); err != nil {
+	err := input.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.StringValue(input.ProjectionExpression))
+	if err != nil {
 		return nil, err
 	}
 
@@ -369,6 +397,11 @@ func (fd *Client) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemInp
 
 // Query mock response for dynamodb
 func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.KeyConditionExpression), aws.StringValue(input.FilterExpression))
+	if err != nil {
+		return nil, err
+	}
+
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
@@ -411,6 +444,11 @@ func (fd *Client) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput, 
 
 // Scan mock scan operation
 func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
+	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ProjectionExpression), aws.StringValue(input.FilterExpression))
+	if err != nil {
+		return nil, err
+	}
+
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
@@ -591,4 +629,63 @@ func (fd *Client) getTable(tableName string) (*table, error) {
 	}
 
 	return table, nil
+}
+
+func validateExpressionAttributes(exprNames map[string]*string, exprValues map[string]*dynamodb.AttributeValue, genericExpressions ...string) error {
+	genericExpression := strings.Join(genericExpressions, " ")
+	genericExpression = strings.TrimSpace(genericExpression)
+
+	if genericExpression == "" && len(exprNames) == 0 && len(exprValues) == 0 {
+		return nil
+	}
+
+	flattenNames := getKeysFromExpressionNames(exprNames)
+	flattenValues := getKeysFromExpressionValues(exprValues)
+
+	missingNames := getMissingSubstrs(genericExpression, flattenNames)
+	missingValues := getMissingSubstrs(genericExpression, flattenValues)
+
+	if len(missingNames) > 0 {
+		return awserr.New("ValidationException", fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeNamesMsg, strings.Join(missingNames, ", ")), nil)
+	}
+
+	if len(missingValues) > 0 {
+		return awserr.New("ValidationException", fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeValuesMsg, strings.Join(missingValues, ", ")), nil)
+	}
+
+	return nil
+}
+
+func getKeysFromExpressionNames(m map[string]*string) []string {
+	keys := make([]string, 0, len(m))
+
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	return keys
+}
+
+func getKeysFromExpressionValues(m map[string]*dynamodb.AttributeValue) []string {
+	keys := make([]string, 0, len(m))
+
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	return keys
+}
+
+func getMissingSubstrs(s string, substrs []string) []string {
+	missingSubstrs := make([]string, 0, len(substrs))
+
+	for _, substr := range substrs {
+		if strings.Contains(s, substr) {
+			continue
+		}
+
+		missingSubstrs = append(missingSubstrs, substr)
+	}
+
+	return missingSubstrs
 }

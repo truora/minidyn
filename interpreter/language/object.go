@@ -90,10 +90,16 @@ type ContainerObject interface {
 	CanContain(objType ObjectType) bool
 }
 
-// AppendableObject abstraction of the object collections
+// AppendableObject abstraction of the objects that can add other objects
 type AppendableObject interface {
 	Object
 	Add(obj Object) Object
+}
+
+// DetachableObject abstraction of the object that can delete other objects
+type DetachableObject interface {
+	Object
+	Delete(obj Object) Object
 }
 
 // Number is the representation of numbers
@@ -514,6 +520,30 @@ func (ss *StringSet) Add(obj Object) Object {
 	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
 }
 
+// Delete if the obj is an string it removes the value from the Set
+func (ss *StringSet) Delete(obj Object) Object {
+	switch obj.Type() {
+	case ObjectTypeStringSet:
+		ssInput, ok := obj.(*StringSet)
+		if ok {
+			for str := range ssInput.Value {
+				delete(ss.Value, str)
+			}
+
+			return NULL
+		}
+	case ObjectTypeString:
+		str, ok := obj.(*String)
+		if ok {
+			delete(ss.Value, str.Value)
+
+			return NULL
+		}
+	}
+
+	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
+}
+
 // BinarySet is the representation of a binary set
 type BinarySet struct {
 	Value [][]byte
@@ -550,6 +580,20 @@ func containedInBinaryArray(container [][]byte, bin []byte) bool {
 	return false
 }
 
+func removeBinaries(container [][]byte, others [][]byte) [][]byte {
+	out := [][]byte{}
+
+	for _, element := range container {
+		if containedInBinaryArray(others, element) {
+			continue
+		}
+
+		out = append(out, element)
+	}
+
+	return out
+}
+
 // ToDynamoDB returns the dynamodb attribute value
 func (bs *BinarySet) ToDynamoDB() *dynamodb.AttributeValue {
 	return &dynamodb.AttributeValue{BS: bs.Value}
@@ -583,6 +627,28 @@ func (bs *BinarySet) Contains(obj Object) bool {
 // CanContain whether or not the binary set can contain the objType
 func (bs *BinarySet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeBinary || objType == ObjectTypeBinarySet
+}
+
+// Delete if the obj is an binary it removes the value from the Set
+func (bs *BinarySet) Delete(obj Object) Object {
+	switch obj.Type() {
+	case ObjectTypeBinarySet:
+		bsInput, ok := obj.(*BinarySet)
+		if ok {
+			bs.Value = removeBinaries(bs.Value, bsInput.Value)
+
+			return NULL
+		}
+	case ObjectTypeBinary:
+		bin, ok := obj.(*Binary)
+		if ok {
+			bs.Value = removeBinaries(bs.Value, [][]byte{bin.Value})
+
+			return NULL
+		}
+	}
+
+	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
 }
 
 // Add if the obj is an binary it adds the value to Set
@@ -698,8 +764,8 @@ func (ns *NumberSet) Add(obj Object) Object {
 	case ObjectTypeNumberSet:
 		nsInput, ok := obj.(*NumberSet)
 		if ok {
-			for str := range nsInput.Value {
-				ns.Value[str] = true
+			for n := range nsInput.Value {
+				ns.Value[n] = true
 			}
 
 			return NULL
@@ -714,4 +780,28 @@ func (ns *NumberSet) Add(obj Object) Object {
 	}
 
 	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+}
+
+// Delete if the obj is an number or number set it removes the value from the Set
+func (ns *NumberSet) Delete(obj Object) Object {
+	switch obj.Type() {
+	case ObjectTypeNumberSet:
+		nsInput, ok := obj.(*NumberSet)
+		if ok {
+			for n := range nsInput.Value {
+				delete(ns.Value, n)
+			}
+
+			return NULL
+		}
+	case ObjectTypeNumber:
+		n, ok := obj.(*Number)
+		if ok {
+			delete(ns.Value, n.Value)
+
+			return NULL
+		}
+	}
+
+	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
 }

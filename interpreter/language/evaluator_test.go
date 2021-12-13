@@ -280,11 +280,20 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 		":strSet": {
 			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
 		},
+		":a": {
+			S: aws.String("a"),
+		},
 		":binSet": {
 			BS: [][]byte{[]byte("a"), []byte("b")},
 		},
+		":binA": {
+			B: []byte("a"),
+		},
 		":numSet": {
 			NS: []*string{aws.String("2"), aws.String("4")},
+		},
+		":two": {
+			N: aws.String("2"),
 		},
 	})
 	if err != nil {
@@ -391,6 +400,38 @@ func TestEvalAddUpdate(t *testing.T) {
 		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, false},
 		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": true, "b": true, "text": true}}, false},
 		{"ADD newVal :val", ":val", &String{Value: "text"}, false},
+	}
+
+	env := startEvalUpdateEnv(t)
+
+	for _, tt := range tests {
+		if !tt.keepEnv {
+			env = startEvalUpdateEnv(t)
+		}
+
+		result := testEvalUpdate(t, tt.input, env)
+		if isError(result) {
+			t.Fatalf("error evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
+		}
+
+		result = env.Get(tt.envField)
+
+		if result.Inspect() != tt.expected.Inspect() {
+			t.Errorf("result has wrong value for %q in %q. got=%v, want=%v", tt.envField, tt.input, result.Inspect(), tt.expected.Inspect())
+		}
+	}
+}
+
+func TestEvalRemoveUpdate(t *testing.T) {
+	tests := []struct {
+		input    string
+		envField string
+		expected Object
+		keepEnv  bool
+	}{
+		{"DELETE :binSet :binA", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, false},
+		{"DELETE :strSet :a", ":strSet", &StringSet{Value: map[string]bool{"b": true}}, false},
+		{"DELETE :numSet :two", ":numSet", &NumberSet{Value: map[float64]bool{4: true}}, false},
 	}
 
 	env := startEvalUpdateEnv(t)

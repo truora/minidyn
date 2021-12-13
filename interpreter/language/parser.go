@@ -100,7 +100,7 @@ func NewUpdateParser(l *Lexer) *Parser {
 	p.registerPrefix(SET, p.parseUpdateActionExpression)
 	p.registerPrefix(ADD, p.parseUpdateActionExpression)
 	p.registerPrefix(REMOVE, p.parseUnsupportedExpression)
-	p.registerPrefix(DELETE, p.parseUnsupportedExpression)
+	p.registerPrefix(DELETE, p.parseUpdateActionExpression)
 
 	p.infixParseFns = make(map[TokenType]infixParseFn)
 	p.registerInfix(LBRACKET, p.parseIndexExpression)

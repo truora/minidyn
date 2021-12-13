@@ -742,6 +742,28 @@ func evalAction(node *ActionExpression, env *Environment) Object {
 		}
 
 		return NULL
+	case DELETE:
+		val := EvalUpdate(node.Right, env)
+		if isError(val) {
+			return val
+		}
+
+		id, ok := node.Left.(*Identifier)
+		if ok {
+			obj := env.Get(id.Value)
+
+			if obj == NULL {
+				env.Set(id.Value, val)
+				return obj
+			}
+
+			addObj, ok := obj.(DetachableObject)
+			if !ok {
+				return newError("an operand in the update expression has an incorrect data type")
+			}
+
+			return addObj.Delete(val)
+		}
 	}
 
 	return newError("unknown update action type: %s", node.Token.Literal)

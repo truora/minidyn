@@ -445,6 +445,26 @@ func handleIndexIdentifier(n Expression, env *Environment, positions []indexAcce
 	return positions, obj, nil
 }
 
+func (i indexAccessor) Remove(container Object) Object {
+	switch c := container.(type) {
+	case *List:
+		pos, ok := i.val.(int64)
+		if i.kind == ObjectTypeList && ok {
+			return c.Remove(pos)
+		}
+	case *Map:
+		pos, ok := i.val.(string)
+
+		if i.kind == ObjectTypeMap && ok {
+			delete(c.Value, pos)
+		}
+
+		return NULL
+	}
+
+	return newError("index removal for %q type is not supported", container.Type())
+}
+
 func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, Object, Object) {
 	positions := []indexAccessor{}
 	exp := n
@@ -746,6 +766,8 @@ func evalUpdateExpression(node *UpdateExpression, env *Environment) Object {
 		}
 	}
 
+	env.Compact()
+
 	return NULL
 }
 
@@ -826,12 +848,52 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 	return NULL
 }
 
+func evalActionRemove(node *ActionExpression, env *Environment) Object {
+	id, ok := node.Left.(*Identifier)
+	if ok {
+		env.Remove(id.Value)
+
+		return NULL
+	}
+
+	indexField, ok := node.Left.(*IndexExpression)
+	if ok {
+		positions, o, errObj := evalIndexPositions(indexField, env)
+		if isError(errObj) {
+			return errObj
+		}
+
+		var (
+			obj Object = o
+			pos indexAccessor
+		)
+
+		for i := len(positions) - 1; i > 0; i-- {
+			pos = positions[i]
+			obj = pos.Get(obj)
+		}
+
+		errObj = positions[0].Remove(obj)
+		if isError(errObj) {
+			return errObj
+		}
+
+		env.MarkToCompact(obj)
+
+		return NULL
+	}
+
+	return newError("invalid remove to: %s", node.String())
+}
+
 func evalAction(node *ActionExpression, env *Environment) Object {
 	switch node.Token.Type {
 	case SET:
 		return evalActionSet(node, env)
 	case ADD:
 		return evalActionAdd(node, env)
+	case REMOVE:
+		return evalActionRemove(node, env)
 	case DELETE:
 		return evalActionDelete(node, env)
 	}

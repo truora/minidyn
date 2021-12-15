@@ -160,6 +160,34 @@ func TestListAdd(t *testing.T) {
 	}
 }
 
+func TestListRemove(t *testing.T) {
+	l := List{Value: []Object{&String{Value: "Cookies"}, &String{Value: "Orange"}}}
+
+	obj := l.Remove(1)
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(l.Value) != 2 {
+		t.Fatalf("result object should be 2 elements, got=%q", l.Inspect())
+	}
+
+	obj = l.Remove(0)
+	if obj != NULL {
+		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	}
+
+	if len(l.Value) != 2 {
+		t.Fatalf("result object should be 2 elements, got=%q", l.Inspect())
+	}
+
+	l.Compact()
+
+	if len(l.Value) != 0 {
+		t.Fatalf("result object should be empty, got=%q", l.Inspect())
+	}
+}
+
 func TestStringSetInspect(t *testing.T) {
 	strSet := StringSet{
 		Value: map[string]bool{

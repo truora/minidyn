@@ -337,6 +337,7 @@ func (m *Map) Get(field string) Object {
 // List is the representation of list
 type List struct {
 	Value []Object
+	dirty bool
 }
 
 // Inspect returns the readable value of the object
@@ -346,6 +347,10 @@ func (l *List) Inspect() string {
 	out.WriteString("[ ")
 
 	for _, obj := range l.Value {
+		if obj == nil {
+			continue
+		}
+
 		out.WriteString(obj.Inspect())
 		out.WriteString("<")
 		out.WriteString(string(obj.Type()))
@@ -354,7 +359,42 @@ func (l *List) Inspect() string {
 
 	out.WriteString("]")
 
+	if l.dirty {
+		out.WriteString("<Dirty>")
+	}
+
 	return out.String()
+}
+
+// Remove eliminates the value form the element in the pos index
+// the element replaces with a nil value.
+func (l *List) Remove(pos int64) Object {
+	if int64(len(l.Value)) > pos {
+		l.Value[pos] = nil
+		l.dirty = true
+
+		return NULL
+	}
+
+	// TODO: review how dynamodb behaves in this cases
+
+	return NULL
+}
+
+// Compact removes nil elements from the list
+func (l *List) Compact() {
+	copy := make([]Object, 0, len(l.Value))
+
+	for _, obj := range l.Value {
+		if obj == nil {
+			continue
+		}
+
+		copy = append(copy, obj)
+	}
+
+	l.Value = copy
+	l.dirty = false
 }
 
 // Type returns the object type

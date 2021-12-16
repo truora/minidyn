@@ -70,12 +70,6 @@ var comparableTypes = map[ObjectType]bool{
 	ObjectTypeBinary: true,
 }
 
-var setTypes = map[ObjectType]bool{
-	ObjectTypeBinarySet: true,
-	ObjectTypeStringSet: true,
-	ObjectTypeNumberSet: true,
-}
-
 // Object abstraction of the object values
 type Object interface {
 	Type() ObjectType
@@ -391,10 +385,6 @@ func (l *List) Get(position int64) Object {
 
 // Contains whether or not the obj is contained in the list
 func (l *List) Contains(obj Object) bool {
-	if !l.CanContain(obj.Type()) {
-		return false
-	}
-
 	for _, e := range l.Value {
 		if equalObject(obj, e) {
 			return true
@@ -406,7 +396,7 @@ func (l *List) Contains(obj Object) bool {
 
 // CanContain whether or not the list can contain the objType
 func (l *List) CanContain(objType ObjectType) bool {
-	return !(objType == ObjectTypeList || objType == ObjectTypeMap || setTypes[objType])
+	return true
 }
 
 // Add if the obj adds the value to the list

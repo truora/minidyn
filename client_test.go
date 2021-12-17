@@ -1372,7 +1372,6 @@ func TestDeleteItemWithConditions(t *testing.T) {
 	_, err = client.DeleteItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
-
 }
 
 func TestDeleteItemWithContextWithReturnValues(t *testing.T) {

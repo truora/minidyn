@@ -678,6 +678,7 @@ func validateSyntaxExpression(regex *regexp.Regexp, expressions []string, errorM
 			return awserr.New("ValidationException", fmt.Sprintf("%s: Syntax error; key: %s", errorMsg, exprName), nil)
 		}
 	}
+
 	return nil
 }
 

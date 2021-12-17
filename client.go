@@ -663,6 +663,11 @@ func validateExpressionAttributes(exprNames map[string]*string, exprValues map[s
 		return awserr.New("ValidationException", fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeValuesMsg, strings.Join(missingValues, ", ")), nil)
 	}
 
+	err = validateSyntaxExpression(expressionAttributeValuesRegex, flattenValues, invalidExpressionAttributeValue)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

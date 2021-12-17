@@ -20,7 +20,8 @@ const (
 	batchRequestsLimit                 = 25
 	unusedExpressionAttributeNamesMsg  = "Value provided in ExpressionAttributeNames unused in expressions"
 	unusedExpressionAttributeValuesMsg = "Value provided in ExpressionAttributeValues unused in expressions"
-	invalidExpressionAttributeName     = "Invalid syntax in ExpressionAttributeName"
+	invalidExpressionAttributeName     = "ExpressionAttributeNames contains invalid key"
+	invalidExpressionAttributeValue    = "ExpressionAttributeValues contains invalid key"
 )
 
 var (
@@ -31,8 +32,9 @@ var (
 	// ErrResourceNotFoundException when the requested resource is not found
 	ErrResourceNotFoundException = errors.New("requested resource not found")
 	// ErrConditionalRequestFailed when the conditional write is not meet
-	ErrConditionalRequestFailed   = errors.New("the conditional request failed")
-	expressionAttributeNamesRegex = regexp.MustCompile("^#[A-Za-z0-9]+$")
+	ErrConditionalRequestFailed    = errors.New("the conditional request failed")
+	expressionAttributeNamesRegex  = regexp.MustCompile("^#[A-Za-z0-9_]+$")
+	expressionAttributeValuesRegex = regexp.MustCompile("^:[A-Za-z0-9_]+$")
 )
 
 // Client define a mock struct to be used
@@ -668,7 +670,7 @@ func validateSyntaxExpression(regex *regexp.Regexp, expressions []string, errorM
 	for _, exprName := range expressions {
 		ok := regex.MatchString(exprName)
 		if !ok {
-			return awserr.New("ValidationException", fmt.Sprintf("%s: expression: {%s}", errorMsg, exprName), nil)
+			return awserr.New("ValidationException", fmt.Sprintf("%s: Syntax error; key: %s", errorMsg, exprName), nil)
 		}
 	}
 	return nil

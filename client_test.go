@@ -598,9 +598,9 @@ func TestGetItemWithInvalidExpressionAttributeNames(t *testing.T) {
 				S: aws.String("001"),
 			},
 		},
-		ProjectionExpression: aws.String("#name_1"),
+		ProjectionExpression: aws.String("#name-1"),
 		ExpressionAttributeNames: map[string]*string{
-			"#name_1": aws.String("name"),
+			"#name-1": aws.String("name"),
 		},
 	}
 

@@ -3,6 +3,7 @@ package minidyn
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -19,6 +20,8 @@ const (
 	batchRequestsLimit                 = 25
 	unusedExpressionAttributeNamesMsg  = "Value provided in ExpressionAttributeNames unused in expressions"
 	unusedExpressionAttributeValuesMsg = "Value provided in ExpressionAttributeValues unused in expressions"
+	invalidExpressionAttributeName     = "ExpressionAttributeNames contains invalid key"
+	invalidExpressionAttributeValue    = "ExpressionAttributeValues contains invalid key"
 )
 
 var (
@@ -29,7 +32,9 @@ var (
 	// ErrResourceNotFoundException when the requested resource is not found
 	ErrResourceNotFoundException = errors.New("requested resource not found")
 	// ErrConditionalRequestFailed when the conditional write is not meet
-	ErrConditionalRequestFailed = errors.New("the conditional request failed")
+	ErrConditionalRequestFailed    = errors.New("the conditional request failed")
+	expressionAttributeNamesRegex  = regexp.MustCompile("^#[A-Za-z0-9_]+$")
+	expressionAttributeValuesRegex = regexp.MustCompile("^:[A-Za-z0-9_]+$")
 )
 
 // Client define a mock struct to be used
@@ -649,8 +654,29 @@ func validateExpressionAttributes(exprNames map[string]*string, exprValues map[s
 		return awserr.New("ValidationException", fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeNamesMsg, strings.Join(missingNames, ", ")), nil)
 	}
 
+	err := validateSyntaxExpression(expressionAttributeNamesRegex, flattenNames, invalidExpressionAttributeName)
+	if err != nil {
+		return err
+	}
+
 	if len(missingValues) > 0 {
 		return awserr.New("ValidationException", fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeValuesMsg, strings.Join(missingValues, ", ")), nil)
+	}
+
+	err = validateSyntaxExpression(expressionAttributeValuesRegex, flattenValues, invalidExpressionAttributeValue)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateSyntaxExpression(regex *regexp.Regexp, expressions []string, errorMsg string) error {
+	for _, exprName := range expressions {
+		ok := regex.MatchString(exprName)
+		if !ok {
+			return awserr.New("ValidationException", fmt.Sprintf("%s: Syntax error; key: %s", errorMsg, exprName), nil)
+		}
 	}
 
 	return nil

@@ -1382,6 +1382,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 			},
 		},
 	})
+
 	c.Contains(err.Error(), "ValidationException: Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{

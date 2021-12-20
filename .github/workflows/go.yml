@@ -18,11 +18,15 @@ jobs:
       with:
         go-version: 1.17
 
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v2.5.2
+
     - name: Build
       run: go build -v ./...
 
-    - name: Test
-      run: go test -v ./...
+    - name: Test & Coverage
+      run: bash scripts/check_coverage.sh
 
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v2.5.2
+
+    
+

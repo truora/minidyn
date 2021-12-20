@@ -89,6 +89,16 @@ func TestEval(t *testing.T) {
 		// NumberSet
 		{":numSetA = :numSetB", FALSE},
 		{":numSetA = :numSetA", TRUE},
+		// IN
+		{":my_undefined_field IN (:y, :z)", FALSE},
+		{":x IN (:y, :z)", FALSE},
+		{":x IN (:y, :x)", TRUE},
+		{":binA IN (:nil, :x)", FALSE},
+		{":binA IN (:nil, :x, :binA)", TRUE},
+		{":listA IN (:nil, :x, :binA)", FALSE},
+		{":listA IN (:nil, :x, :listA)", TRUE},
+		{":numSetA IN (:numSetB, :listA)", FALSE},
+		{":numSetA IN (:numSetB, :numSetA)", TRUE},
 	}
 
 	env := NewEnvironment()
@@ -529,6 +539,14 @@ func TestErrorHandling(t *testing.T) {
 		},
 		{
 			"ROLE BETWEEN :x AND :str",
+			"reserved word ROLE found in expression",
+		},
+		{
+			"ROLE IN (:x, :str)",
+			"reserved word ROLE found in expression",
+		},
+		{
+			":x IN (ROLE, :str)",
 			"reserved word ROLE found in expression",
 		},
 	}

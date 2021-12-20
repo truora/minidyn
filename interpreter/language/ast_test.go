@@ -129,6 +129,37 @@ func TestBetweenExpression(t *testing.T) {
 	be.expressionNode()
 }
 
+func TestInExpression(t *testing.T) {
+	ine := InExpression{
+		Token: Token{Type: LPAREN, Literal: "("},
+		Left: &Identifier{
+			Token: Token{Type: IDENT, Literal: "b"},
+			Value: "b",
+		},
+		Range: []Expression{
+			&Identifier{
+				Token: Token{Type: IDENT, Literal: "a"},
+				Value: "a",
+			},
+			&Identifier{
+				Token: Token{Type: IDENT, Literal: "b"},
+				Value: "b",
+			},
+		},
+	}
+
+	tl := ine.TokenLiteral()
+	if tl != "(" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "NOT", tl)
+	}
+
+	if ine.String() != "(b IN (a, b))" {
+		t.Fatalf("wrong string representation. expected=%q, got=%q", "b IN (a, b)", ine.String())
+	}
+
+	ine.expressionNode()
+}
+
 func TestUpdateExpression(t *testing.T) {
 	es := UpdateExpression{
 		Token: Token{Type: IDENT, Literal: "SET"},

@@ -44,7 +44,7 @@ type ConditionalExpression struct {
 	Expression Expression
 }
 
-func (es *ConditionalExpression) statementNode() {
+func (ce *ConditionalExpression) statementNode() {
 	_ = 1 // HACK for passing coverage
 }
 
@@ -160,6 +160,7 @@ func (ie *IndexExpression) expressionNode() {
 	_ = 1 // HACK for passing coverage
 }
 
+// TokenLiteral returns Token Literal from IndexExpression
 func (ie *IndexExpression) TokenLiteral() string { return ie.Token.Literal }
 
 func (ie *IndexExpression) String() string {
@@ -240,9 +241,11 @@ func (ue *UpdateExpression) String() string {
 	var out bytes.Buffer
 
 	out.WriteString("(")
+
 	for _, exp := range ue.Expressions {
 		out.WriteString(exp.String())
 	}
+
 	out.WriteString(")")
 
 	return out.String()

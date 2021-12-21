@@ -362,6 +362,7 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 	}
 
 	var obj Object = o
+
 	for i := len(positions) - 1; i >= 0; i-- {
 		pos := positions[i]
 
@@ -401,20 +402,24 @@ func (i indexAccessor) Get(container Object) Object {
 	return newError("index operator %s not supporter: %q", i.operator.Literal, container.Type())
 }
 
+func setListValue(list *List, value Object, index int64) Object {
+	if int64(len(list.Value)) > index {
+		list.Value[index] = value
+
+		return NULL
+	}
+
+	list.Value = append(list.Value, value)
+
+	return NULL
+}
+
 func (i indexAccessor) Set(container, val Object) Object {
 	switch c := container.(type) {
 	case *List:
 		pos, ok := i.val.(int64)
 		if i.kind == ObjectTypeList && ok {
-			if int64(len(c.Value)) > pos {
-				c.Value[pos] = val
-
-				return NULL
-			}
-
-			c.Value = append(c.Value, val)
-
-			return NULL
+			return setListValue(c, val, pos)
 		}
 	case *Map:
 		pos, ok := i.val.(string)
@@ -429,18 +434,23 @@ func (i indexAccessor) Set(container, val Object) Object {
 	return newError("index assignation for %q type is not supported", container.Type())
 }
 
+func handleIndexIdentifier(n Expression, env *Environment, positions []indexAccessor) ([]indexAccessor, Object, Object) {
+	obj, errObj := evalIndexObj(n, env)
+	if isError(errObj) {
+		return nil, nil, errObj
+	}
+
+	return positions, obj, nil
+}
+
 func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, Object, Object) {
 	positions := []indexAccessor{}
+	exp := n
 
 	for {
-		switch node := n.(type) {
+		switch node := exp.(type) {
 		case *Identifier:
-			obj, errObj := evalIndexObj(n, env)
-			if isError(errObj) {
-				return nil, nil, errObj
-			}
-
-			return positions, obj, nil
+			return handleIndexIdentifier(exp, env, positions)
 		case *IndexExpression:
 			identifier, ok := node.Index.(*Identifier)
 			if !ok {
@@ -454,9 +464,9 @@ func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, Object
 
 			positions = append(positions, pos)
 
-			n = node.Left
+			exp = node.Left
 		default:
-			return nil, nil, newError("index operator not supported: got %q", n.String())
+			return nil, nil, newError("index operator not supported: got %q", exp.String())
 		}
 	}
 }
@@ -693,77 +703,91 @@ func evalUpdateExpression(node *UpdateExpression, env *Environment) Object {
 	return NULL
 }
 
-func evalAction(node *ActionExpression, env *Environment) Object {
-	switch node.Token.Type {
-	case SET:
-		val := EvalUpdate(node.Right, env)
-		if isError(val) {
-			return val
-		}
+func evalActionSet(node *ActionExpression, env *Environment) Object {
+	val := EvalUpdate(node.Right, env)
+	if isError(val) {
+		return val
+	}
 
-		id, ok := node.Left.(*Identifier)
-		if ok {
-			env.Set(id.Value, val)
-			return NULL
-		}
+	id, ok := node.Left.(*Identifier)
+	if ok {
+		env.Set(id.Value, val)
+		return NULL
+	}
 
-		indexField, ok := node.Left.(*IndexExpression)
-		if ok {
-			errObj := evalAssignIndex(indexField, []int{}, val, env)
-			if isError(errObj) {
-				return errObj
-			}
-
-			return NULL
-		}
-
-		return newError("invalid assignation to: %s", node.String())
-	case ADD:
-		val := EvalUpdate(node.Right, env)
-		if isError(val) {
-			return val
-		}
-
-		id, ok := node.Left.(*Identifier)
-		if ok {
-			obj := env.Get(id.Value)
-
-			if obj == NULL {
-				env.Set(id.Value, val)
-				return obj
-			}
-
-			addObj, ok := obj.(AppendableObject)
-			if !ok {
-				return newError("an operand in the update expression has an incorrect data type")
-			}
-
-			return addObj.Add(val)
+	indexField, ok := node.Left.(*IndexExpression)
+	if ok {
+		errObj := evalAssignIndex(indexField, []int{}, val, env)
+		if isError(errObj) {
+			return errObj
 		}
 
 		return NULL
+	}
+
+	return newError("invalid assignation to: %s", node.String())
+}
+
+func evalActionAdd(node *ActionExpression, env *Environment) Object {
+	val := EvalUpdate(node.Right, env)
+	if isError(val) {
+		return val
+	}
+
+	id, ok := node.Left.(*Identifier)
+	if ok {
+		obj := env.Get(id.Value)
+
+		if obj == NULL {
+			env.Set(id.Value, val)
+			return obj
+		}
+
+		addObj, ok := obj.(AppendableObject)
+		if !ok {
+			return newError("an operand in the update expression has an incorrect data type")
+		}
+
+		return addObj.Add(val)
+	}
+
+	return NULL
+}
+
+func evalActionDelete(node *ActionExpression, env *Environment) Object {
+	val := EvalUpdate(node.Right, env)
+	if isError(val) {
+		return val
+	}
+
+	id, ok := node.Left.(*Identifier)
+	if ok {
+		obj := env.Get(id.Value)
+
+		if obj == NULL {
+			env.Set(id.Value, val)
+			return obj
+		}
+
+		addObj, ok := obj.(DetachableObject)
+		if !ok {
+			return newError("an operand in the update expression has an incorrect data type")
+		}
+
+		return addObj.Delete(val)
+	}
+
+	return NULL
+}
+
+func evalAction(node *ActionExpression, env *Environment) Object {
+	switch node.Token.Type {
+	case SET:
+		return evalActionSet(node, env)
+	case ADD:
+		return evalActionAdd(node, env)
 	case DELETE:
-		val := EvalUpdate(node.Right, env)
-		if isError(val) {
-			return val
-		}
-
-		id, ok := node.Left.(*Identifier)
-		if ok {
-			obj := env.Get(id.Value)
-
-			if obj == NULL {
-				env.Set(id.Value, val)
-				return obj
-			}
-
-			addObj, ok := obj.(DetachableObject)
-			if !ok {
-				return newError("an operand in the update expression has an incorrect data type")
-			}
-
-			return addObj.Delete(val)
-		}
+		return evalActionDelete(node, env)
 	}
 
 	return newError("unknown update action type: %s", node.Token.Literal)
@@ -798,9 +822,9 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 
 	var obj Object = o
 
-	for i := len(positions) - 1; i >= 0; i-- {
-		pos := positions[i]
-		if i == 0 {
+	for idx := len(positions) - 1; idx >= 0; idx-- {
+		pos := positions[idx]
+		if idx == 0 {
 			errObj := pos.Set(obj, val)
 			if isError(errObj) {
 				return errObj

@@ -11,7 +11,7 @@ function parse_test {
     while read line; do
         if [[ `echo "$line" | grep -cE '\-+ FAIL'` -gt 0 ]]
         then
-            echo -e "\e[0;31m$line\e[0;0m"
+            echo -e "\033[0;31m$line\033[0;0m"
             exit_code=1
         else
             echo "$line"
@@ -27,10 +27,10 @@ function parse_coverage {
     while read line; do
         if [[ `echo "$line" | grep -cE '\b([0-7][0-9]|[0-9])\.[0-9]+%'` -gt 0 ]] && [[ `echo "$line" | grep -cE '\s(init|main|\(statements\))\s'` -eq 0 ]] && [[ `echo "$line" | grep -cE '\s\S+SC\s'` -eq 0 ]]
         then
-            echo -e "\e[0;31m$line\e[0;0m"
+            echo -e "\033[0;31m$line\033[0;0m"
             exit_code=1
         else
-            echo -e "\e[0;32m$line\e[0;0m"
+            echo -e "\033[0;32m$line\033[0;0m"
         fi
     done <<<"$output"
 
@@ -40,14 +40,14 @@ function parse_coverage {
 for pkg in $pkgs_to_test
 do
     echo "# Checking $pkg"
-
+    echo "--------------------------------"
     coverage_dir=.coverage/$pkg
     coverage_file=$coverage_dir/coverage.out
     mkdir -p $coverage_dir
     timeout=160s
 
     test_file=$coverage_dir/test.out
-    go test -gcflags=all=-d=checkptr=0 -race -cover -coverprofile=$coverage_file -timeout=$timeout -short $pkg &>> $test_file
+    go test -gcflags=all=-d=checkptr=0 -race -cover -coverprofile=$coverage_file -timeout=$timeout -short $pkg &> $test_file
 
     parse_test
     exit_code=$?

@@ -34,17 +34,19 @@ func (e *Environment) AddAttributes(attributes map[string]*dynamodb.AttributeVal
 
 // Get gets the value of the variable in the environment
 func (e *Environment) Get(name string) Object {
-	if alias, ok := e.Aliases[name]; ok {
-		name = alias
+	n := name
+
+	if alias, ok := e.Aliases[n]; ok {
+		n = alias
 	}
 
-	obj, ok := e.store[name]
+	obj, ok := e.store[n]
 	if ok {
 		return obj
 	}
 
 	// support index notation
-	names := e.evalNameWithIndex(name)
+	names := e.evalNameWithIndex(n)
 
 	size := len(names)
 	if size == 0 {
@@ -105,11 +107,14 @@ func getFromMap(obj Object, key string) Object {
 
 // Set assigns the value of the variable in the environment
 func (e *Environment) Set(name string, val Object) Object {
-	if alias, ok := e.Aliases[name]; ok {
-		name = alias
+	n := name
+
+	if alias, ok := e.Aliases[n]; ok {
+		n = alias
 	}
 
-	e.store[name] = val
+	e.store[n] = val
+
 	return val
 }
 

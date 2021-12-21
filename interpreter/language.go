@@ -29,6 +29,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	for k, v := range input.Aliases {
 		aliases[k] = *v
 	}
+
 	env.Aliases = aliases
 
 	item := map[string]*dynamodb.AttributeValue{}
@@ -60,6 +61,15 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	return result == language.TRUE, nil
 }
 
+func handleParserErrors(parser *language.Parser) error {
+	errType := ErrSyntaxError
+	if parser.IsUnsupportedExpression() {
+		errType = ErrUnsupportedFeature
+	}
+
+	return fmt.Errorf("%w: %s", errType, strings.Join(parser.Errors(), "\n"))
+}
+
 // Update change the item with given expression and attributes
 func (li *Language) Update(input UpdateInput) error {
 	l := language.NewLexer(input.Expression)
@@ -75,12 +85,7 @@ func (li *Language) Update(input UpdateInput) error {
 	env.Aliases = aliases
 
 	if len(p.Errors()) != 0 {
-		errType := ErrSyntaxError
-		if p.IsUnsupportedExpression() {
-			errType = ErrUnsupportedFeature
-		}
-
-		return fmt.Errorf("%w: %s", errType, strings.Join(p.Errors(), "\n"))
+		return handleParserErrors(p)
 	}
 
 	item := map[string]*dynamodb.AttributeValue{}

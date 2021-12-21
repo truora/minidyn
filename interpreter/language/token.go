@@ -658,7 +658,7 @@ var (
 		"WRAPPED":        true,
 		"WRITE":          true,
 		"YEAR":           true,
-		"ZONE ":          true,
+		"ZONE":           true,
 	}
 )
 

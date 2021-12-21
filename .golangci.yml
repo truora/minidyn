@@ -94,6 +94,7 @@ issues:
       linters:
         - gocyclo
         - gosec
+        - gocognit
 
     # Exclude some gosec messages
     - linters:

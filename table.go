@@ -474,7 +474,6 @@ func (t *table) put(input *dynamodb.PutItemInput) (map[string]*dynamodb.Attribut
 
 func (t *table) interpreterUpdate(input interpreter.UpdateInput) error {
 	err := t.langInterpreter.Update(input)
-
 	if err != nil && errors.Is(err, interpreter.ErrUnsupportedFeature) {
 		nativeErr := t.nativeInterpreter.Update(input)
 		if nativeErr != nil {

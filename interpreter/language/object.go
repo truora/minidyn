@@ -651,33 +651,33 @@ func (bs *BinarySet) Delete(obj Object) Object {
 	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
 }
 
-// Add if the obj is an binary it adds the value to Set
+func (bs *BinarySet) addBinarySetValues(binaryValues [][]byte) {
+	for _, bin := range binaryValues {
+		if containedInBinaryArray(bs.Value, bin) {
+			continue
+		}
+
+		bs.Value = append(bs.Value, bin)
+	}
+}
+
+// Add if the obj is a binary it adds the value to Set
 func (bs *BinarySet) Add(obj Object) Object {
 	switch obj.Type() {
 	case ObjectTypeBinarySet:
 		bsInput, ok := obj.(*BinarySet)
 		if ok {
-			for _, bin := range bsInput.Value {
-				if containedInBinaryArray(bs.Value, bin) {
-					continue
-				}
-
-				bs.Value = append(bs.Value, bin)
-			}
-
-			return NULL
+			bs.addBinarySetValues(bsInput.Value)
 		}
+
+		return NULL
 	case ObjectTypeBinary:
 		bin, ok := obj.(*Binary)
-		if ok {
-			if bs.Contains(bin) {
-				return NULL
-			}
-
+		if ok && !bs.Contains(bin) {
 			bs.Value = append(bs.Value, bin.Value)
-
-			return NULL
 		}
+
+		return NULL
 	}
 
 	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())

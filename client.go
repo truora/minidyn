@@ -331,7 +331,6 @@ func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 	}
 
 	item, err := table.update(input)
-
 	if err != nil {
 		if errors.Is(err, interpreter.ErrSyntaxError) {
 			return nil, awserr.New("ValidationException", err.Error(), nil)
@@ -520,6 +519,7 @@ func (fd *Client) BatchWriteItem(input *dynamodb.BatchWriteItemInput) (*dynamodb
 	for table, reqs := range input.RequestItems {
 		for _, req := range reqs {
 			err := executeBatchWriteRequest(fd, aws.String(table), req)
+
 			err = handleBatchWriteRequestError(table, req, unprocessed, err)
 			if err != nil {
 				return &dynamodb.BatchWriteItemOutput{}, err
@@ -533,6 +533,18 @@ func (fd *Client) BatchWriteItem(input *dynamodb.BatchWriteItemInput) (*dynamodb
 	}, nil
 }
 
+func validateWriteRequest(req *dynamodb.WriteRequest) error {
+	if req.DeleteRequest != nil && req.PutRequest != nil {
+		return awserr.New("ValidationException", "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes", nil)
+	}
+
+	if req.DeleteRequest == nil && req.PutRequest == nil {
+		return awserr.New("ValidationException", "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes", nil)
+	}
+
+	return nil
+}
+
 func validateBatchWriteItemInput(input *dynamodb.BatchWriteItemInput) error {
 	err := input.Validate()
 	if err != nil {
@@ -540,16 +552,13 @@ func validateBatchWriteItemInput(input *dynamodb.BatchWriteItemInput) error {
 	}
 
 	count := 0
+
 	for _, reqs := range input.RequestItems {
 		for _, req := range reqs {
-			if req.DeleteRequest != nil && req.PutRequest != nil {
-				return awserr.New("ValidationException", "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes", nil)
+			err := validateWriteRequest(req)
+			if err != nil {
+				return err
 			}
-
-			if req.DeleteRequest == nil && req.PutRequest == nil {
-				return awserr.New("ValidationException", "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes", nil)
-			}
-
 			count++
 		}
 	}

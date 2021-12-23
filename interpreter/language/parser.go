@@ -34,6 +34,7 @@ const (
 	precedenceValueOperators         // + -
 	precedenceValueCall              // myFunction(X)
 	precedenceValueINDEX             // [] .
+	precedenceValueInComparator      // IN
 )
 
 var precedences = map[TokenType]int{
@@ -51,6 +52,7 @@ var precedences = map[TokenType]int{
 	LPAREN:   precedenceValueCall,
 	LBRACKET: precedenceValueINDEX,
 	DOT:      precedenceValueINDEX,
+	IN:       precedenceValueInComparator,
 }
 
 // NewParser creates a new parser
@@ -78,6 +80,7 @@ func NewParser(l *Lexer) *Parser {
 	p.registerInfix(AND, p.parseInfixExpression)
 	p.registerInfix(OR, p.parseInfixExpression)
 	p.registerInfix(LPAREN, p.parseCallExpression)
+	p.registerInfix(IN, p.parseInExpression)
 
 	// Read two tokens, so curToken and peekToken are both set
 	p.nextToken()
@@ -271,6 +274,16 @@ func (p *Parser) parseBetweenExpression(left Expression) Expression {
 	expression.Range[1] = p.parseIdentifier()
 
 	return expression
+}
+
+func (p *Parser) parseInExpression(left Expression) Expression {
+	p.nextToken()
+
+	return &InExpression{
+		Token: p.curToken,
+		Left:  left,
+		Range: p.parseCallArguments(),
+	}
 }
 
 func (p *Parser) parseCallArguments() []Expression {

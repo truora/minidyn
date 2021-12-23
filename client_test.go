@@ -583,6 +583,32 @@ func TestGetItemWithUnusedAttributes(t *testing.T) {
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 }
 
+func TestGetItemWithInvalidExpressionAttributeNames(t *testing.T) {
+	c := require.New(t)
+
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	input := &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"id": {
+				S: aws.String("001"),
+			},
+		},
+		ProjectionExpression: aws.String("#name-1"),
+		ExpressionAttributeNames: map[string]*string{
+			"#name-1": aws.String("name"),
+		},
+	}
+
+	_, err = client.GetItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeName)
+}
+
 func TestPutItemWithConditions(t *testing.T) {
 	c := require.New(t)
 
@@ -619,6 +645,30 @@ func TestPutItemWithConditions(t *testing.T) {
 	_, err = client.PutItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeValuesMsg)
+
+	input.ConditionExpression = aws.String("attribute_not_exists(#invalid-name)")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#invalid-name": aws.String("hello"),
+	}
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeName)
+
+	input.ConditionExpression = aws.String("#valid_name = :invalid-value")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#valid_name": aws.String("hello"),
+	}
+
+	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
+		":invalid-value": {NULL: aws.Bool(true)},
+	}
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeValue)
 }
 
 func TestUnsupportedFeatures(t *testing.T) {
@@ -747,6 +797,30 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 
 	_, err = client.UpdateItemWithContext(context.Background(), input)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
+
+	input.ConditionExpression = aws.String("attribute_exists(#invalid-name)")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#invalid-name": aws.String("type"),
+	}
+
+	_, err = client.UpdateItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeName)
+
+	input.ConditionExpression = aws.String("#t = :invalid-value")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#t": aws.String("type"),
+	}
+
+	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
+		":invalid-value": {NULL: aws.Bool(true)},
+	}
+
+	_, err = client.UpdateItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeValue)
 
 	input = &dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
@@ -930,6 +1004,29 @@ func TestQueryWithContext(t *testing.T) {
 	_, err = client.QueryWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
+
+	input.KeyConditionExpression = aws.String("#invalid-name = :id")
+	input.ExpressionAttributeNames = map[string]*string{
+		"#invalid-name": aws.String("id"),
+	}
+
+	_, err = client.QueryWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeName)
+
+	input.KeyConditionExpression = aws.String("#t = :invalid-value")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#t": aws.String("type"),
+	}
+
+	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
+		":invalid-value": {NULL: aws.Bool(true)},
+	}
+
+	_, err = client.QueryWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeValue)
 }
 
 func TestQueryWithContextPagination(t *testing.T) {
@@ -1113,6 +1210,29 @@ func TestScanWithContext(t *testing.T) {
 	c.Len(out.Items, 1)
 	c.NotEmpty(out.LastEvaluatedKey)
 
+	input.FilterExpression = aws.String("#invalid-name = Raichu")
+	input.ExpressionAttributeNames = map[string]*string{
+		"#invalid-name": aws.String("Name"),
+	}
+
+	_, err = client.ScanWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeName)
+
+	input.FilterExpression = aws.String("#t = :invalid-value")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#t": aws.String("type"),
+	}
+
+	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
+		":invalid-value": {NULL: aws.Bool(true)},
+	}
+
+	_, err = client.ScanWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeValue)
+
 	input.Limit = nil
 	input.FilterExpression = aws.String("#name = :name")
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
@@ -1259,6 +1379,30 @@ func TestDeleteItemWithConditions(t *testing.T) {
 	_, err = client.DeleteItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
+
+	input.ConditionExpression = aws.String("#invalid-name = Squirtle")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#invalid-name": aws.String("hello"),
+	}
+
+	_, err = client.DeleteItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeName)
+
+	input.ConditionExpression = aws.String("#t = :invalid-value")
+
+	input.ExpressionAttributeNames = map[string]*string{
+		"#t": aws.String("type"),
+	}
+
+	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
+		":invalid-value": {NULL: aws.Bool(true)},
+	}
+
+	_, err = client.DeleteItemWithContext(context.Background(), input)
+	c.NotNil(err)
+	c.Contains(err.Error(), invalidExpressionAttributeValue)
 }
 
 func TestDeleteItemWithContextWithReturnValues(t *testing.T) {

@@ -210,6 +210,10 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 			"a[0][0]",
 			"((a[0])[0])",
 		},
+		{
+			":a IN (:b, :c)",
+			"(:a IN (:b, :c))",
+		},
 	}
 
 	for _, tt := range tests {

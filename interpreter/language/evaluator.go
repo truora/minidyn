@@ -25,6 +25,8 @@ func Eval(n Node, env *Environment) Object {
 		return evalIndex(node, env)
 	case *BetweenExpression:
 		return evalBetween(node, env)
+	case *InExpression:
+		return evalIn(node, env)
 	case *CallExpression:
 		return evalFunctionCall(node, env)
 	case *Identifier:
@@ -581,6 +583,36 @@ func evalBetween(node *BetweenExpression, env *Environment) Object {
 	return b
 }
 
+func evalIn(node *InExpression, env *Environment) Object {
+	val := evalIdentifierOperand(node.Left, env)
+	if isError(val) {
+		return val
+	}
+
+	rangeObjects := &List{Value: make([]Object, 0, len(node.Range))}
+
+	for _, exp := range node.Range {
+		obj := evalIdentifierOperand(exp, env)
+		if isError(obj) {
+			return obj
+		}
+
+		if val.Type() != obj.Type() {
+			continue
+		}
+
+		rangeObjects.Value = append(rangeObjects.Value, obj)
+	}
+
+	if isUndefined(val) {
+		return FALSE
+	}
+
+	b := rangeObjects.Contains(val)
+
+	return nativeBoolToBooleanObject(b)
+}
+
 func compareRange(value, min, max Object) Object {
 	switch val := value.(type) {
 	case *Number:
@@ -616,6 +648,20 @@ func evalBetweenOperand(exp Expression, env *Environment) Object {
 
 	if !comparableTypes[val.Type()] && !isUndefined(val) {
 		return newError("unexpected type: %q should be a comparable type(N,S,B) got %q", exp.String(), val.Type())
+	}
+
+	return val
+}
+
+func evalIdentifierOperand(exp Expression, env *Environment) Object {
+	identifier, ok := exp.(*Identifier)
+	if !ok {
+		return newError("identifier expected: got %q", exp.String())
+	}
+
+	val := evalIdentifier(identifier, env, true)
+	if val.Type() == ObjectTypeError {
+		return val
 	}
 
 	return val

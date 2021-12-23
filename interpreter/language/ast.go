@@ -250,3 +250,39 @@ func (st *ActionExpression) String() string {
 
 	return out.String()
 }
+
+// InExpression function in expression
+type InExpression struct {
+	Token Token // The 'IN' token
+	Left  Expression
+	// Identifiers
+	Range []Expression
+}
+
+func (ine *InExpression) expressionNode() {
+	_ = 1 // HACK for passing coverage
+}
+
+// TokenLiteral returns the literal token of the node
+func (ine *InExpression) TokenLiteral() string { return ine.Token.Literal }
+
+func (ine *InExpression) String() string {
+	var out bytes.Buffer
+
+	out.WriteString("(")
+	out.WriteString(ine.Left.String())
+
+	out.WriteString(" IN (")
+
+	for i, e := range ine.Range {
+		out.WriteString(e.TokenLiteral())
+
+		if i < len(ine.Range)-1 {
+			out.WriteString(", ")
+		}
+	}
+
+	out.WriteString("))")
+
+	return out.String()
+}

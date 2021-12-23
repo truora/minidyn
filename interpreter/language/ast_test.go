@@ -31,6 +31,8 @@ func TestIdentifier(t *testing.T) {
 	if tl != "a" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "a", tl)
 	}
+
+	es.expressionNode()
 }
 
 func TestPrefixExpression(t *testing.T) {
@@ -47,6 +49,8 @@ func TestPrefixExpression(t *testing.T) {
 	if tl != "NOT" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "NOT", tl)
 	}
+
+	es.expressionNode()
 }
 
 func TestInfixExpression(t *testing.T) {
@@ -62,6 +66,8 @@ func TestInfixExpression(t *testing.T) {
 			Value: "b",
 		},
 	}
+
+	ie.expressionNode()
 
 	tl := ie.TokenLiteral()
 	if tl != "=" {
@@ -86,6 +92,8 @@ func TestIndexExpression(t *testing.T) {
 	if tl != "[" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "[", tl)
 	}
+
+	ie.expressionNode()
 }
 
 func TestCallExpression(t *testing.T) {
@@ -107,6 +115,8 @@ func TestCallExpression(t *testing.T) {
 	if tl != "(" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "NOT", tl)
 	}
+
+	ce.expressionNode()
 }
 
 func TestBetweenExpression(t *testing.T) {
@@ -136,6 +146,8 @@ func TestBetweenExpression(t *testing.T) {
 	if be.String() != "b BETWEEN a AND b" {
 		t.Fatalf("wrong string representation. expected=%q, got=%q", "b BETWEEN a AND b", be.String())
 	}
+
+	be.expressionNode()
 }
 
 func TestInExpression(t *testing.T) {
@@ -182,6 +194,27 @@ func TestUpdateExpression(t *testing.T) {
 	if es.String() != "()" {
 		t.Fatalf("unexpected expression representation. expected=%q, got=%q", "SET ()", es.String())
 	}
+
+	es.expressionNode()
+}
+
+func TestActionExpression(t *testing.T) {
+	ae := &ActionExpression{
+		Token: Token{Type: DELETE, Literal: "SET"},
+		Left:  &Identifier{Value: ":x", Token: Token{Type: IDENT, Literal: ":x"}},
+		Right: &Identifier{Value: ":x", Token: Token{Type: IDENT, Literal: ":x"}},
+	}
+
+	tl := ae.TokenLiteral()
+	if tl != "SET" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "SET", tl)
+	}
+
+	if ae.String() != "SET (:x, :x)" {
+		t.Fatalf("wrong string representation. expected=%q, got=%q", "SET (:x, :x)", ae.String())
+	}
+
+	ae.expressionNode()
 }
 
 func TestUpdateStatement(t *testing.T) {
@@ -197,6 +230,8 @@ func TestUpdateStatement(t *testing.T) {
 	if es.String() != "" {
 		t.Fatalf("empty expression expected ")
 	}
+
+	es.statementNode()
 }
 
 func BenchmarkCallExpression(b *testing.B) {

@@ -61,7 +61,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	return result == language.TRUE, nil
 }
 
-func setAliases(input UpdateInput) map[string]string {
+func buildAliases(input UpdateInput) map[string]string {
 	aliases := map[string]string{}
 	for k, v := range input.Aliases {
 		aliases[k] = *v
@@ -76,7 +76,7 @@ func (li *Language) Update(input UpdateInput) error {
 	p := language.NewUpdateParser(l)
 	update := p.ParseUpdateExpression()
 
-	aliases := setAliases(input)
+	aliases := buildAliases(input)
 	env := language.NewEnvironment()
 	env.Aliases = aliases
 

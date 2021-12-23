@@ -67,9 +67,30 @@ func TestInfixExpression(t *testing.T) {
 		},
 	}
 
+	ie.expressionNode()
+
 	tl := ie.TokenLiteral()
 	if tl != "=" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "NOT", tl)
+	}
+}
+
+func TestIndexExpression(t *testing.T) {
+	ie := IndexExpression{
+		Token: Token{Type: LBRACKET, Literal: "["},
+		Left: &Identifier{
+			Token: Token{Type: IDENT, Literal: "a"},
+			Value: "a",
+		},
+		Index: &Identifier{
+			Token: Token{Type: IDENT, Literal: ":i"},
+			Value: ":i",
+		},
+	}
+
+	tl := ie.TokenLiteral()
+	if tl != "[" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "[", tl)
 	}
 
 	ie.expressionNode()
@@ -173,6 +194,44 @@ func TestUpdateExpression(t *testing.T) {
 	if es.String() != "()" {
 		t.Fatalf("unexpected expression representation. expected=%q, got=%q", "SET ()", es.String())
 	}
+
+	es.expressionNode()
+}
+
+func TestActionExpression(t *testing.T) {
+	ae := &ActionExpression{
+		Token: Token{Type: DELETE, Literal: "SET"},
+		Left:  &Identifier{Value: ":x", Token: Token{Type: IDENT, Literal: ":x"}},
+		Right: &Identifier{Value: ":x", Token: Token{Type: IDENT, Literal: ":x"}},
+	}
+
+	tl := ae.TokenLiteral()
+	if tl != "SET" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "SET", tl)
+	}
+
+	if ae.String() != "SET (:x, :x)" {
+		t.Fatalf("wrong string representation. expected=%q, got=%q", "SET (:x, :x)", ae.String())
+	}
+
+	ae.expressionNode()
+}
+
+func TestUpdateStatement(t *testing.T) {
+	es := UpdateStatement{
+		Token: Token{Type: IDENT, Literal: "SET"},
+	}
+
+	tl := es.TokenLiteral()
+	if tl != "SET" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "a", tl)
+	}
+
+	if es.String() != "" {
+		t.Fatalf("empty expression expected ")
+	}
+
+	es.statementNode()
 }
 
 func BenchmarkCallExpression(b *testing.B) {

@@ -29,6 +29,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	for k, v := range input.Aliases {
 		aliases[k] = *v
 	}
+
 	env.Aliases = aliases
 
 	item := map[string]*dynamodb.AttributeValue{}
@@ -60,17 +61,22 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	return result == language.TRUE, nil
 }
 
+func buildAliases(input UpdateInput) map[string]string {
+	aliases := map[string]string{}
+	for k, v := range input.Aliases {
+		aliases[k] = *v
+	}
+
+	return aliases
+}
+
 // Update change the item with given expression and attributes
 func (li *Language) Update(input UpdateInput) error {
 	l := language.NewLexer(input.Expression)
 	p := language.NewUpdateParser(l)
 	update := p.ParseUpdateExpression()
 
-	aliases := map[string]string{}
-	for k, v := range input.Aliases {
-		aliases[k] = *v
-	}
-
+	aliases := buildAliases(input)
 	env := language.NewEnvironment()
 	env.Aliases = aliases
 

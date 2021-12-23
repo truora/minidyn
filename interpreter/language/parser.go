@@ -139,6 +139,7 @@ func (p *Parser) nextToken() {
 	p.peekToken = p.l.NextToken()
 }
 
+// ParseConditionalExpression tokenizes a ConditionalExpression
 func (p *Parser) ParseConditionalExpression() *ConditionalExpression {
 	stmt := &ConditionalExpression{Token: p.curToken}
 
@@ -238,6 +239,7 @@ func (p *Parser) parseCallExpression(function Expression) Expression {
 
 func (p *Parser) parseIndexExpression(left Expression) Expression {
 	expression := &IndexExpression{Token: p.curToken, Left: left, Type: ObjectTypeList}
+
 	p.nextToken()
 
 	expression.Index = p.parseIdentifier()
@@ -308,6 +310,7 @@ func (p *Parser) parseCallArguments() []Expression {
 	return args
 }
 
+// ParseUpdateExpression it tokenizes the update expression and returns an UpdateStatement
 func (p *Parser) ParseUpdateExpression() *UpdateStatement {
 	stmt := &UpdateStatement{Token: p.curToken}
 

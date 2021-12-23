@@ -671,6 +671,37 @@ func TestPutItemWithConditions(t *testing.T) {
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 }
 
+func TestUnsupportedFeatures(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	expr := map[string]*dynamodb.AttributeValue{
+		":ntype": {
+			S: aws.String(string("poison")),
+		},
+	}
+	input := &dynamodb.UpdateItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"id": {
+				S: aws.String("001"),
+			},
+		},
+
+		ReturnValues: aws.String("UPDATED_NEW"),
+		// Unsupported expression
+		UpdateExpression:          aws.String("REMOVE second_type = :ntype"),
+		ExpressionAttributeValues: expr,
+	}
+
+	c.Panics(func() {
+		_, _ = client.UpdateItemWithContext(context.Background(), input)
+	})
+}
+
 func TestUpdateItemWithContext(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)
@@ -1526,6 +1557,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 			},
 		},
 	})
+
 	c.Contains(err.Error(), "ValidationException: Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{

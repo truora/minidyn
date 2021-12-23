@@ -133,7 +133,7 @@ func TestLanguageUpdate(t *testing.T) {
 			name: "successful",
 			input: UpdateInput{
 				TableName:  "test",
-				Expression: "SET two = :a + :a, a = :a",
+				Expression: "SET #t = :a + :a, a = :a",
 				Item: map[string]*dynamodb.AttributeValue{
 					"a": {
 						S: aws.String("a"),
@@ -143,6 +143,9 @@ func TestLanguageUpdate(t *testing.T) {
 					":a": {
 						N: aws.String("1"),
 					},
+				},
+				Aliases: map[string]*string{
+					"#t": aws.String("two"),
 				},
 			},
 			output: map[string]*dynamodb.AttributeValue{
@@ -171,6 +174,17 @@ func TestLanguageUpdate(t *testing.T) {
 				},
 			},
 			expectedErr: ErrSyntaxError,
+		},
+		{
+			name: "unsupported feature",
+			input: UpdateInput{
+				TableName:  "test",
+				Expression: "REMOVE #t",
+				Aliases: map[string]*string{
+					"#t": aws.String("two"),
+				},
+			},
+			output: nil,
 		},
 	}
 

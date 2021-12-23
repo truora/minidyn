@@ -1,6 +1,7 @@
 package language
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -451,5 +452,88 @@ func BenchmarkStringInspect(b *testing.B) {
 		if str.Inspect() != "hello" {
 			b.Fatalf("not equal actual=%s expected=%s", str.Inspect(), "hello")
 		}
+	}
+}
+
+func TestToDynamo(t *testing.T) {
+	num := Number{Value: 3}
+	dNum := num.ToDynamoDB()
+
+	if num.Inspect() != *dNum.N {
+		t.Errorf("expected number %s got=%q", num.Inspect(), *dNum.N)
+	}
+
+	boolean := Boolean{Value: true}
+	dBoolean := boolean.ToDynamoDB()
+
+	if boolean.Value != *dBoolean.BOOL {
+		t.Errorf("expected bool %s got=%t", num.Inspect(), *dBoolean.BOOL)
+	}
+
+	binary := Binary{Value: []byte("Hello")}
+	dBinary := binary.ToDynamoDB()
+
+	if !bytes.Equal(binary.Value, dBinary.B) {
+		t.Errorf("expected binary %s got=%s", binary.Value, dBinary.B)
+	}
+
+	null := Null{}
+	dNull := null.ToDynamoDB()
+
+	if !*dNull.NULL {
+		t.Errorf("expected bool %t got=%t", true, *dNull.NULL)
+	}
+
+	err := Error{Message: "Some Error"}
+	dError := err.ToDynamoDB()
+
+	if dError != nil {
+		t.Errorf("expected error to be nil, got=%q", dError)
+	}
+
+	mapN := Map{
+		Value: map[string]Object{"Key": &String{Value: "Value"}},
+	}
+	dMap := mapN.ToDynamoDB()
+
+	if *mapN.Value["Key"].ToDynamoDB().S != *dMap.M["Key"].S {
+		t.Errorf("expected value on Key to be %s got=%s", *mapN.Value["Key"].ToDynamoDB().S, *dMap.M["Key"].S)
+	}
+
+	list := List{Value: []Object{&String{Value: "Cookies"}}}
+	dList := list.ToDynamoDB()
+
+	if *list.Value[0].ToDynamoDB().S != *dList.L[0].S {
+		t.Errorf("expected item to be %s got=%s", *list.Value[0].ToDynamoDB().S, *dList.L[0].S)
+	}
+
+	ss := StringSet{Value: map[string]bool{"Cookies": true}}
+	dSS := ss.ToDynamoDB()
+
+	if "Cookies" != *dSS.SS[0] {
+		t.Errorf("expected item to be %s got=%s", "Cookies", *dSS.SS[0])
+	}
+
+	bs := &BinarySet{Value: [][]byte{[]byte("a"), []byte("c"), []byte("c")}}
+	dBs := bs.ToDynamoDB()
+
+	if !bytes.Equal(bs.Value[0], dBs.BS[0]) {
+		t.Errorf("binary set item to be %s got=%s", bs.Value[0], dBs.BS[0])
+	}
+
+	nm := NumberSet{Value: map[float64]bool{1: true}}
+	dNm := nm.ToDynamoDB()
+
+	if "1" != *dNm.NS[0] {
+		t.Errorf("expected item to be %s got=%s", "1", *dNm.NS[0])
+	}
+}
+
+func TestGetList(t *testing.T) {
+	list := List{Value: []Object{nil}}
+	res := list.Get(0)
+
+	if res != NULL {
+		t.Errorf("expected item to be NULL got=%s", res)
 	}
 }

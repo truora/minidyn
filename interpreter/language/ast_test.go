@@ -31,8 +31,6 @@ func TestIdentifier(t *testing.T) {
 	if tl != "a" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "a", tl)
 	}
-
-	es.expressionNode()
 }
 
 func TestPrefixExpression(t *testing.T) {
@@ -49,8 +47,6 @@ func TestPrefixExpression(t *testing.T) {
 	if tl != "NOT" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "NOT", tl)
 	}
-
-	es.expressionNode()
 }
 
 func TestInfixExpression(t *testing.T) {
@@ -71,8 +67,25 @@ func TestInfixExpression(t *testing.T) {
 	if tl != "=" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "NOT", tl)
 	}
+}
 
-	ie.expressionNode()
+func TestIndexExpression(t *testing.T) {
+	ie := IndexExpression{
+		Token: Token{Type: LBRACKET, Literal: "["},
+		Left: &Identifier{
+			Token: Token{Type: IDENT, Literal: "a"},
+			Value: "a",
+		},
+		Index: &Identifier{
+			Token: Token{Type: IDENT, Literal: ":i"},
+			Value: ":i",
+		},
+	}
+
+	tl := ie.TokenLiteral()
+	if tl != "[" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "[", tl)
+	}
 }
 
 func TestCallExpression(t *testing.T) {
@@ -94,8 +107,6 @@ func TestCallExpression(t *testing.T) {
 	if tl != "(" {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "NOT", tl)
 	}
-
-	ce.expressionNode()
 }
 
 func TestBetweenExpression(t *testing.T) {
@@ -125,8 +136,6 @@ func TestBetweenExpression(t *testing.T) {
 	if be.String() != "b BETWEEN a AND b" {
 		t.Fatalf("wrong string representation. expected=%q, got=%q", "b BETWEEN a AND b", be.String())
 	}
-
-	be.expressionNode()
 }
 
 func TestUpdateExpression(t *testing.T) {
@@ -141,6 +150,21 @@ func TestUpdateExpression(t *testing.T) {
 
 	if es.String() != "()" {
 		t.Fatalf("unexpected expression representation. expected=%q, got=%q", "SET ()", es.String())
+	}
+}
+
+func TestUpdateStatement(t *testing.T) {
+	es := UpdateStatement{
+		Token: Token{Type: IDENT, Literal: "SET"},
+	}
+
+	tl := es.TokenLiteral()
+	if tl != "SET" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "a", tl)
+	}
+
+	if es.String() != "" {
+		t.Fatalf("empty expression expected ")
 	}
 }
 

@@ -13,8 +13,10 @@ func TestEval(t *testing.T) {
 		input    string
 		expected Object
 	}{
+		// Booleans
 		{":a = :a", TRUE},
 		{"NOT :a = :a", FALSE},
+		{"NOT NOT :a = :a", TRUE},
 		{":a = :b", FALSE},
 		{":a = :a AND :b = :b", TRUE},
 		{":a = :a AND :a = :b", FALSE},
@@ -277,6 +279,7 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 				},
 			},
 		},
+
 		":strSet": {
 			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
 		},
@@ -303,9 +306,38 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 	env.Aliases = map[string]string{
 		"#pos":         ":nestedMap.lvl1.lvl2",
 		"#secondLevel": "lvl1.lvl2",
+		"#invalid":     ":one.:one",
 	}
 
 	return env
+}
+
+func TestEvalUpdateError(t *testing.T) {
+	tests := []struct {
+		input         string
+		envField      string
+		expectedError Object
+	}{
+		{
+			"SET #invalid = 1",
+			"#invalid",
+			newError("index operator not supported for \"N\""),
+		},
+	}
+
+	env := startEvalUpdateEnv(t)
+
+	for _, tt := range tests {
+		result := env.Get(tt.envField)
+
+		if !isError(result) {
+			t.Fatalf("expected error missing evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
+		}
+
+		if result.Inspect() != tt.expectedError.Inspect() {
+			t.Errorf("unexpected error for %q in %q. got=%v, want=%v", tt.envField, tt.input, result.Inspect(), tt.expectedError.Inspect())
+		}
+	}
 }
 
 func TestEvalSetUpdate(t *testing.T) {
@@ -531,6 +563,10 @@ func TestErrorHandling(t *testing.T) {
 			"ROLE BETWEEN :x AND :str",
 			"reserved word ROLE found in expression",
 		},
+		{
+			"list_append(:list,:x)",
+			"the function is not allowed in an condition expression; function: list_append",
+		},
 	}
 
 	env := NewEnvironment()
@@ -543,6 +579,9 @@ func TestErrorHandling(t *testing.T) {
 		":z":   {N: aws.String("26")},
 		":str": {S: aws.String("TEXT")},
 		":nil": {NULL: aws.Bool(true)},
+		":list": {L: []*dynamodb.AttributeValue{
+			{S: aws.String("a")},
+		}},
 	})
 	if err != nil {
 		panic(err)
@@ -657,6 +696,88 @@ func TestIsString(t *testing.T) {
 	}
 }
 
+func TestEvalErrors(t *testing.T) {
+	env := NewEnvironment()
+
+	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
+		":x":   {BOOL: aws.Bool(true)},
+		":val": {S: aws.String("text")},
+		":one": {N: aws.String("1")},
+		":h": {
+			M: map[string]*dynamodb.AttributeValue{
+				"a": {BOOL: aws.Bool(true)},
+			},
+		},
+		":voidVal": {
+			NULL: aws.Bool(true),
+		},
+		":list": {L: []*dynamodb.AttributeValue{
+			{S: aws.String("a")},
+		}},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	testCases := []struct {
+		inputs   []interface{}
+		function func(...interface{}) Object
+		expected Object
+	}{
+		{
+			inputs: []interface{}{&String{Value: "hello"}},
+			function: func(args ...interface{}) Object {
+				arg := args[0].(Object)
+				return evalBangOperatorExpression(arg)
+			},
+			expected: newError("unknown operator: NOT S"),
+		},
+		{
+			inputs: []interface{}{&IndexExpression{
+				Token: Token{Type: LBRACKET, Literal: "["},
+				Left: &Identifier{
+					Token: Token{Type: IDENT, Literal: "a"},
+					Value: "a",
+				},
+				Index: &Identifier{
+					Token: Token{Type: LPAREN, Literal: "("},
+					Value: ":i",
+				}}, env},
+			function: func(args ...interface{}) Object {
+				arg := args[0].(*IndexExpression)
+				arg1 := args[1].(*Environment)
+				_, _, err := evalIndexPositions(arg, arg1)
+				return err
+			},
+			expected: newError("index operator not supported: got \":i\""),
+		},
+		{
+			inputs: []interface{}{
+				&ActionExpression{
+					Token: Token{Type: DELETE, Literal: "DELETE"},
+					Left:  &Identifier{Value: ":r", Token: Token{Type: IDENT, Literal: ":x"}},
+					Right: &Identifier{Value: ":r", Token: Token{Type: IDENT, Literal: ":x"}},
+				},
+				env,
+			},
+			function: func(args ...interface{}) Object {
+				arg := args[0].(*ActionExpression)
+				arg1 := args[1].(*Environment)
+				return evalActionDelete(arg, arg1)
+			},
+			expected: NULL,
+		},
+	}
+
+	for i, tt := range testCases {
+		result := tt.function(tt.inputs...)
+
+		if result.Inspect() != tt.expected.Inspect() {
+			t.Errorf("(%d) wrong result value. expected=%q, got=%q", i, tt.expected, result)
+		}
+	}
+}
+
 func TestUpdateEvalSyntaxError(t *testing.T) {
 	tests := []struct {
 		input           string
@@ -706,6 +827,30 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 			"ADD :voidVal :one",
 			"an operand in the update expression has an incorrect data type",
 		},
+		{
+			"SET :x[1] = :one",
+			"index operator not supported for \"BOOL\"",
+		},
+		{
+			"SET :list[:x] = :val",
+			"access index with [] only support N as index : got \"BOOL\"",
+		},
+		{
+			"SET :val = sizze(:list)",
+			"invalid function name; function: sizze",
+		},
+		{
+			"SET :val = size(:x)",
+			"the function is not allowed in an update expression; function: size",
+		},
+		{
+			"DELETE :x :list",
+			"an operand in the update expression has an incorrect data type",
+		},
+		{
+			"DELETE :list sizze(:x)",
+			"invalid function name; function: sizze",
+		},
 	}
 
 	env := NewEnvironment()
@@ -722,6 +867,9 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		":voidVal": {
 			NULL: aws.Bool(true),
 		},
+		":list": {L: []*dynamodb.AttributeValue{
+			{S: aws.String("a")},
+		}},
 	})
 	if err != nil {
 		panic(err)

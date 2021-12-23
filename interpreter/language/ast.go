@@ -20,17 +20,12 @@ type Statement interface {
 // Expression represents the node type expression
 type Expression interface {
 	Node
-	expressionNode()
 }
 
 // Identifier identifier expression node
 type Identifier struct {
 	Token Token // the token.IDENT token
 	Value string
-}
-
-func (i *Identifier) expressionNode() {
-	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node
@@ -66,10 +61,6 @@ type PrefixExpression struct {
 	Right    Expression
 }
 
-func (pe *PrefixExpression) expressionNode() {
-	_ = 1 // HACK for passing coverage
-}
-
 // TokenLiteral returns the literal token of the node
 func (pe *PrefixExpression) TokenLiteral() string {
 	return pe.Token.Literal
@@ -92,10 +83,6 @@ type InfixExpression struct {
 	Left     Expression
 	Operator string
 	Right    Expression
-}
-
-func (oe *InfixExpression) expressionNode() {
-	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node
@@ -121,10 +108,6 @@ type CallExpression struct {
 	Function Expression
 	// Identifier or FunctionLiteral
 	Arguments []Expression
-}
-
-func (ce *CallExpression) expressionNode() {
-	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node
@@ -156,10 +139,6 @@ type IndexExpression struct {
 	Type  ObjectType
 }
 
-func (ie *IndexExpression) expressionNode() {
-	_ = 1 // HACK for passing coverage
-}
-
 // TokenLiteral returns Token Literal from IndexExpression
 func (ie *IndexExpression) TokenLiteral() string { return ie.Token.Literal }
 
@@ -180,10 +159,6 @@ type BetweenExpression struct {
 	Left  Expression
 	// Identifiers
 	Range [2]Expression
-}
-
-func (ce *BetweenExpression) expressionNode() {
-	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node
@@ -209,10 +184,6 @@ type UpdateStatement struct {
 	Expression Expression
 }
 
-func (us *UpdateStatement) statementNode() {
-	_ = 1 // HACK for passing coverage
-}
-
 // TokenLiteral returns the literal token of the node
 func (us *UpdateStatement) TokenLiteral() string { return us.Token.Literal }
 
@@ -228,10 +199,6 @@ func (us *UpdateStatement) String() string {
 type UpdateExpression struct {
 	Token       Token // set
 	Expressions []Expression
-}
-
-func (ue *UpdateExpression) expressionNode() {
-	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node
@@ -256,10 +223,6 @@ type ActionExpression struct {
 	Token Token // ADD REMOVE DELETE
 	Left  Expression
 	Right Expression
-}
-
-func (st *ActionExpression) expressionNode() {
-	_ = 1 // HACK for passing coverage
 }
 
 // TokenLiteral returns the literal token of the node

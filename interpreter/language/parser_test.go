@@ -333,6 +333,10 @@ func testIdentifier(t *testing.T, exp Expression, value string) bool {
 }
 
 func checkParserErrors(t *testing.T, p *Parser) {
+	if p.IsUnsupportedExpression() {
+		t.Errorf("parser error: %q", "unsupported feature")
+	}
+
 	errors := p.Errors()
 	if len(errors) == 0 {
 		return

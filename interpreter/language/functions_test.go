@@ -13,6 +13,10 @@ func TestFunctionInspect(t *testing.T) {
 	if fn.Inspect() != "attribute_exists" {
 		t.Fatalf("not equal actual=%s expected=%s", fn.Inspect(), "attribute_exists")
 	}
+
+	if fn.ToDynamoDB() != nil {
+		t.Fatalf("not nil actual=%s", fn.ToDynamoDB())
+	}
 }
 
 func TestAttributeExists(t *testing.T) {

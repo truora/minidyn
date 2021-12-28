@@ -118,7 +118,6 @@ func setupClient(table string) dynamodbiface.DynamoDBAPI {
 	}
 
 	client := NewClient()
-	setupNativeInterpreter(client.GetNativeInterpreter(), table)
 
 	return client
 }
@@ -719,6 +718,28 @@ func TestUpdateItemWithContext(t *testing.T) {
 	item, err = getPokemon(client, "404")
 	c.NoError(err)
 	c.Equal("poison", aws.StringValue(item["second_type"].S))
+
+	minidynClient, ok := client.(*Client)
+	if !ok {
+		return
+	}
+
+	setupNativeInterpreter(minidynClient.GetNativeInterpreter(), tableName)
+	minidynClient.ActivateNativeInterpreter()
+
+	input.Key = map[string]*dynamodb.AttributeValue{
+		"id": {
+			S: aws.String("001"),
+		},
+	}
+	expr[":ntype"].S = aws.String(string("water"))
+
+	_, err = client.UpdateItemWithContext(context.Background(), input)
+	c.NoError(err)
+
+	item, err = getPokemon(client, "001")
+	c.NoError(err)
+	c.Equal("water", aws.StringValue(item["second_type"].S))
 }
 
 func TestUpdateItemWithConditionalExpression(t *testing.T) {
@@ -996,6 +1017,32 @@ func TestQueryWithContext(t *testing.T) {
 	_, err = client.QueryWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
+
+	minidynClient, ok := client.(*Client)
+	if !ok {
+		return
+	}
+
+	setupNativeInterpreter(minidynClient.GetNativeInterpreter(), tableName)
+	minidynClient.ActivateNativeInterpreter()
+
+	input = &dynamodb.QueryInput{
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":id": {
+				S: aws.String("004"),
+			},
+		},
+		ExpressionAttributeNames: map[string]*string{
+			"#id": aws.String("id"),
+		},
+		KeyConditionExpression: aws.String("#id = :id"),
+		TableName:              aws.String(tableName),
+	}
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 1)
+	c.Empty(out.LastEvaluatedKey)
 }
 
 func TestQueryWithContextPagination(t *testing.T) {
@@ -1645,8 +1692,6 @@ func TestCheckTableName(t *testing.T) {
 	c := require.New(t)
 
 	fclient := NewClient()
-	native := fclient.GetNativeInterpreter()
-	setupNativeInterpreter(native, tableName)
 
 	_, err := fclient.getTable(tableName)
 	expected := "ResourceNotFoundException: Cannot do operations on a non-existent table"
@@ -1663,9 +1708,6 @@ func TestForceFailure(t *testing.T) {
 	c := require.New(t)
 
 	client := NewClient()
-	native := client.GetNativeInterpreter()
-
-	setupNativeInterpreter(native, tableName)
 
 	err := ensurePokemonTable(client)
 	c.NoError(err)

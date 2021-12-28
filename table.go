@@ -1,7 +1,6 @@
 package minidyn
 
 import (
-	"errors"
 	"sort"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -25,15 +24,16 @@ type queryInput struct {
 
 // table has the indexes and the operation functions
 type table struct {
-	name              string
-	indexes           map[string]*index
-	attributesDef     map[string]string
-	sortedKeys        []string
-	data              map[string]map[string]*dynamodb.AttributeValue
-	keySchema         keySchema
-	billingMode       *string
-	nativeInterpreter *interpreter.Native
-	langInterpreter   *interpreter.Language
+	name                 string
+	indexes              map[string]*index
+	attributesDef        map[string]string
+	sortedKeys           []string
+	data                 map[string]map[string]*dynamodb.AttributeValue
+	keySchema            keySchema
+	billingMode          *string
+	useNativeInterpreter bool
+	nativeInterpreter    *interpreter.Native
+	langInterpreter      *interpreter.Language
 }
 
 func newTable(name string) *table {
@@ -360,14 +360,16 @@ func (t *table) getLastKey(item map[string]*dynamodb.AttributeValue, startKey st
 }
 
 func (t *table) interpreterMatch(input interpreter.MatchInput) bool {
+	if t.useNativeInterpreter {
+		matched, err := t.nativeInterpreter.Match(input)
+		if err == nil {
+			return matched
+		}
+	}
+
 	matched, err := t.langInterpreter.Match(input)
 	if err != nil {
-		var nativeErr error
-
-		matched, nativeErr = t.nativeInterpreter.Match(input)
-		if nativeErr != nil {
-			panic(err)
-		}
+		panic(err)
 	}
 
 	return matched
@@ -473,17 +475,11 @@ func (t *table) put(input *dynamodb.PutItemInput) (map[string]*dynamodb.Attribut
 }
 
 func (t *table) interpreterUpdate(input interpreter.UpdateInput) error {
-	err := t.langInterpreter.Update(input)
-	if err != nil && errors.Is(err, interpreter.ErrUnsupportedFeature) {
-		nativeErr := t.nativeInterpreter.Update(input)
-		if nativeErr != nil {
-			panic(err)
-		}
-
-		return nil
+	if t.useNativeInterpreter {
+		return t.nativeInterpreter.Update(input)
 	}
 
-	return err
+	return t.langInterpreter.Update(input)
 }
 
 func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.AttributeValue, error) {

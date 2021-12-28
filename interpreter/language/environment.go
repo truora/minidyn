@@ -135,12 +135,12 @@ func (e *Environment) Remove(name string) {
 	}
 }
 
-// MarkToCompact add the modified object to the list of objects that must be compact
+// MarkToCompact adds the modified object to the list of objects that must be compact
 func (e *Environment) MarkToCompact(obj Object) {
 	e.toCompact = append(e.toCompact, obj)
 }
 
-// Compact remove extra information form the modified objects
+// Compact removes extra information from the modified objects
 func (e *Environment) Compact() {
 	for _, obj := range e.toCompact {
 		list, ok := obj.(*List)

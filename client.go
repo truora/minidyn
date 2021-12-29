@@ -239,16 +239,16 @@ func (fd *Client) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 		return nil, err
 	}
 
-	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ConditionExpression))
-	if err != nil {
-		return nil, err
-	}
-
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ConditionExpression))
+	if err != nil {
+		return nil, err
 	}
 
 	table, err := fd.getTable(aws.StringValue(input.TableName))
@@ -275,16 +275,16 @@ func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteI
 		return nil, err
 	}
 
-	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ConditionExpression))
-	if err != nil {
-		return nil, err
-	}
-
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ConditionExpression))
+	if err != nil {
+		return nil, err
 	}
 
 	table, err := fd.getTable(aws.StringValue(input.TableName))
@@ -332,16 +332,16 @@ func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 		return nil, err
 	}
 
-	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.UpdateExpression), aws.StringValue(input.ConditionExpression))
-	if err != nil {
-		return nil, err
-	}
-
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.UpdateExpression), aws.StringValue(input.ConditionExpression))
+	if err != nil {
+		return nil, err
 	}
 
 	table, err := fd.getTable(aws.StringValue(input.TableName))
@@ -377,16 +377,16 @@ func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 		return nil, err
 	}
 
-	err = validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.StringValue(input.ProjectionExpression))
-	if err != nil {
-		return nil, err
-	}
-
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.StringValue(input.ProjectionExpression))
+	if err != nil {
+		return nil, err
 	}
 
 	table, err := fd.getTable(aws.StringValue(input.TableName))
@@ -415,16 +415,16 @@ func (fd *Client) GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemInp
 
 // Query mock response for dynamodb
 func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.KeyConditionExpression), aws.StringValue(input.FilterExpression))
-	if err != nil {
-		return nil, err
-	}
-
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
+	}
+
+	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.KeyConditionExpression), aws.StringValue(input.FilterExpression))
+	if err != nil {
+		return nil, err
 	}
 
 	table, err := fd.getTable(aws.StringValue(input.TableName))
@@ -462,16 +462,16 @@ func (fd *Client) QueryWithContext(ctx aws.Context, input *dynamodb.QueryInput, 
 
 // Scan mock scan operation
 func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ProjectionExpression), aws.StringValue(input.FilterExpression))
-	if err != nil {
-		return nil, err
-	}
-
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
+	}
+
+	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.ProjectionExpression), aws.StringValue(input.FilterExpression))
+	if err != nil {
+		return nil, err
 	}
 
 	table, err := fd.getTable(aws.StringValue(input.TableName))

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/truora/minidyn/interpreter"
 )
@@ -21,10 +22,13 @@ import (
 const tableName = "pokemons"
 
 type pokemon struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	SecondType string `json:"second_type"`
-	Name       string `json:"name"`
+	ID         string   `json:"id"`
+	Type       string   `json:"type"`
+	SecondType string   `json:"second_type"`
+	Name       string   `json:"name"`
+	Level      int64    `json:"lvl"`
+	Moves      []string `json:"moves" dynamodbav:"moves,stringset,omitempty"`
+	Local      []string `json:"local"`
 }
 
 func ensurePokemonTable(client dynamodbiface.DynamoDBAPI) error {
@@ -922,6 +926,114 @@ func TestUpdateItemError(t *testing.T) {
 	output, err := client.UpdateItemWithContext(context.Background(), input)
 	c.EqualError(err, "forced failure response")
 	c.Nil(output)
+}
+
+func TestUpdateExpressions(t *testing.T) {
+	c := require.New(t)
+	db := []pokemon{
+		{
+			ID:    "001",
+			Type:  "grass",
+			Name:  "Bulbasaur",
+			Moves: []string{"Growl", "Tackle", "Vine Whip", "Growth"},
+			Local: []string{"001 (Red/Blue/Yellow)", "226 (Gold/Silver/Crystal)", "001 (FireRed/LeafGreen)", "001 (Let's Go Pikachu/Let's Go Eevee)"},
+		},
+	}
+
+	tests := map[string]struct {
+		input  *dynamodb.UpdateItemInput
+		verify func(tc *testing.T, client dynamodbiface.DynamoDBAPI)
+	}{
+		"add": {
+			input: &dynamodb.UpdateItemInput{
+				TableName: aws.String(tableName),
+				Key: map[string]*dynamodb.AttributeValue{
+					"id": {
+						S: aws.String("001"),
+					},
+				},
+				ReturnValues:              aws.String("UPDATED_NEW"),
+				UpdateExpression:          aws.String("ADD lvl :one"),
+				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{":one": &dynamodb.AttributeValue{N: aws.String("1")}},
+			},
+			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
+				a := assert.New(tc)
+
+				item, err := getPokemon(client, "001")
+				a.NoError(err)
+
+				a.Equal("1", *item["lvl"].N)
+			},
+		},
+		"remove": {
+			input: &dynamodb.UpdateItemInput{
+				TableName: aws.String(tableName),
+				Key: map[string]*dynamodb.AttributeValue{
+					"id": {
+						S: aws.String("001"),
+					},
+				},
+				ReturnValues:     aws.String("UPDATED_NEW"),
+				UpdateExpression: aws.String("REMOVE #l[0],#l[1],#l[2],#l[3]"),
+				ExpressionAttributeNames: map[string]*string{
+					"#l": aws.String("local"),
+				},
+			},
+			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
+				a := assert.New(tc)
+
+				item, err := getPokemon(client, "001")
+				a.NoError(err)
+
+				a.Empty(item["local"].L)
+			},
+		},
+		"delete": {
+			input: &dynamodb.UpdateItemInput{
+				TableName: aws.String(tableName),
+				Key: map[string]*dynamodb.AttributeValue{
+					"id": {
+						S: aws.String("001"),
+					},
+				},
+				ReturnValues:     aws.String("UPDATED_NEW"),
+				UpdateExpression: aws.String("DELETE moves :move"),
+				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+					":move": {
+						SS: []*string{aws.String("Growl")},
+					},
+				},
+			},
+			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
+				a := assert.New(tc)
+
+				item, err := getPokemon(client, "001")
+				a.NoError(err)
+
+				a.Len(item["moves"].SS, 3)
+			},
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(tc *testing.T) {
+			a := assert.New(tc)
+			client := setupClient(tableName)
+
+			err := ensurePokemonTable(client)
+			a.NoError(err)
+
+			for _, item := range db {
+				err = createPokemon(client, item)
+				c.NoError(err)
+			}
+
+			_, err = client.UpdateItemWithContext(context.Background(), tt.input)
+			a.NoError(err)
+
+			tt.verify(tc, client)
+		})
+	}
 }
 
 func TestQueryWithContext(t *testing.T) {

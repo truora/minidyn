@@ -102,7 +102,7 @@ func NewUpdateParser(l *Lexer) *Parser {
 	p.registerPrefix(LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(SET, p.parseUpdateActionExpression)
 	p.registerPrefix(ADD, p.parseUpdateActionExpression)
-	p.registerPrefix(REMOVE, p.parseUnsupportedExpression)
+	p.registerPrefix(REMOVE, p.parseUpdateActionExpression)
 	p.registerPrefix(DELETE, p.parseUpdateActionExpression)
 
 	p.infixParseFns = make(map[TokenType]infixParseFn)
@@ -341,15 +341,7 @@ func (p *Parser) parseUpdateActionExpression() Expression {
 	return expression
 }
 
-func (p *Parser) parseActions(token Token) []Expression {
-	actions := []Expression{}
-
-	if p.peekTokenIs(EOF) {
-		return actions
-	}
-
-	p.nextToken()
-
+func (p *Parser) parseAction(token Token) *ActionExpression {
 	action := &ActionExpression{
 		Token: token,
 		Left:  p.parseExpression(precedenceValueLowset),
@@ -359,30 +351,31 @@ func (p *Parser) parseActions(token Token) []Expression {
 		return nil
 	}
 
+	if token.Type != REMOVE {
+		p.nextToken()
+
+		action.Right = p.parseExpression(precedenceValueLowset)
+	}
+
+	return action
+}
+
+func (p *Parser) parseActions(token Token) []Expression {
+	actions := []Expression{}
+
+	if p.peekTokenIs(EOF) {
+		return actions
+	}
+
 	p.nextToken()
 
-	action.Right = p.parseExpression(precedenceValueLowset)
-
-	actions = append(actions, action)
+	actions = append(actions, p.parseAction(token))
 
 	for p.peekTokenIs(COMMA) {
 		p.nextToken()
 		p.nextToken()
 
-		action := &ActionExpression{
-			Token: token,
-			Left:  p.parseExpression(precedenceValueLowset),
-		}
-
-		if token.Type == SET && !p.expectPeek(EQ) {
-			return nil
-		}
-
-		p.nextToken()
-
-		action.Right = p.parseExpression(precedenceValueLowset)
-
-		actions = append(actions, action)
+		actions = append(actions, p.parseAction(token))
 	}
 
 	if !p.expectPeek(EOF) {

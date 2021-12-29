@@ -45,6 +45,7 @@ type Client struct {
 	itemCollectionMetrics map[string][]*dynamodb.ItemCollectionMetrics
 	langInterpreter       *interpreter.Language
 	nativeInterpreter     *interpreter.Native
+	useNativeInterpreter  bool
 	forceFailureErr       error
 }
 
@@ -66,6 +67,18 @@ func (fd *Client) ActivateDebug() {
 	defer fd.mu.Unlock()
 
 	fd.langInterpreter.Debug = true
+}
+
+// ActivateNativeInterpreter it activates the debug mode
+func (fd *Client) ActivateNativeInterpreter() {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	fd.useNativeInterpreter = true
+
+	for _, table := range fd.tables {
+		table.useNativeInterpreter = true
+	}
 }
 
 func (fd *Client) setFailureCondition(condition FailureCondition) {
@@ -109,6 +122,7 @@ func (fd *Client) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.Creat
 	newTable.setAttributeDefinition(input.AttributeDefinitions)
 	newTable.billingMode = input.BillingMode
 	newTable.nativeInterpreter = fd.nativeInterpreter
+	newTable.useNativeInterpreter = fd.useNativeInterpreter
 	newTable.langInterpreter = fd.langInterpreter
 
 	if err := newTable.createPrimaryIndex(input); err != nil {

@@ -9,13 +9,14 @@ import (
 
 // Environment represents the execution enviroment
 type Environment struct {
-	store   map[string]Object
-	Aliases map[string]string
+	store     map[string]Object
+	Aliases   map[string]string
+	toCompact []Object
 }
 
 // NewEnvironment creates a new enviroment
 func NewEnvironment() *Environment {
-	return &Environment{store: map[string]Object{}, Aliases: map[string]string{}}
+	return &Environment{store: map[string]Object{}, Aliases: map[string]string{}, toCompact: []Object{}}
 }
 
 // AddAttributes adds the dynamodb attributes to the environment
@@ -116,6 +117,39 @@ func (e *Environment) Set(name string, val Object) Object {
 	e.store[n] = val
 
 	return val
+}
+
+// Remove remove name from the environment
+func (e *Environment) Remove(name string) {
+	n := name
+
+	if alias, ok := e.Aliases[name]; ok {
+		n = alias
+	}
+
+	_, ok := e.store[n]
+	if ok {
+		delete(e.store, n)
+
+		return
+	}
+}
+
+// MarkToCompact adds the modified object to the list of objects that must be compact
+func (e *Environment) MarkToCompact(obj Object) {
+	e.toCompact = append(e.toCompact, obj)
+}
+
+// Compact removes extra information from the modified objects
+func (e *Environment) Compact() {
+	for _, obj := range e.toCompact {
+		list, ok := obj.(*List)
+		if !ok {
+			continue
+		}
+
+		list.Compact()
+	}
 }
 
 // Apply assigns the environment field to the item

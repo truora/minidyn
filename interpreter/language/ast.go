@@ -274,6 +274,12 @@ func (st *ActionExpression) String() string {
 
 	out.WriteString(st.Left.String())
 
+	if st.Token.Type == REMOVE {
+		out.WriteString(")")
+
+		return out.String()
+	}
+
 	sep := ", "
 	if st.Token.Type == SET {
 		sep = " = "

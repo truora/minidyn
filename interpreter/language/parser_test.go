@@ -443,31 +443,14 @@ func TestParsingAddExpression(t *testing.T) {
 }
 
 func TestParsingUnsupportedExpressions(t *testing.T) {
-	setTests := []struct {
-		input string
-		msg   string
-	}{
-		{"REMOVE ProductTotal[:c]", "the REMOVE expression is not supported yet"},
-	}
+	l := NewLexer("f")
+	p := NewUpdateParser(l)
+	p.ParseUpdateExpression()
 
-	for _, tt := range setTests {
-		l := NewLexer(tt.input)
-		p := NewUpdateParser(l)
-		p.ParseUpdateExpression()
+	p.parseUnsupportedExpression()
 
-		errors := p.Errors()
-
-		if len(errors) == 0 {
-			t.Fatalf("the %q expression should fail", tt.input)
-		}
-
-		if errors[0] != tt.msg {
-			t.Fatalf("unexpected message. expect=%s got=%s", tt.input, errors[0])
-		}
-
-		if !p.unsupported {
-			t.Fatalf("the error should be unsupported")
-		}
+	if !p.unsupported {
+		t.Fatal("parse.unsupported must be true")
 	}
 }
 

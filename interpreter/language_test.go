@@ -176,15 +176,16 @@ func TestLanguageUpdate(t *testing.T) {
 			expectedErr: ErrSyntaxError,
 		},
 		{
-			name: "unsupported feature",
+			name: "typo",
 			input: UpdateInput{
 				TableName:  "test",
-				Expression: "REMOVE #t",
+				Expression: "REMOVE ,",
 				Aliases: map[string]*string{
 					"#t": aws.String("two"),
 				},
 			},
-			output: nil,
+			output:      nil,
+			expectedErr: ErrSyntaxError,
 		},
 	}
 

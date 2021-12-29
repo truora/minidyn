@@ -308,6 +308,13 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 		":two": {
 			N: aws.String("2"),
 		},
+		":tools": {L: []*dynamodb.AttributeValue{
+			{S: aws.String("Chisel")},
+			{S: aws.String("Hammer")},
+			{S: aws.String("Nails")},
+			{S: aws.String("Screwdriver")},
+			{S: aws.String("Hacksaw")},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
@@ -465,6 +472,39 @@ func TestEvalAddUpdate(t *testing.T) {
 }
 
 func TestEvalRemoveUpdate(t *testing.T) {
+	tests := []struct {
+		input    string
+		envField string
+		expected Object
+		keepEnv  bool
+	}{
+		{"REMOVE :binSet", ":binSet", NULL, false},
+		{"REMOVE :binSet,:a", ":a", NULL, false},
+		{"REMOVE :tools[1], :tools[2]", ":tools", &List{Value: []Object{&String{Value: "Chisel"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}}, false},
+		{"REMOVE :nestedMap.lvl1.lvl2", ":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{}}}}, false},
+	}
+
+	env := startEvalUpdateEnv(t)
+
+	for _, tt := range tests {
+		if !tt.keepEnv {
+			env = startEvalUpdateEnv(t)
+		}
+
+		result := testEvalUpdate(t, tt.input, env)
+		if isError(result) {
+			t.Fatalf("error evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
+		}
+
+		result = env.Get(tt.envField)
+
+		if result.Inspect() != tt.expected.Inspect() {
+			t.Errorf("result has wrong value for %q in %q. got=%v, want=%v", tt.envField, tt.input, result.Inspect(), tt.expected.Inspect())
+		}
+	}
+}
+
+func TestEvalDELETEUpdate(t *testing.T) {
 	tests := []struct {
 		input    string
 		envField string

@@ -376,7 +376,7 @@ func (l *List) Remove(pos int64) Object {
 		return NULL
 	}
 
-	// TODO: review how dynamodb behaves in this cases
+	// dynamodb does nothing when the index greater than the list size
 
 	return NULL
 }

@@ -422,7 +422,7 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 		return nil, fd.forceFailureErr
 	}
 
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.KeyConditionExpression), aws.StringValue(input.FilterExpression))
+	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.StringValue(input.KeyConditionExpression), aws.StringValue(input.FilterExpression), aws.StringValue(input.ProjectionExpression))
 	if err != nil {
 		return nil, err
 	}

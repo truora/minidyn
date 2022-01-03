@@ -445,9 +445,9 @@ func (t *table) clear() {
 func (t *table) put(input *dynamodb.PutItemInput) (map[string]*dynamodb.AttributeValue, error) {
 	item := copyItem(input.Item)
 
-	key, ok := t.keySchema.getKey(t.attributesDef, input.Item)
-	if !ok {
-		return item, ErrMissingKeys
+	key, err := t.keySchema.getKey(t.attributesDef, input.Item)
+	if err != nil {
+		return item, awserr.New("ValidationException", err.Error(), nil)
 	}
 
 	// support conditional writes
@@ -468,7 +468,10 @@ func (t *table) put(input *dynamodb.PutItemInput) (map[string]*dynamodb.Attribut
 	t.setItem(key, item)
 
 	for _, index := range t.indexes {
-		index.putData(key, item)
+		err := index.putData(key, item)
+		if err != nil {
+			return nil, awserr.New("ValidationException", err.Error(), nil)
+		}
 	}
 
 	return item, nil
@@ -484,9 +487,9 @@ func (t *table) interpreterUpdate(input interpreter.UpdateInput) error {
 
 func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.AttributeValue, error) {
 	// update primary index
-	key, ok := t.keySchema.getKey(t.attributesDef, input.Key)
-	if !ok {
-		return nil, ErrMissingKeys
+	key, err := t.keySchema.getKey(t.attributesDef, input.Key)
+	if err != nil {
+		return nil, awserr.New("ValidationException", err.Error(), nil)
 	}
 
 	item, ok := t.data[key]
@@ -518,7 +521,7 @@ func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 
 	oldItem := copyItem(item)
 
-	err := t.interpreterUpdate(interpreter.UpdateInput{
+	err = t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.name,
 		Expression: aws.StringValue(input.UpdateExpression),
 		Item:       item,
@@ -533,16 +536,19 @@ func (t *table) update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 
 	// update secondary indexes
 	for _, index := range t.indexes {
-		index.updateData(key, item, oldItem)
+		err := index.updateData(key, item, oldItem)
+		if err != nil {
+			return nil, awserr.New("ValidationException", err.Error(), nil)
+		}
 	}
 
 	return copyItem(item), nil
 }
 
 func (t *table) delete(input *dynamodb.DeleteItemInput) (map[string]*dynamodb.AttributeValue, error) {
-	key, ok := t.keySchema.getKey(t.attributesDef, input.Key)
-	if !ok {
-		return nil, ErrMissingKeys
+	key, err := t.keySchema.getKey(t.attributesDef, input.Key)
+	if err != nil {
+		return nil, awserr.New("ValidationException", err.Error(), nil)
 	}
 
 	// delete is an idempotent operation,
@@ -567,7 +573,10 @@ func (t *table) delete(input *dynamodb.DeleteItemInput) (map[string]*dynamodb.At
 	t.sortedKeys = t.sortedKeys[:len(t.sortedKeys)-1]
 
 	for _, index := range t.indexes {
-		index.delete(key, item)
+		err := index.delete(key, item)
+		if err != nil {
+			return nil, awserr.New("ValidationException", err.Error(), nil)
+		}
 	}
 
 	return item, nil

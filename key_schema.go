@@ -1,6 +1,7 @@
 package minidyn
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,34 +10,45 @@ import (
 )
 
 type keySchema struct {
-	HashKey  string
-	RangeKey string
+	HashKey   string
+	RangeKey  string
+	Secondary bool
 }
 
-func (ks keySchema) getKey(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, bool) {
+func (ks keySchema) getKey(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
+	key, err := ks.getKeyValue(attrs, item)
+	if ks.Secondary && errors.Is(err, errMissingField) {
+		// secondary indexes are sparse
+		err = nil
+	}
+
+	return key, err
+}
+
+func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
 	key := []string{}
 
-	val, ok := getItemValue(item, ks.HashKey, attrs[ks.HashKey])
-	if !ok {
-		return "", false
+	val, err := getItemValue(item, ks.HashKey, attrs[ks.HashKey])
+	if err != nil {
+		return "", err
 	}
 
 	hashKeyStr := fmt.Sprintf("%v", val)
 
 	if ks.RangeKey == "" {
-		return hashKeyStr, true
+		return hashKeyStr, nil
 	}
 
 	key = append(key, hashKeyStr)
 
-	val, ok = getItemValue(item, ks.RangeKey, attrs[ks.RangeKey])
-	if !ok {
-		return "", false
+	val, err = getItemValue(item, ks.RangeKey, attrs[ks.RangeKey])
+	if err != nil {
+		return "", err
 	}
 
 	key = append(key, fmt.Sprintf("%v", val))
 
-	return strings.Join(key, "."), true
+	return strings.Join(key, "."), nil
 }
 
 func (ks *keySchema) describe() []*dynamodb.KeySchemaElement {

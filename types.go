@@ -1,10 +1,16 @@
 package minidyn
 
 import (
+	"errors"
 	"reflect"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+)
+
+var (
+	// revive:disable-next-line
+	errMissingField = errors.New("The number of conditions on the keys is invalid")
 )
 
 func mapSliceType(t reflect.Type) string {
@@ -39,23 +45,29 @@ func mapToDynamoDBType(v interface{}) string {
 	return ""
 }
 
-func getItemValue(item map[string]*dynamodb.AttributeValue, field, typ string) (interface{}, bool) {
+func getItemValue(item map[string]*dynamodb.AttributeValue, field, typ string) (interface{}, error) {
 	val, ok := item[field]
 	if !ok {
-		return nil, false
+		return nil, errMissingField
 	}
 
-	return getGoValue(val, typ)
+	goVal, ok := getGoValue(val, typ)
+	if !ok {
+		// revive:disable-next-line
+		return nil, errors.New("Invalid attribute value type")
+	}
+
+	return goVal, nil
 }
 
 func getGoValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
 	switch typ {
 	case "S":
-		return aws.StringValue(val.S), true
+		return aws.StringValue(val.S), val.S != nil
 	case "BOOL":
-		return aws.BoolValue(val.BOOL), true
+		return aws.BoolValue(val.BOOL), val.BOOL != nil
 	case "N":
-		return aws.StringValue(val.N), true
+		return aws.StringValue(val.N), val.N != nil
 	}
 
 	return getGoComplexValue(val, typ)
@@ -64,17 +76,17 @@ func getGoValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
 func getGoComplexValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
 	switch typ {
 	case "B":
-		return val.B, true
+		return val.B, val.B != nil
 	case "L":
-		return val.L, true
+		return val.L, val.L != nil
 	case "M":
-		return val.M, true
+		return val.M, val.M != nil
 	case "BS":
-		return val.BS, true
+		return val.BS, val.BS != nil
 	case "SS":
-		return val.SS, true
+		return val.SS, val.SS != nil
 	case "NS":
-		return val.NS, true
+		return val.NS, val.NS != nil
 	}
 
 	return nil, false

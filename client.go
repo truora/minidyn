@@ -25,8 +25,6 @@ const (
 )
 
 var (
-	// ErrMissingKeys when missing table keys
-	ErrMissingKeys = awserr.New("ValidationException", "The number of conditions on the keys is invalid", nil)
 	// ErrInvalidTableName when the provided table name is invalid
 	ErrInvalidTableName = errors.New("invalid table name")
 	// ErrResourceNotFoundException when the requested resource is not found
@@ -394,9 +392,9 @@ func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 		return nil, err
 	}
 
-	key, ok := table.keySchema.getKey(table.attributesDef, input.Key)
-	if !ok {
-		return nil, ErrMissingKeys
+	key, err := table.keySchema.getKey(table.attributesDef, input.Key)
+	if err != nil {
+		return nil, awserr.New("ValidationException", err.Error(), nil)
 	}
 
 	item := copyItem(table.data[key])

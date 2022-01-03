@@ -558,7 +558,56 @@ func TestPutAndGetItem(t *testing.T) {
 		Key:       map[string]*dynamodb.AttributeValue{},
 	})
 
-	c.Contains(err.Error(), ErrMissingKeys.Error())
+	c.Error(err)
+	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
+}
+
+func TestPutWithGSI(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	err = ensurePokemonTypeIndex(client)
+	c.NoError(err)
+
+	item, err := dynamodbattribute.MarshalMap(pokemon{
+		ID:   "001",
+		Name: "Bulbasaur",
+	})
+	c.NoError(err)
+
+	input := &dynamodb.PutItemInput{
+		Item:      item,
+		TableName: aws.String(tableName),
+	}
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.Error(err)
+	c.Contains(err.Error(), "ValidationException")
+	c.Contains(err.Error(), "value type")
+
+	delete(item, "type")
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.NoError(err)
+
+	_ = AddIndex(client, tableName, "sort-by-second-type", "id", "second_type")
+
+	item, err = dynamodbattribute.MarshalMap(pokemon{
+		ID:   "002",
+		Name: "Ivysaur",
+		Type: "grass",
+	})
+	c.NoError(err)
+
+	input.Item = item
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.Error(err)
+	c.Contains(err.Error(), "ValidationException")
+	c.Contains(err.Error(), "value type")
 }
 
 func TestGetItemWithUnusedAttributes(t *testing.T) {
@@ -918,7 +967,7 @@ func TestUpdateItemError(t *testing.T) {
 	}
 
 	_, err = client.UpdateItem(input)
-	c.Contains(err.Error(), ErrMissingKeys.Error())
+	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
 
 	ActiveForceFailure(client)
 	defer DeactiveForceFailure(client)

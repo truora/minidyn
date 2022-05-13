@@ -363,7 +363,7 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 		return errObj
 	}
 
-	var obj Object = o
+	var obj = o
 
 	for i := len(positions) - 1; i >= 0; i-- {
 		pos := positions[i]
@@ -864,7 +864,7 @@ func evalActionRemove(node *ActionExpression, env *Environment) Object {
 		}
 
 		var (
-			obj Object = o
+			obj = o
 			pos indexAccessor
 		)
 
@@ -928,7 +928,7 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 		return errObj
 	}
 
-	var obj Object = o
+	var obj = o
 
 	for idx := len(positions) - 1; idx >= 0; idx-- {
 		pos := positions[idx]

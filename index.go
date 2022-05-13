@@ -64,10 +64,10 @@ func (i *index) updateData(key string, item, oldItem map[string]*dynamodb.Attrib
 		return err
 	}
 
-	old, exists := i.refs[key]
+	old := i.refs[key]
 	i.refs[key] = indexKey
 
-	if exists && old != indexKey {
+	if old != indexKey {
 		pos := sort.SearchStrings(i.sortedKeys, old)
 		if pos >= len(i.sortedKeys) {
 			i.sortedKeys = append(i.sortedKeys, indexKey)

@@ -1904,6 +1904,49 @@ func TestForceFailure(t *testing.T) {
 	})
 }
 
+func TestUpdateItemAndQueryAfterUpsert(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	err = ensurePokemonTypeIndex(client)
+	c.NoError(err)
+
+	expr := map[string]*dynamodb.AttributeValue{
+		":type": {
+			S: aws.String(string("water")),
+		},
+		":name": {
+			S: aws.String(string("piplup")),
+		},
+	}
+	input := &dynamodb.UpdateItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			"id": {
+				S: aws.String("001"),
+			},
+		},
+		ReturnValues:              aws.String("UPDATED_NEW"),
+		UpdateExpression:          aws.String("SET #type = :type, #name = :name"),
+		ExpressionAttributeValues: expr,
+		ExpressionAttributeNames: map[string]*string{
+			"#type": aws.String("type"),
+			"#name": aws.String("name"),
+		},
+	}
+
+	_, err = client.UpdateItemWithContext(context.Background(), input)
+	c.NoError(err)
+
+	items, err := getPokemonsByType(client, "water")
+	c.NoError(err)
+
+	c.Len(items, 1)
+}
+
 func BenchmarkQuery(b *testing.B) {
 	c := require.New(b)
 	client := setupClient(tableName)

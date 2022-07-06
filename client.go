@@ -432,6 +432,10 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 
 	indexName := aws.StringValue(input.IndexName)
 
+	if input.ScanIndexForward == nil {
+		input.ScanIndexForward = aws.Bool(true)
+	}
+
 	items, lastKey := table.searchData(queryInput{
 		Index:                     indexName,
 		ExpressionAttributeValues: input.ExpressionAttributeValues,
@@ -440,6 +444,7 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 		ExclusiveStartKey:         input.ExclusiveStartKey,
 		KeyConditionExpression:    input.KeyConditionExpression,
 		FilterExpression:          input.FilterExpression,
+		ScanIndexForward:          input.ScanIndexForward,
 	})
 
 	count := int64(len(items))

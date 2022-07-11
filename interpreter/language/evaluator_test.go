@@ -415,6 +415,8 @@ func TestEvalSetUpdate(t *testing.T) {
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, "lvl1.lvl2": &Number{Value: 1}}},
 			false,
 		},
+		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, true},
+		{"SET :x = :val REMOVE :val", ":val", NULL, true},
 	}
 
 	env := startEvalUpdateEnv(t)

@@ -200,9 +200,9 @@ func TestUpdateExpression(t *testing.T) {
 
 func TestActionExpression(t *testing.T) {
 	ae := &ActionExpression{
-		Token: Token{Type: DELETE, Literal: "SET"},
+		Token: Token{Type: SET, Literal: "SET"},
 		Left:  &Identifier{Value: ":x", Token: Token{Type: IDENT, Literal: ":x"}},
-		Right: &Identifier{Value: ":x", Token: Token{Type: IDENT, Literal: ":x"}},
+		Right: &Identifier{Value: ":y", Token: Token{Type: IDENT, Literal: ":y"}},
 	}
 
 	tl := ae.TokenLiteral()
@@ -210,8 +210,22 @@ func TestActionExpression(t *testing.T) {
 		t.Fatalf("wrong token literal. expected=%q, got=%q", "SET", tl)
 	}
 
-	if ae.String() != "SET (:x, :x)" {
-		t.Fatalf("wrong string representation. expected=%q, got=%q", "SET (:x, :x)", ae.String())
+	if ae.String() != "SET (:x = :y)" {
+		t.Fatalf("wrong string representation. expected=%q, got=%q", "SET (:x = :y)", ae.String())
+	}
+
+	ae = &ActionExpression{
+		Token: Token{Type: REMOVE, Literal: "REMOVE"},
+		Left:  &Identifier{Value: ":x", Token: Token{Type: IDENT, Literal: ":x"}},
+	}
+
+	tl = ae.TokenLiteral()
+	if tl != "REMOVE" {
+		t.Fatalf("wrong token literal. expected=%q, got=%q", "REMOVE", tl)
+	}
+
+	if ae.String() != "REMOVE (:x)" {
+		t.Fatalf("wrong string representation. expected=%q, got=%q", "SET (:x = :y)", ae.String())
 	}
 
 	ae.expressionNode()

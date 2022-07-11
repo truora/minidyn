@@ -18,6 +18,7 @@ type queryInput struct {
 	ConditionExpression       *string
 	FilterExpression          *string
 	Aliases                   map[string]*string
+	ScanIndexForward          *bool
 	Scan                      bool
 	started                   bool
 }
@@ -245,7 +246,7 @@ func getPrimaryKey(index *index, k string) (string, bool) {
 func (t *table) fetchQueryData(input queryInput) (*index, []string) {
 	if input.Index != "" {
 		i := t.indexes[input.Index]
-		i.startSearch()
+		i.startSearch(aws.BoolValue(input.ScanIndexForward))
 
 		return i, i.sortedKeys
 	}
@@ -304,6 +305,14 @@ func shouldBreakPage(count, limit int64) bool {
 	return limit != 0 && limit == count
 }
 
+func getKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
+	if !forward {
+		return sortedKeys[size-1-int64(pos)]
+	}
+
+	return sortedKeys[pos]
+}
+
 func (t *table) searchData(input queryInput) ([]map[string]*dynamodb.AttributeValue, map[string]*dynamodb.AttributeValue) {
 	items := []map[string]*dynamodb.AttributeValue{}
 	limit := aws.Int64Value(input.Limit)
@@ -314,10 +323,13 @@ func (t *table) searchData(input queryInput) ([]map[string]*dynamodb.AttributeVa
 	input.started = startKey == ""
 	last := map[string]*dynamodb.AttributeValue{}
 	sortedKeysSize := int64(len(sortedKeys))
+	forward := aws.BoolValue(input.ScanIndexForward)
 
 	var count int64
 
-	for _, k := range sortedKeys {
+	for pos := range sortedKeys {
+		k := getKeyAt(sortedKeys, sortedKeysSize, int64(pos), forward)
+
 		pk, ok := prepareSearch(&input, index, k, startKey)
 		if !ok {
 			continue

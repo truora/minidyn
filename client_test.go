@@ -1290,7 +1290,14 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.Len(out.Items, 3)
 	c.Empty(out.LastEvaluatedKey)
 
+	input.ScanIndexForward = aws.Bool(false)
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Equal("003", aws.StringValue(out.Items[0]["id"].S))
+
 	// Query with FilterExpression
+	input.ScanIndexForward = nil
 	input.ExclusiveStartKey = nil
 	input.FilterExpression = aws.String("begins_with(#name, :letter)")
 	input.Limit = aws.Int64(2)

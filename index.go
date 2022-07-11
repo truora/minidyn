@@ -101,7 +101,19 @@ func (i *index) delete(key string, item map[string]*dynamodb.AttributeValue) err
 	return nil
 }
 
-func (i *index) startSearch() {
+func (i *index) lessKey(x, y int) bool {
+	if i.sortedRefs[x][1] < i.sortedRefs[y][1] {
+		return true
+	}
+
+	if i.sortedRefs[x][1] > i.sortedRefs[y][1] {
+		return false
+	}
+
+	return i.sortedRefs[x][0] < i.sortedRefs[y][0]
+}
+
+func (i *index) startSearch(scanForward bool) {
 	i.sortedRefs = make([][2]string, len(i.refs))
 	pos := 0
 
@@ -111,24 +123,21 @@ func (i *index) startSearch() {
 	}
 
 	sort.Slice(i.sortedRefs, func(x, y int) bool {
-		if i.sortedRefs[x][1] < i.sortedRefs[y][1] {
-			return true
+		less := i.lessKey(x, y)
+		if scanForward {
+			return less
 		}
 
-		if i.sortedRefs[x][1] > i.sortedRefs[y][1] {
-			return false
-		}
-
-		return i.sortedRefs[x][0] < i.sortedRefs[y][0]
+		return !less
 	})
 }
 
 func (i *index) getPrimaryKey(indexKey string) (string, bool) {
 	if len(i.sortedRefs) > 0 {
 		key := i.sortedRefs[0]
+		pk, ik := key[0], key[1]
 
 		i.sortedRefs = i.sortedRefs[1:len(i.sortedRefs)]
-		pk, ik := key[0], key[1]
 
 		if indexKey == ik {
 			return pk, true

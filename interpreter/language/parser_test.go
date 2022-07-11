@@ -442,6 +442,59 @@ func TestParsingAddExpression(t *testing.T) {
 	}
 }
 
+func TestParsingRemoveExpression(t *testing.T) {
+	setTests := []struct {
+		input       string
+		actionsSize int
+	}{
+		{"REMOVE ProductTotal", 1},
+		{"REMOVE ProductTotal, Price", 2},
+	}
+
+	for _, tt := range setTests {
+		l := NewLexer(tt.input)
+		p := NewUpdateParser(l)
+		update := p.ParseUpdateExpression()
+		checkParserErrors(t, p)
+
+		opExp, ok := update.Expression.(*UpdateExpression)
+		if !ok {
+			t.Fatalf("exp is not UpdateExpression. got=%T(%s)", update.Expression, update.Expression)
+		}
+
+		if len(opExp.Expressions) != tt.actionsSize {
+			t.Fatalf("unexpected actions size. got=%d expected=(%d)", len(opExp.Expressions), tt.actionsSize)
+		}
+	}
+}
+
+func TestParsingTwoUpdateActions(t *testing.T) {
+	setTests := []struct {
+		input       string
+		actionsSize int
+	}{
+		{"SET ProductCategory = :c REMOVE ProductSize", 2},
+		{"SET ProductCategory = :c ADD ProductSize :one", 2},
+		{"SET ProductCategory = :c, ProductDesc = :text ADD ProductSize :one", 3},
+	}
+
+	for _, tt := range setTests {
+		l := NewLexer(tt.input)
+		p := NewUpdateParser(l)
+		update := p.ParseUpdateExpression()
+		checkParserErrors(t, p)
+
+		opExp, ok := update.Expression.(*UpdateExpression)
+		if !ok {
+			t.Fatalf("exp is not UpdateExpression. got=%T(%s)", update.Expression, update.Expression)
+		}
+
+		if len(opExp.Expressions) != tt.actionsSize {
+			t.Fatalf("unexpected actions size. got=%d expected=(%d)", len(opExp.Expressions), tt.actionsSize)
+		}
+	}
+}
+
 func TestParsingUnsupportedExpressions(t *testing.T) {
 	l := NewLexer("f")
 	p := NewUpdateParser(l)

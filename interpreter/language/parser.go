@@ -370,12 +370,24 @@ func (p *Parser) parseActions(token Token) []Expression {
 	p.nextToken()
 
 	actions = append(actions, p.parseAction(token))
+	updateTokens := []TokenType{SET, ADD, REMOVE, DELETE}
 
-	for p.peekTokenIs(COMMA) {
-		p.nextToken()
+	for p.peekTokenIs(COMMA) || p.tokenIsOneOf(updateTokens) {
+		if p.peekTokenIs(COMMA) {
+			p.nextToken()
+			p.nextToken()
+
+			actions = append(actions, p.parseAction(token))
+
+			continue
+		}
+
 		p.nextToken()
 
-		actions = append(actions, p.parseAction(token))
+		otherUpdate := p.parseUpdateActionExpression()
+		if updateExpression, ok := otherUpdate.(*UpdateExpression); ok {
+			actions = append(actions, updateExpression.Expressions...)
+		}
 	}
 
 	if !p.expectPeek(EOF) {
@@ -389,6 +401,16 @@ func (p *Parser) parseActions(token Token) []Expression {
 
 func (p *Parser) peekTokenIs(t TokenType) bool {
 	return p.peekToken.Type == t
+}
+
+func (p *Parser) tokenIsOneOf(ts []TokenType) bool {
+	for _, t := range ts {
+		if p.peekTokenIs(t) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (p *Parser) expectPeek(t TokenType) bool {

@@ -2,6 +2,7 @@ package minidyn
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -48,13 +49,13 @@ func mapToDynamoDBType(v interface{}) string {
 func getItemValue(item map[string]*dynamodb.AttributeValue, field, typ string) (interface{}, error) {
 	val, ok := item[field]
 	if !ok {
-		return nil, errMissingField
+		return nil, fmt.Errorf("%w; field: %q", errMissingField, field)
 	}
 
 	goVal, ok := getGoValue(val, typ)
 	if !ok {
 		// revive:disable-next-line
-		return nil, errors.New("Invalid attribute value type")
+		return nil, fmt.Errorf("Invalid attribute value type; field %q", field)
 	}
 
 	return goVal, nil

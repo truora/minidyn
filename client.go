@@ -492,6 +492,7 @@ func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 		ExclusiveStartKey:         input.ExclusiveStartKey,
 		FilterExpression:          input.FilterExpression,
 		Scan:                      true,
+		ScanIndexForward:          aws.Bool(true),
 	})
 
 	count := int64(len(items))

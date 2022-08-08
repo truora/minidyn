@@ -662,6 +662,54 @@ func TestErrorHandling(t *testing.T) {
 	}
 }
 
+func TestEvalUpdateReservedKeywords(t *testing.T) {
+	tests := []struct {
+		input           string
+		expectedMessage string
+	}{
+		{
+			"SET status = :status",
+			"reserved word STATUS found in expression",
+		},
+		{
+			"REMOVE status,keys,hash",
+			"reserved word STATUS found in expression",
+		},
+		{
+			"ADD avg 5",
+			"reserved word AVG found in expression",
+		},
+		{
+			"DELETE keys :keys",
+			"reserved word KEYS found in expression",
+		},
+	}
+
+	env := NewEnvironment()
+
+	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
+		":status": {S: aws.String("healthy")},
+		":keys":   {SS: []*string{aws.String("Key"), aws.String("Another Key")}},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	for i, tt := range tests {
+		evaluated := testEvalUpdate(t, tt.input, env)
+
+		errObj, ok := evaluated.(*Error)
+		if !ok {
+			t.Errorf("(%d) no error object returned for %s. got=%T(%+v)", i, tt.input, evaluated, evaluated)
+			continue
+		}
+
+		if errObj.Message != tt.expectedMessage {
+			t.Errorf("wrong error message for %s. expected=%q, got=%q", tt.input, tt.expectedMessage, errObj.Message)
+		}
+	}
+}
+
 func TestEvalReservedKeywords(t *testing.T) {
 	tests := []struct {
 		input           string

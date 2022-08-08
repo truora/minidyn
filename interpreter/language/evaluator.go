@@ -779,7 +779,14 @@ func evalActionSet(node *ActionExpression, env *Environment) Object {
 
 	id, ok := node.Left.(*Identifier)
 	if ok {
+		// We need to validate left hand side is not a keyword
+		obj := evalIdentifier(id, env, true)
+		if isError(obj) {
+			return obj
+		}
+
 		env.Set(id.Value, val)
+
 		return NULL
 	}
 
@@ -804,7 +811,11 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 
 	id, ok := node.Left.(*Identifier)
 	if ok {
-		obj := env.Get(id.Value)
+		// We need to validate left hand side is not a keyword
+		obj := evalIdentifier(id, env, true)
+		if isError(obj) {
+			return obj
+		}
 
 		if obj == NULL {
 			env.Set(id.Value, val)
@@ -830,7 +841,11 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 
 	id, ok := node.Left.(*Identifier)
 	if ok {
-		obj := env.Get(id.Value)
+		// We need to validate left hand side is not a keyword
+		obj := evalIdentifier(id, env, true)
+		if isError(obj) {
+			return obj
+		}
 
 		if obj == NULL {
 			env.Set(id.Value, val)
@@ -851,6 +866,12 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 func evalActionRemove(node *ActionExpression, env *Environment) Object {
 	id, ok := node.Left.(*Identifier)
 	if ok {
+		// We need to validate left hand side is not a keyword
+		val := evalIdentifier(id, env, true)
+		if isError(val) {
+			return val
+		}
+
 		env.Remove(id.Value)
 
 		return NULL

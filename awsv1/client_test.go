@@ -1,4 +1,4 @@
-package minidyn
+package client
 
 import (
 	"context"

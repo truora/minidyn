@@ -1,4 +1,4 @@
-package minidyn
+package core
 
 import (
 	"errors"
@@ -12,6 +12,13 @@ import (
 var (
 	// revive:disable-next-line
 	errMissingField = errors.New("The number of conditions on the keys is invalid")
+
+	// ErrConditionalRequestFailed when the conditional write is not meet
+	ErrConditionalRequestFailed = errors.New("the conditional request failed")
+)
+
+const (
+	PrimaryIndexName = ""
 )
 
 func mapSliceType(t reflect.Type) string {

@@ -1,4 +1,4 @@
-package minidyn
+package core
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ type keySchema struct {
 	Secondary bool
 }
 
-func (ks keySchema) getKey(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
+func (ks keySchema) GetKey(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
 	key, err := ks.getKeyValue(attrs, item)
 	if ks.Secondary && errors.Is(err, errMissingField) {
 		// secondary indexes are sparse

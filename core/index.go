@@ -1,4 +1,4 @@
-package minidyn
+package core
 
 import (
 	"sort"
@@ -19,29 +19,29 @@ type index struct {
 	sortedRefs [][2]string // used for searching
 	typ        indexType
 	projection *dynamodb.Projection // TODO use projection in queries
-	table      *table
+	Table      *Table
 	refs       map[string]string
 }
 
-func newIndex(t *table, typ indexType, ks keySchema) *index {
+func newIndex(t *Table, typ indexType, ks keySchema) *index {
 	ks.Secondary = true
 
 	return &index{
 		keySchema:  ks,
 		sortedKeys: []string{},
 		typ:        typ,
-		table:      t,
+		Table:      t,
 		refs:       map[string]string{},
 	}
 }
 
-func (i *index) clear() {
+func (i *index) Clear() {
 	i.sortedKeys = []string{}
 	i.refs = map[string]string{}
 }
 
 func (i *index) putData(key string, item map[string]*dynamodb.AttributeValue) error {
-	indexKey, err := i.keySchema.getKey(i.table.attributesDef, item)
+	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
 	}
@@ -59,7 +59,7 @@ func (i *index) putData(key string, item map[string]*dynamodb.AttributeValue) er
 }
 
 func (i *index) updateData(key string, item, oldItem map[string]*dynamodb.AttributeValue) error {
-	indexKey, err := i.keySchema.getKey(i.table.attributesDef, item)
+	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
 	}
@@ -84,7 +84,7 @@ func (i *index) updateData(key string, item, oldItem map[string]*dynamodb.Attrib
 func (i *index) delete(key string, item map[string]*dynamodb.AttributeValue) error {
 	delete(i.refs, key)
 
-	indexKey, err := i.keySchema.getKey(i.table.attributesDef, item)
+	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
 	}

@@ -1,4 +1,4 @@
-package minidyn
+package core
 
 import (
 	"testing"

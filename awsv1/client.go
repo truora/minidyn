@@ -1,4 +1,4 @@
-package minidyn
+package client
 
 import (
 	"errors"
@@ -12,11 +12,11 @@ import (
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
 )
 
 const (
-	primaryIndexName                   = ""
 	batchRequestsLimit                 = 25
 	unusedExpressionAttributeNamesMsg  = "Value provided in ExpressionAttributeNames unused in expressions"
 	unusedExpressionAttributeValuesMsg = "Value provided in ExpressionAttributeValues unused in expressions"
@@ -28,9 +28,7 @@ var (
 	// ErrInvalidTableName when the provided table name is invalid
 	ErrInvalidTableName = errors.New("invalid table name")
 	// ErrResourceNotFoundException when the requested resource is not found
-	ErrResourceNotFoundException = errors.New("requested resource not found")
-	// ErrConditionalRequestFailed when the conditional write is not meet
-	ErrConditionalRequestFailed    = errors.New("the conditional request failed")
+	ErrResourceNotFoundException   = errors.New("requested resource not found")
 	expressionAttributeNamesRegex  = regexp.MustCompile("^#[A-Za-z0-9_]+$")
 	expressionAttributeValuesRegex = regexp.MustCompile("^:[A-Za-z0-9_]+$")
 )
@@ -38,7 +36,7 @@ var (
 // Client define a mock struct to be used
 type Client struct {
 	dynamodbiface.DynamoDBAPI
-	tables                map[string]*table
+	tables                map[string]*core.Table
 	mu                    sync.Mutex
 	itemCollectionMetrics map[string][]*dynamodb.ItemCollectionMetrics
 	langInterpreter       *interpreter.Language
@@ -50,7 +48,7 @@ type Client struct {
 // NewClient initializes dynamodb client with a mock
 func NewClient() *Client {
 	fake := Client{
-		tables:            map[string]*table{},
+		tables:            map[string]*core.Table{},
 		mu:                sync.Mutex{},
 		nativeInterpreter: interpreter.NewNativeInterpreter(),
 		langInterpreter:   &interpreter.Language{},
@@ -75,7 +73,7 @@ func (fd *Client) ActivateNativeInterpreter() {
 	fd.useNativeInterpreter = true
 
 	for _, table := range fd.tables {
-		table.useNativeInterpreter = true
+		table.UseNativeInterpreter = true
 	}
 }
 
@@ -96,7 +94,7 @@ func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 	fd.nativeInterpreter = native
 
 	for _, table := range fd.tables {
-		table.nativeInterpreter = native
+		table.NativeInterpreter = native
 	}
 }
 
@@ -116,29 +114,29 @@ func (fd *Client) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.Creat
 		return nil, awserr.New(dynamodb.ErrCodeResourceInUseException, "Cannot create preexisting table", nil)
 	}
 
-	newTable := newTable(tableName)
-	newTable.setAttributeDefinition(input.AttributeDefinitions)
-	newTable.billingMode = input.BillingMode
-	newTable.nativeInterpreter = fd.nativeInterpreter
-	newTable.useNativeInterpreter = fd.useNativeInterpreter
-	newTable.langInterpreter = fd.langInterpreter
+	newTable := core.NewTable(tableName)
+	newTable.SetAttributeDefinition(input.AttributeDefinitions)
+	newTable.BillingMode = input.BillingMode
+	newTable.NativeInterpreter = fd.nativeInterpreter
+	newTable.UseNativeInterpreter = fd.useNativeInterpreter
+	newTable.LangInterpreter = fd.langInterpreter
 
-	if err := newTable.createPrimaryIndex(input); err != nil {
+	if err := newTable.CreatePrimaryIndex(input); err != nil {
 		return nil, err
 	}
 
-	if err := newTable.addGlobalIndexes(input.GlobalSecondaryIndexes); err != nil {
+	if err := newTable.AddGlobalIndexes(input.GlobalSecondaryIndexes); err != nil {
 		return nil, err
 	}
 
-	if err := newTable.addLocalIndexes(input.LocalSecondaryIndexes); err != nil {
+	if err := newTable.AddLocalIndexes(input.LocalSecondaryIndexes); err != nil {
 		return nil, err
 	}
 
 	fd.tables[tableName] = newTable
 
 	return &dynamodb.CreateTableOutput{
-		TableDescription: newTable.description(tableName),
+		TableDescription: newTable.Description(tableName),
 	}, nil
 }
 
@@ -160,7 +158,7 @@ func (fd *Client) DeleteTable(input *dynamodb.DeleteTableInput) (*dynamodb.Delet
 		return nil, err
 	}
 
-	desc := table.description(tableName)
+	desc := table.Description(tableName)
 
 	delete(fd.tables, tableName)
 
@@ -188,19 +186,19 @@ func (fd *Client) UpdateTable(input *dynamodb.UpdateTableInput) (*dynamodb.Updat
 	}
 
 	if input.AttributeDefinitions != nil {
-		table.setAttributeDefinition(input.AttributeDefinitions)
+		table.SetAttributeDefinition(input.AttributeDefinitions)
 	}
 
 	for _, change := range input.GlobalSecondaryIndexUpdates {
-		if err := table.applyIndexChange(change); err != nil {
+		if err := table.ApplyIndexChange(change); err != nil {
 			return &dynamodb.UpdateTableOutput{
-				TableDescription: table.description(tableName),
+				TableDescription: table.Description(tableName),
 			}, err
 		}
 	}
 
 	return &dynamodb.UpdateTableOutput{
-		TableDescription: table.description(tableName),
+		TableDescription: table.Description(tableName),
 	}, nil
 }
 
@@ -219,7 +217,7 @@ func (fd *Client) DescribeTable(input *dynamodb.DescribeTableInput) (*dynamodb.D
 	}
 
 	output := &dynamodb.DescribeTableOutput{
-		Table: table.description(tableName),
+		Table: table.Description(tableName),
 	}
 
 	return output, nil
@@ -254,7 +252,7 @@ func (fd *Client) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 		return nil, err
 	}
 
-	item, err := table.put(input)
+	item, err := table.Put(input)
 
 	return &dynamodb.PutItemOutput{
 		Attributes: item,
@@ -292,19 +290,19 @@ func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteI
 
 	// support conditional writes
 	if input.ConditionExpression != nil {
-		items, _ := table.searchData(queryInput{
-			Index:                     primaryIndexName,
+		items, _ := table.SearchData(core.QueryInput{
+			Index:                     core.PrimaryIndexName,
 			ExpressionAttributeValues: input.ExpressionAttributeValues,
 			Aliases:                   input.ExpressionAttributeNames,
 			Limit:                     aws.Int64(1),
 			ConditionExpression:       input.ConditionExpression,
 		})
 		if len(items) == 0 {
-			return &dynamodb.DeleteItemOutput{}, awserr.New(dynamodb.ErrCodeConditionalCheckFailedException, ErrConditionalRequestFailed.Error(), nil)
+			return &dynamodb.DeleteItemOutput{}, awserr.New(dynamodb.ErrCodeConditionalCheckFailedException, core.ErrConditionalRequestFailed.Error(), nil)
 		}
 	}
 
-	item, err := table.delete(input)
+	item, err := table.Delete(input)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +345,7 @@ func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 		return nil, err
 	}
 
-	item, err := table.update(input)
+	item, err := table.Update(input)
 	if err != nil {
 		if errors.Is(err, interpreter.ErrSyntaxError) {
 			return nil, awserr.New("ValidationException", err.Error(), nil)
@@ -392,12 +390,12 @@ func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 		return nil, err
 	}
 
-	key, err := table.keySchema.getKey(table.attributesDef, input.Key)
+	key, err := table.KeySchema.GetKey(table.AttributesDef, input.Key)
 	if err != nil {
 		return nil, awserr.New("ValidationException", err.Error(), nil)
 	}
 
-	item := copyItem(table.data[key])
+	item := copyItem(table.Data[key])
 
 	output := &dynamodb.GetItemOutput{
 		Item: item,
@@ -436,7 +434,7 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 		input.ScanIndexForward = aws.Bool(true)
 	}
 
-	items, lastKey := table.searchData(queryInput{
+	items, lastKey := table.SearchData(core.QueryInput{
 		Index:                     indexName,
 		ExpressionAttributeValues: input.ExpressionAttributeValues,
 		Aliases:                   input.ExpressionAttributeNames,
@@ -484,7 +482,7 @@ func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 
 	indexName := aws.StringValue(input.IndexName)
 
-	items, lastKey := table.searchData(queryInput{
+	items, lastKey := table.SearchData(core.QueryInput{
 		Index:                     indexName,
 		ExpressionAttributeValues: input.ExpressionAttributeValues,
 		Aliases:                   input.ExpressionAttributeNames,
@@ -654,7 +652,7 @@ func (fd *Client) TransactWriteItemsWithContext(ctx aws.Context, input *dynamodb
 	return fd.TransactWriteItems(input)
 }
 
-func (fd *Client) getTable(tableName string) (*table, error) {
+func (fd *Client) getTable(tableName string) (*core.Table, error) {
 	table, ok := fd.tables[tableName]
 	if !ok {
 		return nil, awserr.New(dynamodb.ErrCodeResourceNotFoundException, "Cannot do operations on a non-existent table", nil)

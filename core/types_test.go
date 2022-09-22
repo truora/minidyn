@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,15 +41,15 @@ func TestMapToDynamoDBType(t *testing.T) {
 func TestGetGoValue(t *testing.T) {
 	c := require.New(t)
 
-	all := &dynamodb.AttributeValue{
+	all := &Item{
 		B:    []byte{1},
 		BOOL: aws.Bool(false),
 		BS:   [][]byte{{123}},
-		L: []*dynamodb.AttributeValue{
+		L: []*Item{
 			{N: aws.String("1")}, {S: aws.String("a")},
 		},
-		M: map[string]*dynamodb.AttributeValue{
-			"f": &dynamodb.AttributeValue{
+		M: map[string]*Item{
+			"f": &Item{
 				S: aws.String("a"),
 			},
 		},
@@ -75,14 +74,14 @@ func TestGetGoValue(t *testing.T) {
 	goVal, ok = getGoValue(all, "L")
 	c.True(ok)
 
-	sliceVal, ok := goVal.([]*dynamodb.AttributeValue)
+	sliceVal, ok := goVal.([]*Item)
 	c.True(ok)
 	c.Len(sliceVal, 2)
 
 	goVal, ok = getGoValue(all, "M")
 	c.True(ok)
 
-	mapVal, ok := goVal.(map[string]*dynamodb.AttributeValue)
+	mapVal, ok := goVal.(map[string]*Item)
 	c.True(ok)
 	c.Equal("a", *mapVal["f"].S)
 

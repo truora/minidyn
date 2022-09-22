@@ -6,7 +6,7 @@ import (
 	"reflect"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
 var (
@@ -20,6 +20,15 @@ var (
 const (
 	PrimaryIndexName = ""
 )
+
+func copyItem(item map[string]*types.Item) map[string]*types.Item {
+	copy := map[string]*types.Item{}
+	for key, val := range item {
+		copy[key] = val
+	}
+
+	return copy
+}
 
 func mapSliceType(t reflect.Type) string {
 	e := t.Elem()
@@ -53,7 +62,7 @@ func mapToDynamoDBType(v interface{}) string {
 	return ""
 }
 
-func getItemValue(item map[string]*dynamodb.AttributeValue, field, typ string) (interface{}, error) {
+func getItemValue(item map[string]*types.Item, field, typ string) (interface{}, error) {
 	val, ok := item[field]
 	if !ok {
 		return nil, fmt.Errorf("%w; field: %q", errMissingField, field)
@@ -68,7 +77,7 @@ func getItemValue(item map[string]*dynamodb.AttributeValue, field, typ string) (
 	return goVal, nil
 }
 
-func getGoValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
+func getGoValue(val *types.Item, typ string) (interface{}, bool) {
 	switch typ {
 	case "S":
 		return aws.StringValue(val.S), val.S != nil
@@ -81,7 +90,7 @@ func getGoValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
 	return getGoComplexValue(val, typ)
 }
 
-func getGoComplexValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
+func getGoComplexValue(val *types.Item, typ string) (interface{}, bool) {
 	switch typ {
 	case "B":
 		return val.B, val.B != nil

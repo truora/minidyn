@@ -5,15 +5,15 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/truora/minidyn/interpreter"
+	"github.com/truora/minidyn/types"
 )
 
 type QueryInput struct {
 	Index                     string
-	ExpressionAttributeValues map[string]*dynamodb.AttributeValue
+	ExpressionAttributeValues map[string]*types.Item
 	Limit                     *int64
-	ExclusiveStartKey         map[string]*dynamodb.AttributeValue
+	ExclusiveStartKey         map[string]*types.Item
 	KeyConditionExpression    *string
 	ConditionExpression       *string
 	FilterExpression          *string
@@ -29,7 +29,7 @@ type Table struct {
 	Indexes              map[string]*index
 	AttributesDef        map[string]string
 	SortedKeys           []string
-	Data                 map[string]map[string]*dynamodb.AttributeValue
+	Data                 map[string]map[string]*types.Item
 	KeySchema            keySchema
 	BillingMode          *string
 	UseNativeInterpreter bool
@@ -43,17 +43,17 @@ func NewTable(name string) *Table {
 		Indexes:       map[string]*index{},
 		AttributesDef: map[string]string{},
 		SortedKeys:    []string{},
-		Data:          map[string]map[string]*dynamodb.AttributeValue{},
+		Data:          map[string]map[string]*types.Item{},
 	}
 }
 
-func (t *Table) SetAttributeDefinition(attrs []*dynamodb.AttributeDefinition) {
+func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {
 		t.AttributesDef[*attr.AttributeName] = *attr.AttributeType
 	}
 }
 
-func parseKeySchema(schema []*dynamodb.KeySchemaElement) (keySchema, error) {
+func parseKeySchema(schema []*types.KeySchemaElement) (keySchema, error) {
 	var ks keySchema
 
 	for _, element := range schema {
@@ -72,7 +72,7 @@ func parseKeySchema(schema []*dynamodb.KeySchemaElement) (keySchema, error) {
 	return ks, nil
 }
 
-func (t *Table) CreatePrimaryIndex(input *dynamodb.CreateTableInput) error {
+func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	ks, err := parseKeySchema(input.KeySchema)
 	if err != nil {
 		return err
@@ -99,7 +99,7 @@ func (t *Table) CreatePrimaryIndex(input *dynamodb.CreateTableInput) error {
 	return nil
 }
 
-func buildGSI(t *Table, gsiInput *dynamodb.GlobalSecondaryIndex) (*index, error) {
+func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 	if aws.StringValue(t.BillingMode) != "PAY_PER_REQUEST" {
 		if gsiInput.ProvisionedThroughput == nil {
 			// https://github.com/aws/aws-sdk-go/issues/3140
@@ -126,11 +126,11 @@ func buildGSI(t *Table, gsiInput *dynamodb.GlobalSecondaryIndex) (*index, error)
 	return i, nil
 }
 
-func (t *Table) ApplyIndexChange(change *dynamodb.GlobalSecondaryIndexUpdate) error {
+func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error {
 	switch {
 	case change.Create != nil:
 		{
-			gsi := &dynamodb.GlobalSecondaryIndex{
+			gsi := &types.GlobalSecondaryIndex{
 				IndexName:             change.Create.IndexName,
 				KeySchema:             change.Create.KeySchema,
 				Projection:            change.Create.Projection,
@@ -147,7 +147,7 @@ func (t *Table) ApplyIndexChange(change *dynamodb.GlobalSecondaryIndexUpdate) er
 	return nil
 }
 
-func (t *Table) AddGlobalIndexes(input []*dynamodb.GlobalSecondaryIndex) error {
+func (t *Table) AddGlobalIndexes(input []*types.GlobalSecondaryIndex) error {
 	if input != nil && len(input) == 0 {
 		return awserr.New("ValidationException", "GSI list is empty/invalid", nil)
 	}
@@ -161,7 +161,7 @@ func (t *Table) AddGlobalIndexes(input []*dynamodb.GlobalSecondaryIndex) error {
 	return nil
 }
 
-func (t *Table) addGlobalIndex(gsiInput *dynamodb.GlobalSecondaryIndex) error {
+func (t *Table) addGlobalIndex(gsiInput *types.GlobalSecondaryIndex) error {
 	i, err := buildGSI(t, gsiInput)
 	if err != nil {
 		return err
@@ -174,7 +174,7 @@ func (t *Table) addGlobalIndex(gsiInput *dynamodb.GlobalSecondaryIndex) error {
 
 func (t *Table) deleteIndex(indexName string) error {
 	if _, ok := t.Indexes[indexName]; !ok {
-		return awserr.New(dynamodb.ErrCodeResourceNotFoundException, "Requested resource not found", nil)
+		return awserr.New(ErrCodeResourceNotFoundException, "Requested resource not found", nil)
 	}
 
 	delete(t.Indexes, indexName)
@@ -182,12 +182,12 @@ func (t *Table) deleteIndex(indexName string) error {
 	return nil
 }
 
-func (t *Table) updateIndex(indexName string, provisionedThroughput *dynamodb.ProvisionedThroughput) error {
+func (t *Table) updateIndex(indexName string, provisionedThroughput *types.ProvisionedThroughput) error {
 	// we do not have support for provisionedThroughput values in the index
 	return nil
 }
 
-func buildLSI(t *Table, lsiInput *dynamodb.LocalSecondaryIndex) (*index, error) {
+func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 	ks, err := parseKeySchema(lsiInput.KeySchema)
 	if err != nil {
 		return nil, err
@@ -207,7 +207,7 @@ func buildLSI(t *Table, lsiInput *dynamodb.LocalSecondaryIndex) (*index, error) 
 	return i, nil
 }
 
-func (t *Table) AddLocalIndexes(input []*dynamodb.LocalSecondaryIndex) error {
+func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 	if input != nil && len(input) == 0 {
 		return awserr.New("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
 	}
@@ -224,7 +224,7 @@ func (t *Table) AddLocalIndexes(input []*dynamodb.LocalSecondaryIndex) error {
 	return nil
 }
 
-func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]*dynamodb.AttributeValue) string {
+func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]*types.Item) string {
 	startKey := ""
 	if len(startkeyAttr) != 0 {
 		startKey, _ = schema.GetKey(t.AttributesDef, startkeyAttr)
@@ -271,7 +271,7 @@ func prepareSearch(input *QueryInput, index *index, k, startKey string) (string,
 	return "", false
 }
 
-func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*dynamodb.AttributeValue, interpreter.ExpressionType, bool) {
+func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*types.Item, interpreter.ExpressionType, bool) {
 	storedItem, ok := t.Data[pk]
 
 	lastMatchExpressionType, matched := t.matchKey(*input, storedItem)
@@ -284,7 +284,7 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 	return copyItem(storedItem), lastMatchExpressionType, true
 }
 
-func shouldReturnNextKey(item map[string]*dynamodb.AttributeValue, startKey string, count, limit, keysSize int64) bool {
+func shouldReturnNextKey(item map[string]*types.Item, startKey string, count, limit, keysSize int64) bool {
 	if len(item) == 0 {
 		return false
 	}
@@ -313,15 +313,15 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 	return sortedKeys[pos]
 }
 
-func (t *Table) SearchData(input QueryInput) ([]map[string]*dynamodb.AttributeValue, map[string]*dynamodb.AttributeValue) {
-	items := []map[string]*dynamodb.AttributeValue{}
+func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item) {
+	items := []map[string]*types.Item{}
 	limit := aws.Int64Value(input.Limit)
 	exclusiveStartKey := input.ExclusiveStartKey
 	index, sortedKeys := t.fetchQueryData(input)
 
 	startKey := t.parseStartKey(t.KeySchema, exclusiveStartKey)
 	input.started = startKey == ""
-	last := map[string]*dynamodb.AttributeValue{}
+	last := map[string]*types.Item{}
 	sortedKeysSize := int64(len(sortedKeys))
 	forward := aws.BoolValue(input.ScanIndexForward)
 
@@ -354,9 +354,9 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*dynamodb.AttributeVa
 	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, index)
 }
 
-func (t *Table) getLastKey(item map[string]*dynamodb.AttributeValue, startKey string, limit, count, keysSize int64, index *index) map[string]*dynamodb.AttributeValue {
+func (t *Table) getLastKey(item map[string]*types.Item, startKey string, limit, count, keysSize int64, index *index) map[string]*types.Item {
 	if !shouldReturnNextKey(item, startKey, count, limit, keysSize) {
-		return map[string]*dynamodb.AttributeValue{}
+		return map[string]*types.Item{}
 	}
 
 	key := t.KeySchema.getKeyItem(item)
@@ -387,7 +387,7 @@ func (t *Table) interpreterMatch(input interpreter.MatchInput) bool {
 	return matched
 }
 
-func (t *Table) matchKey(input QueryInput, item map[string]*dynamodb.AttributeValue) (interpreter.ExpressionType, bool) {
+func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpreter.ExpressionType, bool) {
 	var lastMatchExpressionType interpreter.ExpressionType
 	matched := input.Scan
 
@@ -396,7 +396,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*dynamodb.AttributeVa
 			TableName:      t.Name,
 			Expression:     aws.StringValue(input.KeyConditionExpression),
 			ExpressionType: interpreter.ExpressionTypeKey,
-			Item:           item,
+			types.Item:     item,
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
@@ -408,7 +408,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*dynamodb.AttributeVa
 			TableName:      t.Name,
 			Expression:     aws.StringValue(input.FilterExpression),
 			ExpressionType: interpreter.ExpressionTypeFilter,
-			Item:           item,
+			types.Item:     item,
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
@@ -420,7 +420,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*dynamodb.AttributeVa
 			TableName:      t.Name,
 			Expression:     aws.StringValue(input.ConditionExpression),
 			ExpressionType: interpreter.ExpressionTypeConditional,
-			Item:           item,
+			types.Item:     item,
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
@@ -430,7 +430,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*dynamodb.AttributeVa
 	return lastMatchExpressionType, matched
 }
 
-func (t *Table) setItem(key string, item map[string]*dynamodb.AttributeValue) {
+func (t *Table) setItem(key string, item map[string]*types.Item) {
 	_, exists := t.Data[key]
 	t.Data[key] = item
 
@@ -440,10 +440,10 @@ func (t *Table) setItem(key string, item map[string]*dynamodb.AttributeValue) {
 	}
 }
 
-func (t *Table) getItem(key string) map[string]*dynamodb.AttributeValue {
+func (t *Table) getItem(key string) map[string]*types.Item {
 	item, exists := t.Data[key]
 	if !exists {
-		return map[string]*dynamodb.AttributeValue{}
+		return map[string]*types.Item{}
 	}
 
 	return item
@@ -451,10 +451,10 @@ func (t *Table) getItem(key string) map[string]*dynamodb.AttributeValue {
 
 func (t *Table) Clear() {
 	t.SortedKeys = []string{}
-	t.Data = map[string]map[string]*dynamodb.AttributeValue{}
+	t.Data = map[string]map[string]*types.Item{}
 }
 
-func (t *Table) Put(input *dynamodb.PutItemInput) (map[string]*dynamodb.AttributeValue, error) {
+func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 	item := copyItem(input.Item)
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
@@ -473,7 +473,7 @@ func (t *Table) Put(input *dynamodb.PutItemInput) (map[string]*dynamodb.Attribut
 		}, t.getItem(key))
 
 		if !matched {
-			return item, awserr.New(dynamodb.ErrCodeConditionalCheckFailedException, ErrConditionalRequestFailed.Error(), nil)
+			return item, awserr.New(ErrCodeConditionalCheckFailedException, ErrConditionalRequestFailed.Error(), nil)
 		}
 	}
 
@@ -497,7 +497,7 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 	return t.LangInterpreter.Update(input)
 }
 
-func (t *Table) Update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.AttributeValue, error) {
+func (t *Table) Update(input *UpdateItemInput) (map[string]*types.Item, error) {
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
@@ -507,7 +507,7 @@ func (t *Table) Update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 	item, ok := t.Data[key]
 	if !ok {
 		// it allow the use of attribute_exists to check if the item exists
-		item = map[string]*dynamodb.AttributeValue{}
+		item = map[string]*types.Item{}
 	}
 
 	// support conditional writes
@@ -522,7 +522,7 @@ func (t *Table) Update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 
 		_, matched := t.matchKey(query, item)
 		if !matched {
-			return nil, &dynamodb.ConditionalCheckFailedException{Message_: aws.String(ErrConditionalRequestFailed.Error())}
+			return nil, &ConditionalCheckFailedException{Message_: aws.String(ErrConditionalRequestFailed.Error())}
 		}
 	}
 
@@ -536,7 +536,7 @@ func (t *Table) Update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 	err = t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.Name,
 		Expression: aws.StringValue(input.UpdateExpression),
-		Item:       item,
+		types.Item: item,
 		Attributes: input.ExpressionAttributeValues,
 		Aliases:    input.ExpressionAttributeNames,
 	})
@@ -557,7 +557,7 @@ func (t *Table) Update(input *dynamodb.UpdateItemInput) (map[string]*dynamodb.At
 	return copyItem(item), nil
 }
 
-func (t *Table) Delete(input *dynamodb.DeleteItemInput) (map[string]*dynamodb.AttributeValue, error) {
+func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) {
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
 		return nil, awserr.New("ValidationException", err.Error(), nil)
@@ -594,11 +594,11 @@ func (t *Table) Delete(input *dynamodb.DeleteItemInput) (map[string]*dynamodb.At
 	return item, nil
 }
 
-func (t *Table) Description(name string) *dynamodb.TableDescription {
+func (t *Table) Description(name string) *types.TableDescription {
 	// TODO: implement other fields for TableDescription
 	gsi, lsi := t.IndexesDescription()
 
-	return &dynamodb.TableDescription{
+	return &types.TableDescription{
 		TableName:              aws.String(name),
 		ItemCount:              aws.Int64(int64(len(t.SortedKeys))),
 		KeySchema:              t.KeySchema.describe(),
@@ -607,9 +607,9 @@ func (t *Table) Description(name string) *dynamodb.TableDescription {
 	}
 }
 
-func (t *Table) IndexesDescription() ([]*dynamodb.GlobalSecondaryIndexDescription, []*dynamodb.LocalSecondaryIndexDescription) {
-	gsi := []*dynamodb.GlobalSecondaryIndexDescription{}
-	lsi := []*dynamodb.LocalSecondaryIndexDescription{}
+func (t *Table) IndexesDescription() ([]*types.GlobalSecondaryIndexDescription, []*types.LocalSecondaryIndexDescription) {
+	gsi := []*types.GlobalSecondaryIndexDescription{}
+	lsi := []*types.LocalSecondaryIndexDescription{}
 
 	for indexName, index := range t.Indexes {
 		schema := index.keySchema.describe()
@@ -618,7 +618,7 @@ func (t *Table) IndexesDescription() ([]*dynamodb.GlobalSecondaryIndexDescriptio
 		switch index.typ {
 		case indexTypeGlobal:
 			{
-				gsi = append(gsi, &dynamodb.GlobalSecondaryIndexDescription{
+				gsi = append(gsi, &GlobalSecondaryIndexDescription{
 					IndexName:  &indexName,
 					ItemCount:  count,
 					KeySchema:  schema,
@@ -627,7 +627,7 @@ func (t *Table) IndexesDescription() ([]*dynamodb.GlobalSecondaryIndexDescriptio
 			}
 		case indexTypeLocal:
 			{
-				lsi = append(lsi, &dynamodb.LocalSecondaryIndexDescription{
+				lsi = append(lsi, &LocalSecondaryIndexDescription{
 					IndexName:  &indexName,
 					ItemCount:  count,
 					KeySchema:  schema,

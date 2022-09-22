@@ -2,8 +2,6 @@ package core
 
 import (
 	"sort"
-
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 type indexType string
@@ -18,7 +16,7 @@ type index struct {
 	sortedKeys []string
 	sortedRefs [][2]string // used for searching
 	typ        indexType
-	projection *dynamodb.Projection // TODO use projection in queries
+	projection *Projection // TODO use projection in queries
 	Table      *Table
 	refs       map[string]string
 }
@@ -40,7 +38,7 @@ func (i *index) Clear() {
 	i.refs = map[string]string{}
 }
 
-func (i *index) putData(key string, item map[string]*dynamodb.AttributeValue) error {
+func (i *index) putData(key string, item map[string]*Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
@@ -58,7 +56,7 @@ func (i *index) putData(key string, item map[string]*dynamodb.AttributeValue) er
 	return nil
 }
 
-func (i *index) updateData(key string, item, oldItem map[string]*dynamodb.AttributeValue) error {
+func (i *index) updateData(key string, item, oldItem map[string]*Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
@@ -81,7 +79,7 @@ func (i *index) updateData(key string, item, oldItem map[string]*dynamodb.Attrib
 	return nil
 }
 
-func (i *index) delete(key string, item map[string]*dynamodb.AttributeValue) error {
+func (i *index) delete(key string, item map[string]*Item) error {
 	delete(i.refs, key)
 
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)

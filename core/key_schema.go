@@ -15,7 +15,7 @@ type keySchema struct {
 	Secondary bool
 }
 
-func (ks keySchema) GetKey(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
+func (ks keySchema) GetKey(attrs map[string]string, item map[string]*Item) (string, error) {
 	key, err := ks.getKeyValue(attrs, item)
 	if ks.Secondary && errors.Is(err, errMissingField) {
 		// secondary indexes are sparse
@@ -25,7 +25,7 @@ func (ks keySchema) GetKey(attrs map[string]string, item map[string]*dynamodb.At
 	return key, err
 }
 
-func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
+func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*Item) (string, error) {
 	key := []string{}
 
 	val, err := getItemValue(item, ks.HashKey, attrs[ks.HashKey])
@@ -71,8 +71,8 @@ func (ks *keySchema) describe() []*dynamodb.KeySchemaElement {
 	return desc
 }
 
-func (ks *keySchema) getKeyItem(item map[string]*dynamodb.AttributeValue) map[string]*dynamodb.AttributeValue {
-	keyItem := map[string]*dynamodb.AttributeValue{}
+func (ks *keySchema) getKeyItem(item map[string]*Item) map[string]*Item {
+	keyItem := map[string]*Item{}
 
 	if v, ok := item[ks.HashKey]; ok {
 		keyItem[ks.HashKey] = v

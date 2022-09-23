@@ -148,33 +148,33 @@ type LocalSecondaryIndex struct {
 
 // Represents the properties of a global secondary index.
 type GlobalSecondaryIndexDescription struct {
-	_              struct{}            `type:"structure"`
-	Backfilling    *bool               `type:"boolean"`
-	IndexArn       *string             `type:"string"`
-	IndexName      *string             `min:"3" type:"string"`
-	IndexSizeBytes *int64              `type:"long"`
-	IndexStatus    *string             `type:"string" enum:"IndexStatus"`
-	ItemCount      *int64              `type:"long"`
-	KeySchema      []*KeySchemaElement `min:"1" type:"list"`
-	Projection     *Projection         `type:"structure"`
+	_              struct{}           `type:"structure"`
+	Backfilling    *bool              `type:"boolean"`
+	IndexArn       *string            `type:"string"`
+	IndexName      *string            `min:"3" type:"string"`
+	IndexSizeBytes *int64             `type:"long"`
+	IndexStatus    *string            `type:"string" enum:"IndexStatus"`
+	ItemCount      int64              `type:"long"`
+	KeySchema      []KeySchemaElement `min:"1" type:"list"`
+	Projection     *Projection        `type:"structure"`
 }
 
 // Represents the properties of a local secondary index.
 type LocalSecondaryIndexDescription struct {
-	_              struct{}            `type:"structure"`
-	IndexArn       *string             `type:"string"`
-	IndexName      *string             `min:"3" type:"string"`
-	IndexSizeBytes *int64              `type:"long"`
-	ItemCount      *int64              `type:"long"`
-	KeySchema      []*KeySchemaElement `min:"1" type:"list"`
-	Projection     *Projection         `type:"structure"`
+	_              struct{}           `type:"structure"`
+	IndexArn       *string            `type:"string"`
+	IndexName      *string            `min:"3" type:"string"`
+	IndexSizeBytes *int64             `type:"long"`
+	ItemCount      int64              `type:"long"`
+	KeySchema      []KeySchemaElement `min:"1" type:"list"`
+	Projection     *Projection        `type:"structure"`
 }
 
 // A condition specified in the operation could not be evaluated.
 type ConditionalCheckFailedException struct {
 	_            struct{}                  `type:"structure"`
 	RespMetadata protocol.ResponseMetadata `json:"-" xml:"-"`
-	Message_     *string                   `locationName:"message" type:"string"`
+	Message_     string                    `locationName:"message" type:"string"`
 }
 
 // String returns the string representation
@@ -200,8 +200,8 @@ func (s *ConditionalCheckFailedException) Code() string {
 
 // Message returns the exception's message.
 func (s *ConditionalCheckFailedException) Message() string {
-	if s.Message_ != nil {
-		return *s.Message_
+	if s.Message_ != "" {
+		return s.Message_
 	}
 	return ""
 }
@@ -227,16 +227,16 @@ func (s *ConditionalCheckFailedException) RequestID() string {
 
 // Represents the input of a PutItem operation.
 type PutItemInput struct {
-	_                           struct{}           `type:"structure"`
-	ConditionExpression         *string            `type:"string"`
-	ConditionalOperator         *string            `type:"string" enum:"ConditionalOperator"`
+	_                           struct{}          `type:"structure"`
+	ConditionExpression         *string           `type:"string"`
+	ConditionalOperator         *string           `type:"string" enum:"ConditionalOperator"`
 	ExpressionAttributeNames    map[string]string `type:"map"`
-	ExpressionAttributeValues   map[string]Item    `type:"map"`
-	Item                        map[string]Item    `type:"map" required:"true"`
-	ReturnConsumedCapacity      *string            `type:"string" enum:"ReturnConsumedCapacity"`
-	ReturnItemCollectionMetrics *string            `type:"string" enum:"ReturnItemCollectionMetrics"`
-	ReturnValues                *string            `type:"string" enum:"ReturnValue"`
-	TableName                   *string            `min:"3" type:"string" required:"true"`
+	ExpressionAttributeValues   map[string]Item   `type:"map"`
+	Item                        map[string]Item   `type:"map" required:"true"`
+	ReturnConsumedCapacity      *string           `type:"string" enum:"ReturnConsumedCapacity"`
+	ReturnItemCollectionMetrics *string           `type:"string" enum:"ReturnItemCollectionMetrics"`
+	ReturnValues                *string           `type:"string" enum:"ReturnValue"`
+	TableName                   *string           `min:"3" type:"string" required:"true"`
 }
 
 // Represents the input of an UpdateItem operation.
@@ -246,14 +246,14 @@ type UpdateItemInput struct {
 	ConditionExpression         *string                            `type:"string"`
 	ConditionalOperator         *string                            `type:"string" enum:"ConditionalOperator"`
 	Expected                    map[string]*ExpectedAttributeValue `type:"map"`
-	ExpressionAttributeNames    map[string]string                 `type:"map"`
+	ExpressionAttributeNames    map[string]string                  `type:"map"`
 	ExpressionAttributeValues   map[string]Item                    `type:"map"`
 	Key                         map[string]Item                    `type:"map" required:"true"`
 	ReturnConsumedCapacity      *string                            `type:"string" enum:"ReturnConsumedCapacity"`
 	ReturnItemCollectionMetrics *string                            `type:"string" enum:"ReturnItemCollectionMetrics"`
 	ReturnValues                *string                            `type:"string" enum:"ReturnValue"`
 	TableName                   *string                            `min:"3" type:"string" required:"true"`
-	UpdateExpression            *string                            `type:"string"`
+	UpdateExpression            string                             `type:"string"`
 }
 
 // Represents the input of a DeleteItem operation.
@@ -287,17 +287,17 @@ type AttributeValueUpdate struct {
 
 // Represents the properties of a table.
 type TableDescription struct {
-	_                      struct{}                           `type:"structure"`
-	GlobalSecondaryIndexes []*GlobalSecondaryIndexDescription `type:"list"`
-	GlobalTableVersion     *string                            `type:"string"`
-	ItemCount              *int64                             `type:"long"`
-	KeySchema              []*KeySchemaElement                `min:"1" type:"list"`
-	LatestStreamArn        *string                            `min:"37" type:"string"`
-	LatestStreamLabel      *string                            `type:"string"`
-	LocalSecondaryIndexes  []*LocalSecondaryIndexDescription  `type:"list"`
-	TableArn               *string                            `type:"string"`
-	TableId                *string                            `type:"string"`
-	TableName              *string                            `min:"3" type:"string"`
-	TableSizeBytes         *int64                             `type:"long"`
-	TableStatus            *string                            `type:"string" enum:"TableStatus"`
+	_                      struct{}                          `type:"structure"`
+	GlobalSecondaryIndexes []GlobalSecondaryIndexDescription `type:"list"`
+	GlobalTableVersion     string                            `type:"string"`
+	ItemCount              int64                             `type:"long"`
+	KeySchema              []KeySchemaElement                `min:"1" type:"list"`
+	LatestStreamArn        string                            `min:"37" type:"string"`
+	LatestStreamLabel      string                            `type:"string"`
+	LocalSecondaryIndexes  []LocalSecondaryIndexDescription  `type:"list"`
+	TableArn               string                            `type:"string"`
+	TableId                string                            `type:"string"`
+	TableName              string                            `min:"3" type:"string"`
+	TableSizeBytes         int64                             `type:"long"`
+	TableStatus            string                            `type:"string" enum:"TableStatus"`
 }

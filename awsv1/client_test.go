@@ -691,7 +691,7 @@ func TestPutItemWithConditions(t *testing.T) {
 	c.Error(err)
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":not_used": {NULL: aws.Bool(true)},
+		":not_used": {NULL: true)},
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
@@ -715,7 +715,7 @@ func TestPutItemWithConditions(t *testing.T) {
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: true)},
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
@@ -858,7 +858,7 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: true)},
 	}
 
 	_, err = client.UpdateItemWithContext(context.Background(), input)
@@ -1172,7 +1172,7 @@ func TestQueryWithContext(t *testing.T) {
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: true)},
 	}
 
 	_, err = client.QueryWithContext(context.Background(), input)
@@ -1290,7 +1290,7 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.Len(out.Items, 3)
 	c.Empty(out.LastEvaluatedKey)
 
-	input.ScanIndexForward = aws.Bool(false)
+	input.ScanIndexForward = false)
 
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
@@ -1410,7 +1410,7 @@ func TestScanWithContext(t *testing.T) {
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: true)},
 	}
 
 	_, err = client.ScanWithContext(context.Background(), input)
@@ -1581,7 +1581,7 @@ func TestDeleteItemWithConditions(t *testing.T) {
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: true)},
 	}
 
 	_, err = client.DeleteItemWithContext(context.Background(), input)

@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
+
 	"github.com/truora/minidyn/interpreter/language"
 )
 
@@ -32,7 +33,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 
 	env.Aliases = aliases
 
-	item := map[string]*dynamodb.AttributeValue{}
+	item := map[string]*types.Item{}
 
 	for field, val := range input.Item {
 		item[field] = val
@@ -89,7 +90,7 @@ func (li *Language) Update(input UpdateInput) error {
 		return fmt.Errorf("%w: %s", errType, strings.Join(p.Errors(), "\n"))
 	}
 
-	item := map[string]*dynamodb.AttributeValue{}
+	item := map[string]*types.Item{}
 
 	for field, val := range input.Item {
 		item[field] = val

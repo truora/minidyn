@@ -5,14 +5,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
 // UpdaterFunc function used emule to UpdateItem expressions
-type UpdaterFunc func(map[string]*dynamodb.AttributeValue, map[string]*dynamodb.AttributeValue)
+type UpdaterFunc func(map[string]*types.Item, map[string]*types.Item)
 
 // MatcherFunc function used to filter data
-type MatcherFunc func(map[string]*dynamodb.AttributeValue, map[string]*dynamodb.AttributeValue) bool
+type MatcherFunc func(map[string]*types.Item, map[string]*types.Item) bool
 
 // Native simple interpreter using pure go functions
 type Native struct {

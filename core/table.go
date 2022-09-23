@@ -86,7 +86,7 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 		return awserr.New("ValidationException", "Range Key not specified in Attribute Definitions.", nil)
 	}
 
-	// dynamodb-local check this after validate the key schema
+	// types-local check this after validate the key schema
 	if aws.StringValue(t.BillingMode) != "PAY_PER_REQUEST" {
 		if input.ProvisionedThroughput == nil {
 			// https://github.com/aws/aws-sdk-go/issues/3140
@@ -497,7 +497,7 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 	return t.LangInterpreter.Update(input)
 }
 
-func (t *Table) Update(input *UpdateItemInput) (map[string]*types.Item, error) {
+func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, error) {
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
@@ -522,12 +522,12 @@ func (t *Table) Update(input *UpdateItemInput) (map[string]*types.Item, error) {
 
 		_, matched := t.matchKey(query, item)
 		if !matched {
-			return nil, &ConditionalCheckFailedException{Message_: aws.String(ErrConditionalRequestFailed.Error())}
+			return nil, &types.ConditionalCheckFailedException{Message_: aws.String(ErrConditionalRequestFailed.Error())}
 		}
 	}
 
 	if !ok {
-		// dynamodb creates a new item when the item does not exists
+		// types creates a new item when the item does not exists
 		item = copyItem(input.Key)
 	}
 
@@ -618,7 +618,7 @@ func (t *Table) IndexesDescription() ([]*types.GlobalSecondaryIndexDescription, 
 		switch index.typ {
 		case indexTypeGlobal:
 			{
-				gsi = append(gsi, &GlobalSecondaryIndexDescription{
+				gsi = append(gsi, &types.GlobalSecondaryIndexDescription{
 					IndexName:  &indexName,
 					ItemCount:  count,
 					KeySchema:  schema,
@@ -627,7 +627,7 @@ func (t *Table) IndexesDescription() ([]*types.GlobalSecondaryIndexDescription, 
 			}
 		case indexTypeLocal:
 			{
-				lsi = append(lsi, &LocalSecondaryIndexDescription{
+				lsi = append(lsi, &types.LocalSecondaryIndexDescription{
 					IndexName:  &indexName,
 					ItemCount:  count,
 					KeySchema:  schema,

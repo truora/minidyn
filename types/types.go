@@ -1,5 +1,12 @@
 package types
 
+import (
+	"fmt"
+
+	"github.com/aws/aws-sdk-go/aws/awsutil"
+	"github.com/aws/aws-sdk-go/private/protocol"
+)
+
 type Item struct {
 	_ struct{} `type:"structure"`
 
@@ -71,14 +78,14 @@ type AttributeDefinition struct {
 
 type KeySchemaElement struct {
 	_             struct{} `type:"structure"`
-	AttributeName *string  `min:"1" type:"string" required:"true"`
-	KeyType       *string  `type:"string" required:"true" enum:"KeyType"`
+	AttributeName string   `min:"1" type:"string" required:"true"`
+	KeyType       string   `type:"string" required:"true" enum:"KeyType"`
 }
 
 type ProvisionedThroughput struct {
 	_                  struct{} `type:"structure"`
-	ReadCapacityUnits  *int64   `min:"1" type:"long" required:"true"`
-	WriteCapacityUnits *int64   `min:"1" type:"long" required:"true"`
+	ReadCapacityUnits  int64    `min:"1" type:"long" required:"true"`
+	WriteCapacityUnits int64    `min:"1" type:"long" required:"true"`
 }
 
 type CreateTableInput struct {
@@ -137,6 +144,85 @@ type LocalSecondaryIndex struct {
 	IndexName  *string             `min:"3" type:"string" required:"true"`
 	KeySchema  []*KeySchemaElement `min:"1" type:"list" required:"true"`
 	Projection *Projection         `type:"structure" required:"true"`
+}
+
+// Represents the properties of a global secondary index.
+type GlobalSecondaryIndexDescription struct {
+	_              struct{}            `type:"structure"`
+	Backfilling    *bool               `type:"boolean"`
+	IndexArn       *string             `type:"string"`
+	IndexName      *string             `min:"3" type:"string"`
+	IndexSizeBytes *int64              `type:"long"`
+	IndexStatus    *string             `type:"string" enum:"IndexStatus"`
+	ItemCount      *int64              `type:"long"`
+	KeySchema      []*KeySchemaElement `min:"1" type:"list"`
+	Projection     *Projection         `type:"structure"`
+}
+
+// Represents the properties of a local secondary index.
+type LocalSecondaryIndexDescription struct {
+	_              struct{}            `type:"structure"`
+	IndexArn       *string             `type:"string"`
+	IndexName      *string             `min:"3" type:"string"`
+	IndexSizeBytes *int64              `type:"long"`
+	ItemCount      *int64              `type:"long"`
+	KeySchema      []*KeySchemaElement `min:"1" type:"list"`
+	Projection     *Projection         `type:"structure"`
+}
+
+// A condition specified in the operation could not be evaluated.
+type ConditionalCheckFailedException struct {
+	_            struct{}                  `type:"structure"`
+	RespMetadata protocol.ResponseMetadata `json:"-" xml:"-"`
+	Message_     *string                   `locationName:"message" type:"string"`
+}
+
+// String returns the string representation
+func (s ConditionalCheckFailedException) String() string {
+	return awsutil.Prettify(s)
+}
+
+// GoString returns the string representation
+func (s ConditionalCheckFailedException) GoString() string {
+	return s.String()
+}
+
+func newErrorConditionalCheckFailedException(v protocol.ResponseMetadata) error {
+	return &ConditionalCheckFailedException{
+		RespMetadata: v,
+	}
+}
+
+// Code returns the exception type name.
+func (s *ConditionalCheckFailedException) Code() string {
+	return "ConditionalCheckFailedException"
+}
+
+// Message returns the exception's message.
+func (s *ConditionalCheckFailedException) Message() string {
+	if s.Message_ != nil {
+		return *s.Message_
+	}
+	return ""
+}
+
+// OrigErr always returns nil, satisfies awserr.Error interface.
+func (s *ConditionalCheckFailedException) OrigErr() error {
+	return nil
+}
+
+func (s *ConditionalCheckFailedException) Error() string {
+	return fmt.Sprintf("%s: %s", s.Code(), s.Message())
+}
+
+// Status code returns the HTTP status code for the request's response error.
+func (s *ConditionalCheckFailedException) StatusCode() int {
+	return s.RespMetadata.StatusCode
+}
+
+// RequestID returns the service's response RequestID for request.
+func (s *ConditionalCheckFailedException) RequestID() string {
+	return s.RespMetadata.RequestID
 }
 
 // Represents the input of a PutItem operation.

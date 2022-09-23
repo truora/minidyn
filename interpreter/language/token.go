@@ -3,7 +3,7 @@ package language
 // TokenType represents the type of the token
 type TokenType string
 
-// Token represents a token in of the DynamoDB's expression language
+// Token represents a token in of the types's expression language
 type Token struct {
 	Type    TokenType
 	Literal string

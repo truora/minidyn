@@ -43,20 +43,20 @@ func TestGetGoValue(t *testing.T) {
 
 	all := &Item{
 		B:    []byte{1},
-		BOOL: aws.Bool(false),
+		BOOL: false),
 		BS:   [][]byte{{123}},
 		L: []*Item{
-			{N: aws.String("1")}, {S: aws.String("a")},
+			{N: "1")}, {S: "a")},
 		},
 		M: map[string]*Item{
 			"f": &Item{
-				S: aws.String("a"),
+				S: "a"),
 			},
 		},
-		N:  aws.String("1"),
-		NS: []*string{aws.String("1"), aws.String("2")},
-		S:  aws.String("a"),
-		SS: []*string{aws.String("a"), aws.String("b")},
+		N:  "1"),
+		NS: []*string{"1"), "2")},
+		S:  "a"),
+		SS: []*string{"a"), "b")},
 	}
 
 	goVal, ok := getGoValue(all, "B")

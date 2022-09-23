@@ -3,7 +3,7 @@ package interpreter
 import (
 	"errors"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
 var (
@@ -30,8 +30,8 @@ type MatchInput struct {
 	TableName      string
 	Expression     string
 	ExpressionType ExpressionType
-	Item           map[string]*dynamodb.AttributeValue
-	Attributes     map[string]*dynamodb.AttributeValue
+	Item           map[string]*types.Item
+	Attributes     map[string]*types.Item
 	Aliases        map[string]*string
 }
 
@@ -39,12 +39,12 @@ type MatchInput struct {
 type UpdateInput struct {
 	TableName  string
 	Expression string
-	Item       map[string]*dynamodb.AttributeValue
-	Attributes map[string]*dynamodb.AttributeValue
+	Item       map[string]*types.Item
+	Attributes map[string]*types.Item
 	Aliases    map[string]*string
 }
 
-// Interpreter dynamodb expression interpreter interface
+// Interpreter types expression interpreter interface
 type Interpreter interface {
 	Match(input MatchInput) (bool, error)
 	Update(input UpdateInput) error

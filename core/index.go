@@ -2,6 +2,8 @@ package core
 
 import (
 	"sort"
+
+	"github.com/truora/minidyn/types"
 )
 
 type indexType string
@@ -16,7 +18,7 @@ type index struct {
 	sortedKeys []string
 	sortedRefs [][2]string // used for searching
 	typ        indexType
-	projection *Projection // TODO use projection in queries
+	projection *types.Projection // TODO use projection in queries
 	Table      *Table
 	refs       map[string]string
 }
@@ -38,7 +40,7 @@ func (i *index) Clear() {
 	i.refs = map[string]string{}
 }
 
-func (i *index) putData(key string, item map[string]*Item) error {
+func (i *index) putData(key string, item map[string]*types.Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
@@ -56,7 +58,7 @@ func (i *index) putData(key string, item map[string]*Item) error {
 	return nil
 }
 
-func (i *index) updateData(key string, item, oldItem map[string]*Item) error {
+func (i *index) updateData(key string, item, oldItem map[string]*types.Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
@@ -79,7 +81,7 @@ func (i *index) updateData(key string, item, oldItem map[string]*Item) error {
 	return nil
 }
 
-func (i *index) delete(key string, item map[string]*Item) error {
+func (i *index) delete(key string, item map[string]*types.Item) error {
 	delete(i.refs, key)
 
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)

@@ -4,12 +4,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/truora/minidyn/types"
+
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 func TestNativeMatch(t *testing.T) {
-	item := map[string]*dynamodb.AttributeValue{
+	item := map[string]*types.Item{
 		"a": {
 			S: aws.String("a"),
 		},
@@ -17,7 +18,7 @@ func TestNativeMatch(t *testing.T) {
 			N: aws.String("1"),
 		},
 		"b": {
-			BOOL: aws.Bool(true),
+			BOOL: true),
 		},
 		"txt": {
 			S: aws.String("hello world"),
@@ -29,7 +30,7 @@ func TestNativeMatch(t *testing.T) {
 		Expression:     ":a = a",
 		Item:           item,
 		ExpressionType: ExpressionTypeConditional,
-		Attributes: map[string]*dynamodb.AttributeValue{
+		Attributes: map[string]*types.Item{
 			":a": {
 				S: aws.String("a"),
 			},
@@ -43,7 +44,7 @@ func TestNativeMatch(t *testing.T) {
 		t.Error("match without a defined expression should fail")
 	}
 
-	native.AddMatcher("test", ExpressionTypeConditional, ":a = a", func(m1, m2 map[string]*dynamodb.AttributeValue) bool {
+	native.AddMatcher("test", ExpressionTypeConditional, ":a = a", func(m1, m2 map[string]*types.Item) bool {
 		return true
 	})
 
@@ -66,7 +67,7 @@ func TestAddMatcher(t *testing.T) {
 	}
 
 	for _, etype := range etypes {
-		native.AddMatcher("test", etype, ":a = a", func(m1, m2 map[string]*dynamodb.AttributeValue) bool {
+		native.AddMatcher("test", etype, ":a = a", func(m1, m2 map[string]*types.Item) bool {
 			return true
 		})
 	}
@@ -96,7 +97,7 @@ func TestAddMatcher(t *testing.T) {
 }
 
 func TestNativeUpdate(t *testing.T) {
-	item := map[string]*dynamodb.AttributeValue{
+	item := map[string]*types.Item{
 		"a": {
 			S: aws.String("a"),
 		},
@@ -104,7 +105,7 @@ func TestNativeUpdate(t *testing.T) {
 			N: aws.String("1"),
 		},
 		"b": {
-			BOOL: aws.Bool(true),
+			BOOL: true),
 		},
 		"txt": {
 			S: aws.String("hello world"),
@@ -115,7 +116,7 @@ func TestNativeUpdate(t *testing.T) {
 		TableName:  "test",
 		Expression: "set a = :b",
 		Item:       item,
-		Attributes: map[string]*dynamodb.AttributeValue{
+		Attributes: map[string]*types.Item{
 			":b": {
 				S: aws.String("foo"),
 			},
@@ -129,7 +130,7 @@ func TestNativeUpdate(t *testing.T) {
 		t.Error("update without a defined expression should fail")
 	}
 
-	native.AddUpdater("test", "set a = :b", func(m1, m2 map[string]*dynamodb.AttributeValue) {
+	native.AddUpdater("test", "set a = :b", func(m1, m2 map[string]*types.Item) {
 		m1["a"] = m2[":b"]
 	})
 

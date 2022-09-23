@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
-// Function represents a function in the dynamodb expression
+// Function represents a function in the types expression
 type Function struct {
 	Name      string
 	Value     func(...Object) Object
@@ -24,8 +24,8 @@ func (fn *Function) Type() ObjectType {
 	return ObjectTypeFunction
 }
 
-// ToDynamoDB returns the dynamodb attribute value
-func (fn *Function) ToDynamoDB() *dynamodb.AttributeValue {
+// ToDynamoDB returns the types attribute value
+func (fn *Function) ToDynamoDB() *types.Item {
 	return nil
 }
 

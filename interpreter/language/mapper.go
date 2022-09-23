@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
-// MapToObject convert an dynamodb attribute value to an object representation
-func MapToObject(val *dynamodb.AttributeValue) (Object, error) {
+// MapToObject convert an types attribute value to an object representation
+func MapToObject(val *types.Item) (Object, error) {
 	switch {
 	case val.BOOL != nil:
 		b := *val.BOOL
@@ -30,7 +30,7 @@ func MapToObject(val *dynamodb.AttributeValue) (Object, error) {
 	return mapComplexAttributeToObject(val)
 }
 
-func mapComplexAttributeToObject(val *dynamodb.AttributeValue) (Object, error) {
+func mapComplexAttributeToObject(val *types.Item) (Object, error) {
 	switch {
 	case len(val.B) != 0:
 		b := make([]byte, len(val.B))
@@ -54,7 +54,7 @@ func mapComplexAttributeToObject(val *dynamodb.AttributeValue) (Object, error) {
 	return nil, fmt.Errorf("value type is not supported yet %#v", val)
 }
 
-func mapAttributeToMap(val *dynamodb.AttributeValue) (Object, error) {
+func mapAttributeToMap(val *types.Item) (Object, error) {
 	m := make(map[string]Object)
 
 	for k, attr := range val.M {
@@ -71,7 +71,7 @@ func mapAttributeToMap(val *dynamodb.AttributeValue) (Object, error) {
 	}, nil
 }
 
-func mapAttributeToList(val *dynamodb.AttributeValue) (Object, error) {
+func mapAttributeToList(val *types.Item) (Object, error) {
 	l := make([]Object, len(val.L))
 
 	for i, attr := range val.L {
@@ -88,7 +88,7 @@ func mapAttributeToList(val *dynamodb.AttributeValue) (Object, error) {
 	}, nil
 }
 
-func mapAttributeToStringSet(val *dynamodb.AttributeValue) (Object, error) {
+func mapAttributeToStringSet(val *types.Item) (Object, error) {
 	ss := map[string]bool{}
 
 	for _, val := range val.SS {
@@ -100,7 +100,7 @@ func mapAttributeToStringSet(val *dynamodb.AttributeValue) (Object, error) {
 	}, nil
 }
 
-func mapAttributeToBinarySet(val *dynamodb.AttributeValue) (Object, error) {
+func mapAttributeToBinarySet(val *types.Item) (Object, error) {
 	bs := BinarySet{
 		Value: make([][]byte, 0, len(val.BS)),
 	}
@@ -116,7 +116,7 @@ func mapAttributeToBinarySet(val *dynamodb.AttributeValue) (Object, error) {
 	return &bs, nil
 }
 
-func mapAttributeToNumberSet(val *dynamodb.AttributeValue) (Object, error) {
+func mapAttributeToNumberSet(val *types.Item) (Object, error) {
 	ns := map[float64]bool{}
 
 	for _, val := range val.NS {

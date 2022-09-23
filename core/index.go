@@ -40,7 +40,7 @@ func (i *index) Clear() {
 	i.refs = map[string]string{}
 }
 
-func (i *index) putData(key string, item map[string]*types.Item) error {
+func (i *index) putData(key string, item map[string]types.Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
@@ -58,7 +58,7 @@ func (i *index) putData(key string, item map[string]*types.Item) error {
 	return nil
 }
 
-func (i *index) updateData(key string, item, oldItem map[string]*types.Item) error {
+func (i *index) updateData(key string, item, oldItem map[string]types.Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
 		return err
@@ -81,7 +81,7 @@ func (i *index) updateData(key string, item, oldItem map[string]*types.Item) err
 	return nil
 }
 
-func (i *index) delete(key string, item map[string]*types.Item) error {
+func (i *index) delete(key string, item map[string]types.Item) error {
 	delete(i.refs, key)
 
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)

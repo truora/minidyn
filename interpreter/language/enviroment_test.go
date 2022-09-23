@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/truora/minidyn/types"
-
-	"github.com/aws/aws-sdk-go/aws"
 )
 
 func TestString(t *testing.T) {
@@ -20,9 +18,9 @@ func TestString(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	item := map[string]*types.Item{
+	item := map[string]types.Item{
 		"a": {
-			S: aws.String("a"),
+			S: "a",
 		},
 	}
 

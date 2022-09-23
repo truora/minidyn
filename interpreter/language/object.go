@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/truora/minidyn/types"
-
-	"github.com/aws/aws-sdk-go/aws"
 )
 
 var (
@@ -75,7 +73,7 @@ var comparableTypes = map[ObjectType]bool{
 type Object interface {
 	Type() ObjectType
 	Inspect() string
-	ToDynamoDB() *types.Item
+	ToDynamoDB() types.Item
 }
 
 // ContainerObject abstraction of the object collections
@@ -113,10 +111,10 @@ func (i *Number) Type() ObjectType {
 }
 
 // ToDynamoDB returns the types attribute value
-func (i *Number) ToDynamoDB() *types.Item {
+func (i *Number) ToDynamoDB() types.Item {
 	str := numToString(i.Value)
 
-	return &types.Item{N: &str}
+	return types.Item{N: str}
 }
 
 func numToString(v float64) string {
@@ -151,8 +149,8 @@ func (b *Boolean) Type() ObjectType {
 }
 
 // ToDynamoDB returns the types attribute value
-func (b *Boolean) ToDynamoDB() *types.Item {
-	return &types.Item{BOOL: &b.Value}
+func (b *Boolean) ToDynamoDB() types.Item {
+	return types.Item{BOOL: &b.Value}
 }
 
 func nativeBoolToBooleanObject(input bool) *Boolean {
@@ -179,8 +177,8 @@ func (b *Binary) Type() ObjectType {
 }
 
 // ToDynamoDB returns the types attribute value
-func (b *Binary) ToDynamoDB() *types.Item {
-	return &types.Item{B: b.Value}
+func (b *Binary) ToDynamoDB() types.Item {
+	return types.Item{B: b.Value}
 }
 
 // Contains whether or not the obj is contained in the binary
@@ -210,8 +208,8 @@ func (n *Null) Inspect() string {
 }
 
 // ToDynamoDB returns the types attribute value
-func (n *Null) ToDynamoDB() *types.Item {
-	return &types.Item{NULL: true}
+func (n *Null) ToDynamoDB() types.Item {
+	return types.Item{NULL: &boolTrue}
 }
 
 // Error is the representation of errors
@@ -226,8 +224,8 @@ func (e *Error) Type() ObjectType { return ObjectTypeError }
 func (e *Error) Inspect() string { return "ERROR: " + e.Message }
 
 // ToDynamoDB returns the types attribute value
-func (e *Error) ToDynamoDB() *types.Item {
-	return nil
+func (e *Error) ToDynamoDB() types.Item {
+	return types.Item{}
 }
 
 // String is the representation of strings
@@ -256,8 +254,8 @@ func (s *String) Contains(obj Object) bool {
 }
 
 // ToDynamoDB returns the types attribute value
-func (s *String) ToDynamoDB() *types.Item {
-	return &types.Item{S: aws.String(s.Value)}
+func (s *String) ToDynamoDB() types.Item {
+	return types.Item{S: s.Value}
 }
 
 // CanContain whether or not the string can contain the objType
@@ -315,8 +313,8 @@ func (m *Map) Type() ObjectType {
 }
 
 // ToDynamoDB returns the types attribute value
-func (m *Map) ToDynamoDB() *types.Item {
-	attr := &types.Item{M: map[string]*types.Item{}}
+func (m *Map) ToDynamoDB() types.Item {
+	attr := types.Item{M: map[string]types.Item{}}
 
 	for k, v := range m.Value {
 		attr.M[k] = v.ToDynamoDB()
@@ -404,8 +402,8 @@ func (l *List) Type() ObjectType {
 }
 
 // ToDynamoDB returns the types attribute value
-func (l *List) ToDynamoDB() *types.Item {
-	attr := &types.Item{L: []*types.Item{}}
+func (l *List) ToDynamoDB() types.Item {
+	attr := types.Item{L: []types.Item{}}
 
 	for _, v := range l.Value {
 		attr.L = append(attr.L, v.ToDynamoDB())
@@ -512,11 +510,11 @@ func (ss *StringSet) Contains(obj Object) bool {
 }
 
 // ToDynamoDB returns the types attribute value
-func (ss *StringSet) ToDynamoDB() *types.Item {
-	attr := &types.Item{SS: make([]*string, 0, len(ss.Value))}
+func (ss *StringSet) ToDynamoDB() types.Item {
+	attr := types.Item{SS: make([]string, 0, len(ss.Value))}
 
 	for v := range ss.Value {
-		attr.SS = append(attr.SS, aws.String(v))
+		attr.SS = append(attr.SS, v)
 	}
 
 	return attr
@@ -626,8 +624,8 @@ func removeBinaries(container [][]byte, others [][]byte) [][]byte {
 }
 
 // ToDynamoDB returns the types attribute value
-func (bs *BinarySet) ToDynamoDB() *types.Item {
-	return &types.Item{BS: bs.Value}
+func (bs *BinarySet) ToDynamoDB() types.Item {
+	return types.Item{BS: bs.Value}
 }
 
 // Contains returns if the collection contains the object
@@ -747,13 +745,13 @@ func (ns *NumberSet) Type() ObjectType {
 }
 
 // ToDynamoDB returns the types attribute value
-func (ns *NumberSet) ToDynamoDB() *types.Item {
-	attr := &types.Item{NS: make([]*string, 0, len(ns.Value))}
+func (ns *NumberSet) ToDynamoDB() types.Item {
+	attr := types.Item{NS: make([]string, 0, len(ns.Value))}
 
 	for v := range ns.Value {
 		str := numToString(v)
 
-		attr.NS = append(attr.NS, &str)
+		attr.NS = append(attr.NS, str)
 	}
 
 	return attr

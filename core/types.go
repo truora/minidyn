@@ -21,8 +21,8 @@ const (
 	PrimaryIndexName = ""
 )
 
-func copyItem(item map[string]*types.Item) map[string]*types.Item {
-	copy := map[string]*types.Item{}
+func copyItem(item map[string]types.Item) map[string]types.Item {
+	copy := map[string]types.Item{}
 	for key, val := range item {
 		copy[key] = val
 	}
@@ -62,7 +62,7 @@ func mapToDynamoDBType(v interface{}) string {
 	return ""
 }
 
-func getItemValue(item map[string]*types.Item, field, typ string) (interface{}, error) {
+func getItemValue(item map[string]types.Item, field, typ string) (interface{}, error) {
 	val, ok := item[field]
 	if !ok {
 		return nil, fmt.Errorf("%w; field: %q", errMissingField, field)
@@ -77,20 +77,20 @@ func getItemValue(item map[string]*types.Item, field, typ string) (interface{}, 
 	return goVal, nil
 }
 
-func getGoValue(val *types.Item, typ string) (interface{}, bool) {
+func getGoValue(val types.Item, typ string) (interface{}, bool) {
 	switch typ {
 	case "S":
-		return aws.StringValue(val.S), val.S != nil
+		return val.S, val.S != ""
 	case "BOOL":
 		return aws.BoolValue(val.BOOL), val.BOOL != nil
 	case "N":
-		return aws.StringValue(val.N), val.N != nil
+		return val.N, val.N != ""
 	}
 
 	return getGoComplexValue(val, typ)
 }
 
-func getGoComplexValue(val *types.Item, typ string) (interface{}, bool) {
+func getGoComplexValue(val types.Item, typ string) (interface{}, bool) {
 	switch typ {
 	case "B":
 		return val.B, val.B != nil

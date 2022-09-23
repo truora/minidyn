@@ -4,9 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/truora/minidyn/types"
+)
+
+var (
+	boolTrue  = true
+	boolFalse = false
 )
 
 func TestEval(t *testing.T) {
@@ -110,9 +113,9 @@ func TestEval(t *testing.T) {
 		"#alias_field_name": "field_name",
 	}
 
-	err := env.AddAttributes(map[string]*types.Item{
-		":a":        {BOOL: true},
-		":b":        {BOOL: false},
+	err := env.AddAttributes(map[string]types.Item{
+		":a":        {BOOL: &boolTrue},
+		":b":        {BOOL: &boolFalse},
 		":s":        {S: "HELLO WORLD!"},
 		":x":        {N: "24"},
 		":y":        {N: "25"},
@@ -123,37 +126,37 @@ func TestEval(t *testing.T) {
 		":binA":     {B: []byte("a")},
 		":binB":     {B: []byte("b")},
 		":binC":     {B: []byte("c")},
-		":nil":      {NULL: true},
-		":otherNil": {NULL: true},
+		":nil":      {NULL: &boolTrue},
+		":otherNil": {NULL: &boolTrue},
 		":hashA": {
-			M: map[string]*types.Item{
-				":a": {BOOL: true},
+			M: map[string]types.Item{
+				":a": {BOOL: &boolTrue},
 			},
 		},
 		":hashB": {
-			M: map[string]*types.Item{
-				":b": {BOOL: true},
+			M: map[string]types.Item{
+				":b": {BOOL: &boolTrue},
 			},
 		},
 		":listA": {
-			L: []*types.Item{
+			L: []types.Item{
 				{S: "a"},
 				{S: "b"},
 				{S: "c"},
 			},
 		},
 		":listB": {
-			L: []*types.Item{
+			L: []types.Item{
 				{S: "x"},
 				{S: "y"},
 				{S: "z"},
 			},
 		},
 		":strSetA": {
-			SS: []*string{"a", "a", "b"},
+			SS: []string{"a", "a", "b"},
 		},
 		":strSetB": {
-			SS: []*string{"x", "x", "y"},
+			SS: []string{"x", "x", "y"},
 		},
 		":binSetA": {
 			BS: [][]byte{[]byte("a"), []byte("a"), []byte("b")},
@@ -162,28 +165,28 @@ func TestEval(t *testing.T) {
 			BS: [][]byte{[]byte("x"), []byte("x"), []byte("y")},
 		},
 		":numSetA": {
-			NS: []*string{"1", "2", "4"},
+			NS: []string{"1", "2", "4"},
 		},
 		":numSetB": {
-			NS: []*string{"10", "10", "11"},
+			NS: []string{"10", "10", "11"},
 		},
 		":matrix": {
-			L: []*types.Item{
-				{L: []*types.Item{
+			L: []types.Item{
+				{L: []types.Item{
 					{S: "a"},
 					{S: "b"},
 				}},
-				{L: []*types.Item{
+				{L: []types.Item{
 					{S: "c"},
 				}},
 			},
 		},
 		":listIndex": {N: "0"},
 		":nestedMap": {
-			M: map[string]*types.Item{
+			M: map[string]types.Item{
 				"lvl1": {
-					M: map[string]*types.Item{
-						"lvl2": {BOOL: true},
+					M: map[string]types.Item{
+						"lvl2": {BOOL: &boolTrue},
 					},
 				},
 			},
@@ -222,7 +225,7 @@ func TestEvalFunctions(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*types.Item{
+	err := env.AddAttributes(map[string]types.Item{
 		":s":       {S: "HELLO WORLD!"},
 		":sSize":   {N: "12"},
 		":type":    {S: "S"},
@@ -233,20 +236,20 @@ func TestEvalFunctions(t *testing.T) {
 		":element": {S: "a"},
 		":num":     {N: "1"},
 		":list": {
-			L: []*types.Item{
+			L: []types.Item{
 				{S: "a"},
 				{S: "b"},
 				{S: "c"},
 			},
 		},
 		":strSet": {
-			SS: []*string{"a", "a", "b"},
+			SS: []string{"a", "a", "b"},
 		},
 		":binSet": {
 			BS: [][]byte{{10, 10, 10}},
 		},
 		":numSet": {
-			NS: []*string{"1", "2", "4"},
+			NS: []string{"1", "2", "4"},
 		},
 	})
 	if err != nil {
@@ -264,27 +267,27 @@ func TestEvalFunctions(t *testing.T) {
 func startEvalUpdateEnv(t *testing.T) *Environment {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":    {BOOL: true},
+	err := env.AddAttributes(map[string]types.Item{
+		":x":    {BOOL: &boolTrue},
 		":val":  {S: "text"},
 		":one":  {N: "1"},
 		":bin":  {B: []byte("c")},
-		":list": {L: []*dynamodb.AttributeValue{{N: "0"}}},
+		":list": {L: []types.Item{{N: "0"}}},
 		":hash": {
-			M: map[string]*dynamodb.AttributeValue{
-				"a": {BOOL: true},
+			M: map[string]types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
 		":mapField": {S: "key"},
 		":matrix": {
-			L: []*dynamodb.AttributeValue{
-				{L: []*dynamodb.AttributeValue{{N: "0"}}},
+			L: []types.Item{
+				{L: []types.Item{{N: "0"}}},
 			},
 		},
 		":nestedMap": {
-			M: map[string]*dynamodb.AttributeValue{
+			M: map[string]types.Item{
 				"lvl1": {
-					M: map[string]*dynamodb.AttributeValue{
+					M: map[string]types.Item{
 						"lvl2": {N: "0"},
 					},
 				},
@@ -292,7 +295,7 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 		},
 
 		":strSet": {
-			SS: []*string{"a", "a", "b"},
+			SS: []string{"a", "a", "b"},
 		},
 		":a": {
 			S: "a",
@@ -304,12 +307,12 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 			B: []byte("a"),
 		},
 		":numSet": {
-			NS: []*string{"2", "4"},
+			NS: []string{"2", "4"},
 		},
 		":two": {
 			N: "2",
 		},
-		":tools": {L: []*dynamodb.AttributeValue{
+		":tools": {L: []types.Item{
 			{S: "Chisel"},
 			{S: "Hammer"},
 			{S: "Nails"},
@@ -366,59 +369,59 @@ func TestEvalSetUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"SET :x = :val", ":x", &String{Value: "text"}, true},
-		{"SET :w = :val", ":w", &String{Value: "text"}, true},
-		{"SET :two = :one + :one", ":two", &Number{Value: 2}, true},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
-		{"SET :newTwo = if_not_exists(not_found, :one + :one", ":newTwo", &Number{Value: 2}, true},
-		{"SET :three = if_not_exists(:two, :one + :one", ":three", &Number{Value: 3}, true},
-		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}, true},
-		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}, true},
+		{"SET :x = :val", ":x", &String{Value: "text"}, boolTrue},
+		{"SET :w = :val", ":w", &String{Value: "text"}, boolTrue},
+		{"SET :two = :one + :one", ":two", &Number{Value: 2}, boolTrue},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, boolTrue},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, boolTrue},
+		{"SET :newTwo = if_not_exists(not_found, :one + :one", ":newTwo", &Number{Value: 2}, boolTrue},
+		{"SET :three = if_not_exists(:two, :one + :one", ":three", &Number{Value: 3}, boolTrue},
+		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}, boolTrue},
+		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}, boolTrue},
 		{
 			"SET :matrix[0][0] = :one",
 			":matrix",
 			&List{Value: []Object{&List{Value: []Object{&Number{Value: 1}}}}},
-			false,
+			boolFalse,
 		},
 		{
 			"SET :hash.a = :one",
 			":hash",
 			&Map{Value: map[string]Object{"a": &Number{Value: 1}}},
-			false,
+			boolFalse,
 		},
 		{
 			"SET :hash.:mapField = :one",
 			":hash",
-			&Map{Value: map[string]Object{"a": &Boolean{Value: true}, "key": &Number{Value: 1}}},
-			false,
+			&Map{Value: map[string]Object{"a": &Boolean{Value: boolTrue}, "key": &Number{Value: 1}}},
+			boolFalse,
 		},
 		{
 			"SET :two = if_not_exists(:hash.not_found, :one + :one",
 			":two",
 			&Number{Value: 2},
-			false,
+			boolFalse,
 		},
 		{
 			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},
-			false,
+			boolFalse,
 		},
 		{
 			"SET :nestedMap.#pos = #pos + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, ":nestedMap.lvl1.lvl2": &Number{Value: 1}}},
-			false,
+			boolFalse,
 		},
 		{
 			"SET :nestedMap.#secondLevel = #pos + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, "lvl1.lvl2": &Number{Value: 1}}},
-			false,
+			boolFalse,
 		},
-		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, true},
-		{"SET :x = :val REMOVE :val", ":val", NULL, true},
+		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, boolTrue},
+		{"SET :x = :val REMOVE :val", ":val", NULL, boolTrue},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -448,11 +451,11 @@ func TestEvalAddUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"ADD :one :one", ":one", &Number{Value: 2}, false},
-		{"ADD :numSet :one", ":numSet", &NumberSet{Value: map[float64]bool{1: true, 2: true, 4: true}}, false},
-		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, false},
-		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": true, "b": true, "text": true}}, false},
-		{"ADD newVal :val", ":val", &String{Value: "text"}, false},
+		{"ADD :one :one", ":one", &Number{Value: 2}, boolFalse},
+		{"ADD :numSet :one", ":numSet", &NumberSet{Value: map[float64]bool{1: boolTrue, 2: boolTrue, 4: boolTrue}}, boolFalse},
+		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, boolFalse},
+		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": boolTrue, "b": boolTrue, "text": boolTrue}}, boolFalse},
+		{"ADD newVal :val", ":val", &String{Value: "text"}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -482,10 +485,10 @@ func TestEvalRemoveUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"REMOVE :binSet", ":binSet", NULL, false},
-		{"REMOVE :binSet,:a", ":a", NULL, false},
-		{"REMOVE :tools[1], :tools[2]", ":tools", &List{Value: []Object{&String{Value: "Chisel"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}}, false},
-		{"REMOVE :nestedMap.lvl1.lvl2", ":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{}}}}, false},
+		{"REMOVE :binSet", ":binSet", NULL, boolFalse},
+		{"REMOVE :binSet,:a", ":a", NULL, boolFalse},
+		{"REMOVE :tools[1], :tools[2]", ":tools", &List{Value: []Object{&String{Value: "Chisel"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}}, boolFalse},
+		{"REMOVE :nestedMap.lvl1.lvl2", ":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{}}}}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -515,9 +518,9 @@ func TestEvalDELETEUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"DELETE :binSet :binA", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, false},
-		{"DELETE :strSet :a", ":strSet", &StringSet{Value: map[string]bool{"b": true}}, false},
-		{"DELETE :numSet :two", ":numSet", &NumberSet{Value: map[float64]bool{4: true}}, false},
+		{"DELETE :binSet :binA", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, boolFalse},
+		{"DELETE :strSet :a", ":strSet", &StringSet{Value: map[string]bool{"b": boolTrue}}, boolFalse},
+		{"DELETE :numSet :two", ":numSet", &NumberSet{Value: map[float64]bool{4: boolTrue}}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -633,15 +636,15 @@ func TestErrorHandling(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*types.Item{
-		":a":   {BOOL: true},
-		":b":   {BOOL: false},
+	err := env.AddAttributes(map[string]types.Item{
+		":a":   {BOOL: &boolTrue},
+		":b":   {BOOL: &boolFalse},
 		":x":   {N: "24"},
 		":y":   {N: "25"},
 		":z":   {N: "26"},
 		":str": {S: "TEXT"},
-		":nil": {NULL: true},
-		":list": {L: []*types.Item{
+		":nil": {NULL: &boolTrue},
+		":list": {L: []types.Item{
 			{S: "a"},
 		}},
 	})
@@ -689,9 +692,9 @@ func TestEvalUpdateReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":status": {S: aws.String("healthy")},
-		":keys":   {SS: []*string{aws.String("Key"), aws.String("Another Key")}},
+	err := env.AddAttributes(map[string]types.Item{
+		":status": {S: "healthy"},
+		":keys":   {SS: []string{"Key", "Another Key"}},
 	})
 	if err != nil {
 		panic(err)
@@ -733,12 +736,12 @@ func TestEvalReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":y":   {N: aws.String("25")},
-		":str": {S: aws.String("TEXT")},
+	err := env.AddAttributes(map[string]types.Item{
+		":y":   {N: "25"},
+		":str": {S: "TEXT"},
 		":obj": {
-			M: map[string]*dynamodb.AttributeValue{
-				"a": {BOOL: aws.Bool(true)},
+			M: map[string]types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
 	})
@@ -773,56 +776,56 @@ func TestEvalReservedKeywords(t *testing.T) {
 func TestIsError(t *testing.T) {
 	b := isError(nil)
 	if b {
-		t.Fatal("expected to be false")
+		t.Fatal("expected to be boolFalse")
 	}
 
 	err := newError("testing")
 
 	b = isError(err)
 	if !b {
-		t.Fatal("expected to be true")
+		t.Fatal("expected to be boolTrue")
 	}
 }
 
 func TestIsNumber(t *testing.T) {
 	if isNumber(nil) {
-		t.Fatal("expected to be false")
+		t.Fatal("expected to be boolFalse")
 	}
 
 	num := Number{Value: 10}
 	if !isNumber(&num) {
-		t.Fatal("expected to be true")
+		t.Fatal("expected to be boolTrue")
 	}
 }
 
 func TestIsString(t *testing.T) {
 	if isString(nil) {
-		t.Fatal("expected to be false")
+		t.Fatal("expected to be boolFalse")
 	}
 
 	str := String{Value: "txt"}
 	if !isString(&str) {
-		t.Fatal("expected to be true")
+		t.Fatal("expected to be boolTrue")
 	}
 }
 
 func TestEvalErrors(t *testing.T) {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":   {BOOL: aws.Bool(true)},
-		":val": {S: aws.String("text")},
-		":one": {N: aws.String("1")},
+	err := env.AddAttributes(map[string]types.Item{
+		":x":   {BOOL: &boolTrue},
+		":val": {S: "text"},
+		":one": {N: "1"},
 		":h": {
-			M: map[string]*dynamodb.AttributeValue{
-				"a": {BOOL: aws.Bool(true)},
+			M: map[string]types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
 		":voidVal": {
-			NULL: aws.Bool(true),
+			NULL: &boolTrue,
 		},
-		":list": {L: []*dynamodb.AttributeValue{
-			{S: aws.String("a")},
+		":list": {L: []types.Item{
+			{S: "a"},
 		}},
 	})
 	if err != nil {
@@ -946,19 +949,19 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*types.Item{
-		":x":   {BOOL: true},
+	err := env.AddAttributes(map[string]types.Item{
+		":x":   {BOOL: &boolTrue},
 		":val": {S: "text"},
 		":one": {N: "1"},
 		":h": {
-			M: map[string]*types.Item{
-				"a": {BOOL: true},
+			M: map[string]types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
 		":voidVal": {
-			NULL: true,
+			NULL: &boolTrue,
 		},
-		":list": {L: []*types.Item{
+		":list": {L: []types.Item{
 			{S: "a"},
 		}},
 	})
@@ -986,9 +989,9 @@ func BenchmarkEval(b *testing.B) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":a": {BOOL: aws.Bool(true)},
-		":b": {BOOL: aws.Bool(false)},
+	err := env.AddAttributes(map[string]types.Item{
+		":a": {BOOL: &boolTrue},
+		":b": {BOOL: &boolFalse},
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -1005,7 +1008,7 @@ func BenchmarkEval(b *testing.B) {
 
 		evaluated := Eval(conditional, env)
 		if evaluated != TRUE {
-			b.Fatal("expected to be true")
+			b.Fatal("expected to be boolTrue")
 		}
 	}
 }

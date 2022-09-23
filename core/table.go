@@ -11,13 +11,13 @@ import (
 
 type QueryInput struct {
 	Index                     string
-	ExpressionAttributeValues map[string]*types.Item
+	ExpressionAttributeValues map[string]types.Item
 	Limit                     *int64
-	ExclusiveStartKey         map[string]*types.Item
+	ExclusiveStartKey         map[string]types.Item
 	KeyConditionExpression    *string
 	ConditionExpression       *string
 	FilterExpression          *string
-	Aliases                   map[string]*string
+	Aliases                   map[string]string
 	ScanIndexForward          *bool
 	Scan                      bool
 	started                   bool
@@ -29,7 +29,7 @@ type Table struct {
 	Indexes              map[string]*index
 	AttributesDef        map[string]string
 	SortedKeys           []string
-	Data                 map[string]map[string]*types.Item
+	Data                 map[string]map[string]types.Item
 	KeySchema            keySchema
 	BillingMode          *string
 	UseNativeInterpreter bool
@@ -43,7 +43,7 @@ func NewTable(name string) *Table {
 		Indexes:       map[string]*index{},
 		AttributesDef: map[string]string{},
 		SortedKeys:    []string{},
-		Data:          map[string]map[string]*types.Item{},
+		Data:          map[string]map[string]types.Item{},
 	}
 }
 
@@ -57,12 +57,12 @@ func parseKeySchema(schema []*types.KeySchemaElement) (keySchema, error) {
 	var ks keySchema
 
 	for _, element := range schema {
-		if *element.KeyType == "HASH" {
-			ks.HashKey = *element.AttributeName
+		if element.KeyType == "HASH" {
+			ks.HashKey = element.AttributeName
 			continue
 		}
 
-		ks.RangeKey = *element.AttributeName
+		ks.RangeKey = element.AttributeName
 	}
 
 	if ks.HashKey == "" {
@@ -224,7 +224,7 @@ func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 	return nil
 }
 
-func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]*types.Item) string {
+func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]types.Item) string {
 	startKey := ""
 	if len(startkeyAttr) != 0 {
 		startKey, _ = schema.GetKey(t.AttributesDef, startkeyAttr)
@@ -271,7 +271,7 @@ func prepareSearch(input *QueryInput, index *index, k, startKey string) (string,
 	return "", false
 }
 
-func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*types.Item, interpreter.ExpressionType, bool) {
+func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]types.Item, interpreter.ExpressionType, bool) {
 	storedItem, ok := t.Data[pk]
 
 	lastMatchExpressionType, matched := t.matchKey(*input, storedItem)
@@ -284,7 +284,7 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 	return copyItem(storedItem), lastMatchExpressionType, true
 }
 
-func shouldReturnNextKey(item map[string]*types.Item, startKey string, count, limit, keysSize int64) bool {
+func shouldReturnNextKey(item map[string]types.Item, startKey string, count, limit, keysSize int64) bool {
 	if len(item) == 0 {
 		return false
 	}
@@ -313,15 +313,15 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 	return sortedKeys[pos]
 }
 
-func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item) {
-	items := []map[string]*types.Item{}
+func (t *Table) SearchData(input QueryInput) ([]map[string]types.Item, map[string]types.Item) {
+	items := []map[string]types.Item{}
 	limit := aws.Int64Value(input.Limit)
 	exclusiveStartKey := input.ExclusiveStartKey
 	index, sortedKeys := t.fetchQueryData(input)
 
 	startKey := t.parseStartKey(t.KeySchema, exclusiveStartKey)
 	input.started = startKey == ""
-	last := map[string]*types.Item{}
+	last := map[string]types.Item{}
 	sortedKeysSize := int64(len(sortedKeys))
 	forward := aws.BoolValue(input.ScanIndexForward)
 
@@ -354,9 +354,9 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, index)
 }
 
-func (t *Table) getLastKey(item map[string]*types.Item, startKey string, limit, count, keysSize int64, index *index) map[string]*types.Item {
+func (t *Table) getLastKey(item map[string]types.Item, startKey string, limit, count, keysSize int64, index *index) map[string]types.Item {
 	if !shouldReturnNextKey(item, startKey, count, limit, keysSize) {
-		return map[string]*types.Item{}
+		return map[string]types.Item{}
 	}
 
 	key := t.KeySchema.getKeyItem(item)
@@ -387,7 +387,7 @@ func (t *Table) interpreterMatch(input interpreter.MatchInput) bool {
 	return matched
 }
 
-func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpreter.ExpressionType, bool) {
+func (t *Table) matchKey(input QueryInput, item map[string]types.Item) (interpreter.ExpressionType, bool) {
 	var lastMatchExpressionType interpreter.ExpressionType
 	matched := input.Scan
 
@@ -396,7 +396,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 			TableName:      t.Name,
 			Expression:     aws.StringValue(input.KeyConditionExpression),
 			ExpressionType: interpreter.ExpressionTypeKey,
-			types.Item:     item,
+			Item:           item,
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
@@ -408,7 +408,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 			TableName:      t.Name,
 			Expression:     aws.StringValue(input.FilterExpression),
 			ExpressionType: interpreter.ExpressionTypeFilter,
-			types.Item:     item,
+			Item:           item,
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
@@ -420,7 +420,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 			TableName:      t.Name,
 			Expression:     aws.StringValue(input.ConditionExpression),
 			ExpressionType: interpreter.ExpressionTypeConditional,
-			types.Item:     item,
+			Item:     item,
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
@@ -430,7 +430,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 	return lastMatchExpressionType, matched
 }
 
-func (t *Table) setItem(key string, item map[string]*types.Item) {
+func (t *Table) setItem(key string, item map[string]types.Item) {
 	_, exists := t.Data[key]
 	t.Data[key] = item
 
@@ -440,10 +440,10 @@ func (t *Table) setItem(key string, item map[string]*types.Item) {
 	}
 }
 
-func (t *Table) getItem(key string) map[string]*types.Item {
+func (t *Table) getItem(key string) map[string]types.Item {
 	item, exists := t.Data[key]
 	if !exists {
-		return map[string]*types.Item{}
+		return map[string]types.Item{}
 	}
 
 	return item
@@ -451,10 +451,10 @@ func (t *Table) getItem(key string) map[string]*types.Item {
 
 func (t *Table) Clear() {
 	t.SortedKeys = []string{}
-	t.Data = map[string]map[string]*types.Item{}
+	t.Data = map[string]map[string]types.Item{}
 }
 
-func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
+func (t *Table) Put(input *types.PutItemInput) (map[string]types.Item, error) {
 	item := copyItem(input.Item)
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
@@ -497,7 +497,7 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 	return t.LangInterpreter.Update(input)
 }
 
-func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, error) {
+func (t *Table) Update(input *types.UpdateItemInput) (map[string]types.Item, error) {
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
@@ -507,7 +507,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 	item, ok := t.Data[key]
 	if !ok {
 		// it allow the use of attribute_exists to check if the item exists
-		item = map[string]*types.Item{}
+		item = map[string]types.Item{}
 	}
 
 	// support conditional writes
@@ -536,7 +536,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 	err = t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.Name,
 		Expression: aws.StringValue(input.UpdateExpression),
-		types.Item: item,
+		Item: item,
 		Attributes: input.ExpressionAttributeValues,
 		Aliases:    input.ExpressionAttributeNames,
 	})
@@ -557,7 +557,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 	return copyItem(item), nil
 }
 
-func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) {
+func (t *Table) Delete(input *types.DeleteItemInput) (map[string]types.Item, error) {
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
 		return nil, awserr.New("ValidationException", err.Error(), nil)

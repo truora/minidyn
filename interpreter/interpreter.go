@@ -30,18 +30,18 @@ type MatchInput struct {
 	TableName      string
 	Expression     string
 	ExpressionType ExpressionType
-	Item           map[string]*types.Item
-	Attributes     map[string]*types.Item
-	Aliases        map[string]*string
+	Item           map[string]types.Item
+	Attributes     map[string]types.Item
+	Aliases        map[string]string
 }
 
 // UpdateInput parameters to use Update function
 type UpdateInput struct {
 	TableName  string
 	Expression string
-	Item       map[string]*types.Item
-	Attributes map[string]*types.Item
-	Aliases    map[string]*string
+	Item       map[string]types.Item
+	Attributes map[string]types.Item
+	Aliases    map[string]string
 }
 
 // Interpreter types expression interpreter interface

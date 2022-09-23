@@ -14,7 +14,7 @@ type keySchema struct {
 	Secondary bool
 }
 
-func (ks keySchema) GetKey(attrs map[string]string, item map[string]*types.Item) (string, error) {
+func (ks keySchema) GetKey(attrs map[string]string, item map[string]types.Item) (string, error) {
 	key, err := ks.getKeyValue(attrs, item)
 	if ks.Secondary && errors.Is(err, errMissingField) {
 		// secondary indexes are sparse
@@ -24,7 +24,7 @@ func (ks keySchema) GetKey(attrs map[string]string, item map[string]*types.Item)
 	return key, err
 }
 
-func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*types.Item) (string, error) {
+func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]types.Item) (string, error) {
 	key := []string{}
 
 	val, err := getItemValue(item, ks.HashKey, attrs[ks.HashKey])
@@ -70,8 +70,8 @@ func (ks *keySchema) describe() []*types.KeySchemaElement {
 	return desc
 }
 
-func (ks *keySchema) getKeyItem(item map[string]*types.Item) map[string]*types.Item {
-	keyItem := map[string]*types.Item{}
+func (ks *keySchema) getKeyItem(item map[string]types.Item) map[string]types.Item {
+	keyItem := map[string]types.Item{}
 
 	if v, ok := item[ks.HashKey]; ok {
 		keyItem[ks.HashKey] = v

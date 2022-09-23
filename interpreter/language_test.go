@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/truora/minidyn/types"
-
-	"github.com/aws/aws-sdk-go/aws"
 )
 
 type matchTestCase struct {
@@ -36,18 +34,18 @@ func matchTestCaseVerify(tc matchTestCase, t *testing.T) {
 }
 
 func TestLanguageMatch(t *testing.T) {
-	item := map[string]*types.Item{
+	item := map[string]types.Item{
 		"a": {
-			S: aws.String("a"),
+			S: "a",
 		},
 		"n": {
-			N: aws.String("1"),
+			N: "1",
 		},
 		"b": {
-			BOOL: true),
+			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: aws.String("hello world"),
+			S: "hello world",
 		},
 	}
 
@@ -58,9 +56,9 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: ":a = a",
 				Item:       item,
-				Attributes: map[string]*types.Item{
+				Attributes: map[string]types.Item{
 					":a": {
-						S: aws.String("a"),
+						S: "a",
 					},
 				},
 			},
@@ -72,7 +70,7 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: "attribute_exists(b",
 				Item:       item,
-				Attributes: map[string]*types.Item{},
+				Attributes: map[string]types.Item{},
 			},
 			expectedErr: ErrSyntaxError,
 		},
@@ -82,9 +80,9 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: "contains(txt, :b)",
 				Item:       item,
-				Attributes: map[string]*types.Item{
+				Attributes: map[string]types.Item{
 					":b": {
-						BOOL: true),
+						BOOL: &boolTrue,
 					},
 				},
 			},
@@ -102,7 +100,7 @@ func TestLanguageMatch(t *testing.T) {
 type updateTestCase struct {
 	name        string
 	input       UpdateInput
-	output      map[string]*types.Item
+	output      map[string]types.Item
 	expectedErr error
 	pending     bool
 }
@@ -135,26 +133,26 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "SET #t = :a + :a, a = :a",
-				Item: map[string]*types.Item{
+				Item: map[string]types.Item{
 					"a": {
-						S: aws.String("a"),
+						S: "a",
 					},
 				},
-				Attributes: map[string]*types.Item{
+				Attributes: map[string]types.Item{
 					":a": {
-						N: aws.String("1"),
+						N: "1",
 					},
 				},
-				Aliases: map[string]*string{
-					"#t": aws.String("two"),
+				Aliases: map[string]string{
+					"#t": "two",
 				},
 			},
-			output: map[string]*types.Item{
+			output: map[string]types.Item{
 				"a": {
-					N: aws.String("1"),
+					N: "1",
 				},
 				"two": {
-					N: aws.String("2"),
+					N: "2",
 				},
 			},
 		},
@@ -163,14 +161,14 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "SET",
-				Item: map[string]*types.Item{
+				Item: map[string]types.Item{
 					"a": {
-						S: aws.String("a"),
+						S: "a",
 					},
 				},
-				Attributes: map[string]*types.Item{
+				Attributes: map[string]types.Item{
 					":a": {
-						N: aws.String("1"),
+						N: "1",
 					},
 				},
 			},
@@ -181,8 +179,8 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "REMOVE ,",
-				Aliases: map[string]*string{
-					"#t": aws.String("two"),
+				Aliases: map[string]string{
+					"#t": "two",
 				},
 			},
 			output:      nil,

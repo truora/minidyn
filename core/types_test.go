@@ -3,8 +3,8 @@ package core
 import (
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/stretchr/testify/require"
+	"github.com/truora/minidyn/types"
 )
 
 func TestMapToDynamoDBType(t *testing.T) {
@@ -40,23 +40,24 @@ func TestMapToDynamoDBType(t *testing.T) {
 
 func TestGetGoValue(t *testing.T) {
 	c := require.New(t)
+	boolFalse := false
 
-	all := &Item{
+	all := types.Item{
 		B:    []byte{1},
-		BOOL: false),
+		BOOL: &boolFalse,
 		BS:   [][]byte{{123}},
-		L: []*Item{
-			{N: "1")}, {S: "a")},
+		L: []types.Item{
+			{N: "1"}, {S: "a"},
 		},
-		M: map[string]*Item{
-			"f": &Item{
-				S: "a"),
+		M: map[string]types.Item{
+			"f": types.Item{
+				S: "a",
 			},
 		},
-		N:  "1"),
-		NS: []*string{"1"), "2")},
-		S:  "a"),
-		SS: []*string{"a"), "b")},
+		N:  "1",
+		NS: []string{"1", "2"},
+		S:  "a",
+		SS: []string{"a", "b"},
 	}
 
 	goVal, ok := getGoValue(all, "B")
@@ -74,16 +75,16 @@ func TestGetGoValue(t *testing.T) {
 	goVal, ok = getGoValue(all, "L")
 	c.True(ok)
 
-	sliceVal, ok := goVal.([]*Item)
+	sliceVal, ok := goVal.([]types.Item)
 	c.True(ok)
 	c.Len(sliceVal, 2)
 
 	goVal, ok = getGoValue(all, "M")
 	c.True(ok)
 
-	mapVal, ok := goVal.(map[string]*Item)
+	mapVal, ok := goVal.(map[string]types.Item)
 	c.True(ok)
-	c.Equal("a", *mapVal["f"].S)
+	c.Equal("a", mapVal["f"].S)
 
 	goVal, ok = getGoValue(all, "N")
 	c.True(ok)

@@ -5,23 +5,26 @@ import (
 	"testing"
 
 	"github.com/truora/minidyn/types"
+)
 
-	"github.com/aws/aws-sdk-go/aws"
+var (
+	boolTrue  = true
+	boolFalse = false
 )
 
 func TestNativeMatch(t *testing.T) {
-	item := map[string]*types.Item{
+	item := map[string]types.Item{
 		"a": {
-			S: aws.String("a"),
+			S: "a",
 		},
 		"n": {
-			N: aws.String("1"),
+			N: "1",
 		},
 		"b": {
-			BOOL: true),
+			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: aws.String("hello world"),
+			S: "hello world",
 		},
 	}
 
@@ -30,9 +33,9 @@ func TestNativeMatch(t *testing.T) {
 		Expression:     ":a = a",
 		Item:           item,
 		ExpressionType: ExpressionTypeConditional,
-		Attributes: map[string]*types.Item{
+		Attributes: map[string]types.Item{
 			":a": {
-				S: aws.String("a"),
+				S: "a",
 			},
 		},
 	}
@@ -44,7 +47,7 @@ func TestNativeMatch(t *testing.T) {
 		t.Error("match without a defined expression should fail")
 	}
 
-	native.AddMatcher("test", ExpressionTypeConditional, ":a = a", func(m1, m2 map[string]*types.Item) bool {
+	native.AddMatcher("test", ExpressionTypeConditional, ":a = a", func(m1, m2 map[string]types.Item) bool {
 		return true
 	})
 
@@ -67,7 +70,7 @@ func TestAddMatcher(t *testing.T) {
 	}
 
 	for _, etype := range etypes {
-		native.AddMatcher("test", etype, ":a = a", func(m1, m2 map[string]*types.Item) bool {
+		native.AddMatcher("test", etype, ":a = a", func(m1, m2 map[string]types.Item) bool {
 			return true
 		})
 	}
@@ -97,18 +100,18 @@ func TestAddMatcher(t *testing.T) {
 }
 
 func TestNativeUpdate(t *testing.T) {
-	item := map[string]*types.Item{
+	item := map[string]types.Item{
 		"a": {
-			S: aws.String("a"),
+			S: "a",
 		},
 		"n": {
-			N: aws.String("1"),
+			N: "1",
 		},
 		"b": {
-			BOOL: true),
+			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: aws.String("hello world"),
+			S: "hello world",
 		},
 	}
 
@@ -116,9 +119,9 @@ func TestNativeUpdate(t *testing.T) {
 		TableName:  "test",
 		Expression: "set a = :b",
 		Item:       item,
-		Attributes: map[string]*types.Item{
+		Attributes: map[string]types.Item{
 			":b": {
-				S: aws.String("foo"),
+				S: "foo",
 			},
 		},
 	}
@@ -130,7 +133,7 @@ func TestNativeUpdate(t *testing.T) {
 		t.Error("update without a defined expression should fail")
 	}
 
-	native.AddUpdater("test", "set a = :b", func(m1, m2 map[string]*types.Item) {
+	native.AddUpdater("test", "set a = :b", func(m1, m2 map[string]types.Item) {
 		m1["a"] = m2[":b"]
 	})
 
@@ -139,7 +142,7 @@ func TestNativeUpdate(t *testing.T) {
 		t.Error("match with a defined expression should not fail")
 	}
 
-	if *item["a"].S != "foo" {
+	if item["a"].S != "foo" {
 		t.Error("item should have been updated")
 	}
 }

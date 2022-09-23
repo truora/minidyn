@@ -29,12 +29,12 @@ type Item struct {
 	// An attribute of type List. For example:
 	//
 	// "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
-	L []*Item `type:"list"`
+	L []Item `type:"list"`
 
 	// An attribute of type Map. For example:
 	//
 	// "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}}
-	M map[string]*Item `type:"map"`
+	M map[string]Item `type:"map"`
 
 	// An attribute of type Number. For example:
 	//
@@ -43,7 +43,7 @@ type Item struct {
 	// Numbers are sent across the network to DynamoDB as strings, to maximize compatibility
 	// across languages and libraries. However, DynamoDB treats them as number type
 	// attributes for mathematical operations.
-	N *string `type:"string"`
+	N string `type:"string"`
 
 	// An attribute of type Number Set. For example:
 	//
@@ -52,7 +52,7 @@ type Item struct {
 	// Numbers are sent across the network to DynamoDB as strings, to maximize compatibility
 	// across languages and libraries. However, DynamoDB treats them as number type
 	// attributes for mathematical operations.
-	NS []*string `type:"list"`
+	NS []string `type:"list"`
 
 	// An attribute of type Null. For example:
 	//
@@ -62,12 +62,12 @@ type Item struct {
 	// An attribute of type String. For example:
 	//
 	// "S": "Hello"
-	S *string `type:"string"`
+	S string `type:"string"`
 
 	// An attribute of type String Set. For example:
 	//
 	// "SS": ["Giraffe", "Hippo" ,"Zebra"]
-	SS []*string `type:"list"`
+	SS []string `type:"list"`
 }
 
 type AttributeDefinition struct {
@@ -230,9 +230,9 @@ type PutItemInput struct {
 	_                           struct{}           `type:"structure"`
 	ConditionExpression         *string            `type:"string"`
 	ConditionalOperator         *string            `type:"string" enum:"ConditionalOperator"`
-	ExpressionAttributeNames    map[string]*string `type:"map"`
-	ExpressionAttributeValues   map[string]*Item   `type:"map"`
-	Item                        map[string]*Item   `type:"map" required:"true"`
+	ExpressionAttributeNames    map[string]string `type:"map"`
+	ExpressionAttributeValues   map[string]Item    `type:"map"`
+	Item                        map[string]Item    `type:"map" required:"true"`
 	ReturnConsumedCapacity      *string            `type:"string" enum:"ReturnConsumedCapacity"`
 	ReturnItemCollectionMetrics *string            `type:"string" enum:"ReturnItemCollectionMetrics"`
 	ReturnValues                *string            `type:"string" enum:"ReturnValue"`
@@ -246,9 +246,9 @@ type UpdateItemInput struct {
 	ConditionExpression         *string                            `type:"string"`
 	ConditionalOperator         *string                            `type:"string" enum:"ConditionalOperator"`
 	Expected                    map[string]*ExpectedAttributeValue `type:"map"`
-	ExpressionAttributeNames    map[string]*string                 `type:"map"`
-	ExpressionAttributeValues   map[string]*Item                   `type:"map"`
-	Key                         map[string]*Item                   `type:"map" required:"true"`
+	ExpressionAttributeNames    map[string]string                 `type:"map"`
+	ExpressionAttributeValues   map[string]Item                    `type:"map"`
+	Key                         map[string]Item                    `type:"map" required:"true"`
 	ReturnConsumedCapacity      *string                            `type:"string" enum:"ReturnConsumedCapacity"`
 	ReturnItemCollectionMetrics *string                            `type:"string" enum:"ReturnItemCollectionMetrics"`
 	ReturnValues                *string                            `type:"string" enum:"ReturnValue"`
@@ -263,8 +263,8 @@ type DeleteItemInput struct {
 	ConditionalOperator         *string                            `type:"string" enum:"ConditionalOperator"`
 	Expected                    map[string]*ExpectedAttributeValue `type:"map"`
 	ExpressionAttributeNames    map[string]*string                 `type:"map"`
-	ExpressionAttributeValues   map[string]*Item                   `type:"map"`
-	Key                         map[string]*Item                   `type:"map" required:"true"`
+	ExpressionAttributeValues   map[string]Item                    `type:"map"`
+	Key                         map[string]Item                    `type:"map" required:"true"`
 	ReturnConsumedCapacity      *string                            `type:"string" enum:"ReturnConsumedCapacity"`
 	ReturnItemCollectionMetrics *string                            `type:"string" enum:"ReturnItemCollectionMetrics"`
 	ReturnValues                *string                            `type:"string" enum:"ReturnValue"`
@@ -273,16 +273,16 @@ type DeleteItemInput struct {
 
 type ExpectedAttributeValue struct {
 	_                  struct{} `type:"structure"`
-	AttributeValueList []*Item  `type:"list"`
+	AttributeValueList []Item   `type:"list"`
 	ComparisonOperator *string  `type:"string" enum:"ComparisonOperator"`
 	Exists             *bool    `type:"boolean"`
-	Value              *Item    `type:"structure"`
+	Value              Item     `type:"structure"`
 }
 
 type AttributeValueUpdate struct {
 	_      struct{} `type:"structure"`
 	Action *string  `type:"string" enum:"AttributeAction"`
-	Value  *Item    `type:"structure"`
+	Value  Item     `type:"structure"`
 }
 
 // Represents the properties of a table.

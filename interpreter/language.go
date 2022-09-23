@@ -28,12 +28,12 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 
 	aliases := map[string]string{}
 	for k, v := range input.Aliases {
-		aliases[k] = *v
+		aliases[k] = v
 	}
 
 	env.Aliases = aliases
 
-	item := map[string]*types.Item{}
+	item := map[string]types.Item{}
 
 	for field, val := range input.Item {
 		item[field] = val
@@ -65,7 +65,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 func buildAliases(input UpdateInput) map[string]string {
 	aliases := map[string]string{}
 	for k, v := range input.Aliases {
-		aliases[k] = *v
+		aliases[k] = v
 	}
 
 	return aliases
@@ -90,7 +90,7 @@ func (li *Language) Update(input UpdateInput) error {
 		return fmt.Errorf("%w: %s", errType, strings.Join(p.Errors(), "\n"))
 	}
 
-	item := map[string]*types.Item{}
+	item := map[string]types.Item{}
 
 	for field, val := range input.Item {
 		item[field] = val

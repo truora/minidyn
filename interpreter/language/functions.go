@@ -25,8 +25,8 @@ func (fn *Function) Type() ObjectType {
 }
 
 // ToDynamoDB returns the types attribute value
-func (fn *Function) ToDynamoDB() *types.Item {
-	return nil
+func (fn *Function) ToDynamoDB() types.Item {
+	return types.Item{}
 }
 
 var (

@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/truora/minidyn/types"
-
 	"github.com/truora/minidyn/interpreter/language"
+	"github.com/truora/minidyn/types"
 )
 
 // Language interpreter

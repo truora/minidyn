@@ -96,15 +96,15 @@ func TestEval(t *testing.T) {
 		{":numSetA = :numSetB", FALSE},
 		{":numSetA = :numSetA", TRUE},
 		// IN
-		{":my_undefined_field IN (:y, :z", FALSE},
-		{":x IN (:y, :z", FALSE},
-		{":x IN (:y, :x", TRUE},
-		{":binA IN (:nil, :x", FALSE},
-		{":binA IN (:nil, :x, :binA", TRUE},
-		{":listA IN (:nil, :x, :binA", FALSE},
-		{":listA IN (:nil, :x, :listA", TRUE},
-		{":numSetA IN (:numSetB, :listA", FALSE},
-		{":numSetA IN (:numSetB, :numSetA", TRUE},
+		{":my_undefined_field IN (:y, :z)", FALSE},
+		{":x IN (:y, :z)", FALSE},
+		{":x IN (:y, :x)", TRUE},
+		{":binA IN (:nil, :x)", FALSE},
+		{":binA IN (:nil, :x, :binA)", TRUE},
+		{":listA IN (:nil, :x, :binA)", FALSE},
+		{":listA IN (:nil, :x, :listA)", TRUE},
+		{":numSetA IN (:numSetB, :listA)", FALSE},
+		{":numSetA IN (:numSetB, :numSetA)", TRUE},
 	}
 
 	env := NewEnvironment()
@@ -369,59 +369,59 @@ func TestEvalSetUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"SET :x = :val", ":x", &String{Value: "text"}, boolTrue},
-		{"SET :w = :val", ":w", &String{Value: "text"}, boolTrue},
-		{"SET :two = :one + :one", ":two", &Number{Value: 2}, boolTrue},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, boolTrue},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, boolTrue},
-		{"SET :newTwo = if_not_exists(not_found, :one + :one", ":newTwo", &Number{Value: 2}, boolTrue},
-		{"SET :three = if_not_exists(:two, :one + :one", ":three", &Number{Value: 3}, boolTrue},
-		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}, boolTrue},
-		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}, boolTrue},
+		{"SET :x = :val", ":x", &String{Value: "text"}, true},
+		{"SET :w = :val", ":w", &String{Value: "text"}, true},
+		{"SET :two = :one + :one", ":two", &Number{Value: 2}, true},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
+		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
+		{"SET :newTwo = if_not_exists(not_found, :one) + :one", ":newTwo", &Number{Value: 2}, true},
+		{"SET :three = if_not_exists(:two, :one) + :one", ":three", &Number{Value: 3}, true},
+		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}, true},
+		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}, true},
 		{
 			"SET :matrix[0][0] = :one",
 			":matrix",
 			&List{Value: []Object{&List{Value: []Object{&Number{Value: 1}}}}},
-			boolFalse,
+			false,
 		},
 		{
 			"SET :hash.a = :one",
 			":hash",
 			&Map{Value: map[string]Object{"a": &Number{Value: 1}}},
-			boolFalse,
+			false,
 		},
 		{
 			"SET :hash.:mapField = :one",
 			":hash",
-			&Map{Value: map[string]Object{"a": &Boolean{Value: boolTrue}, "key": &Number{Value: 1}}},
-			boolFalse,
+			&Map{Value: map[string]Object{"a": &Boolean{Value: true}, "key": &Number{Value: 1}}},
+			false,
 		},
 		{
-			"SET :two = if_not_exists(:hash.not_found, :one + :one",
+			"SET :two = if_not_exists(:hash.not_found, :one) + :one",
 			":two",
 			&Number{Value: 2},
-			boolFalse,
+			false,
 		},
 		{
 			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},
-			boolFalse,
+			false,
 		},
 		{
 			"SET :nestedMap.#pos = #pos + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, ":nestedMap.lvl1.lvl2": &Number{Value: 1}}},
-			boolFalse,
+			false,
 		},
 		{
 			"SET :nestedMap.#secondLevel = #pos + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, "lvl1.lvl2": &Number{Value: 1}}},
-			boolFalse,
+			false,
 		},
-		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, boolTrue},
-		{"SET :x = :val REMOVE :val", ":val", NULL, boolTrue},
+		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, true},
+		{"SET :x = :val REMOVE :val", ":val", NULL, true},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -569,11 +569,11 @@ func TestErrorHandling(t *testing.T) {
 			"syntax error; token: :x",
 		},
 		{
-			"size(:a",
+			"size(:a)",
 			"type not supported: size BOOL",
 		},
 		{
-			"undefined(:a",
+			"undefined(:a)",
 			"invalid function name; function: undefined",
 		},
 		{
@@ -585,28 +585,28 @@ func TestErrorHandling(t *testing.T) {
 			"syntax error; token: :notfound",
 		},
 		{
-			"size(:notfound AND :a = :b",
+			"size(:notfound) AND :a = :b",
 			"type not supported: size NULL",
 		},
 		{
-			":a = :b AND size(:notfound",
+			":a = :b AND size(:notfound)",
 			"type not supported: size NULL",
 		},
 		{
-			"size(:notfound AND :a",
+			"size(:notfound) AND :a",
 			"syntax error; token: :a",
 		},
 		{
-			":a AND size(:notfound",
+			":a AND size(:notfound)",
 			"syntax error; token: :a",
 		},
 		{
-			"NOT size(:notfound",
+			"NOT size(:notfound)",
 			"type not supported: size NULL",
 		},
 		{
 			":y BETWEEN :a AND :b",
-			"unexpected type: \":a\" should be a comparable type(N,S,B got \"BOOL\"",
+			"unexpected type: \":a\" should be a comparable type(N,S,B) got \"BOOL\"",
 		},
 		{
 			":y BETWEEN :x AND :str",
@@ -621,15 +621,15 @@ func TestErrorHandling(t *testing.T) {
 			"reserved word ROLE found in expression",
 		},
 		{
-			"list_append(:list,:x",
+			"list_append(:list,:x)",
 			"the function is not allowed in an condition expression; function: list_append",
 		},
 		{
-			"ROLE IN (:x, :str",
+			"ROLE IN (:x, :str)",
 			"reserved word ROLE found in expression",
 		},
 		{
-			":x IN (ROLE, :str",
+			":x IN (ROLE, :str)",
 			"reserved word ROLE found in expression",
 		},
 	}

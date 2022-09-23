@@ -520,8 +520,8 @@ func TestToDynamo(t *testing.T) {
 
 	emptyItem := types.Item{}
 
-	if cmp.Equal(dError, emptyItem) {
-		t.Errorf("expected error to be nil, got=%v", dError)
+	if !cmp.Equal(dError, emptyItem) {
+		t.Errorf("expected error to be empty, got=%v", dError)
 	}
 
 	mapN := Map{

@@ -209,7 +209,7 @@ func (n *Null) Inspect() string {
 
 // ToDynamoDB returns the types attribute value
 func (n *Null) ToDynamoDB() types.Item {
-	return types.Item{NULL: &boolTrue}
+	return types.Item{NULL: &TRUE.Value}
 }
 
 // Error is the representation of errors

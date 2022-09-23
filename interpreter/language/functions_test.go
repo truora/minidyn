@@ -17,8 +17,8 @@ func TestFunctionInspect(t *testing.T) {
 		t.Fatalf("not equal actual=%s expected=%s", fn.Inspect(), "attribute_exists")
 	}
 
-	if cmp.Equal(fn.ToDynamoDB(), types.Item{}) {
-		t.Fatalf("not nil actual=%v", fn.ToDynamoDB())
+	if !cmp.Equal(fn.ToDynamoDB(), types.Item{}) {
+		t.Fatalf("not empty actual=%v", fn.ToDynamoDB())
 	}
 }
 

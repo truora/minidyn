@@ -50,17 +50,17 @@ func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]types.I
 	return strings.Join(key, "."), nil
 }
 
-func (ks *keySchema) describe() []*types.KeySchemaElement {
-	desc := []*types.KeySchemaElement{}
+func (ks *keySchema) describe() []types.KeySchemaElement {
+	desc := []types.KeySchemaElement{}
 
-	keySchemaElement := &types.KeySchemaElement{
+	keySchemaElement := types.KeySchemaElement{
 		AttributeName: ks.HashKey,
 		KeyType:       "HASH",
 	}
 	desc = append(desc, keySchemaElement)
 
 	if ks.RangeKey != "" {
-		keySchemaElement := &types.KeySchemaElement{
+		keySchemaElement := types.KeySchemaElement{
 			AttributeName: ks.RangeKey,
 			KeyType:       "RANGE",
 		}

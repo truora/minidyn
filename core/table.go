@@ -3,8 +3,6 @@ package core
 import (
 	"sort"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/truora/minidyn/interpreter"
 	"github.com/truora/minidyn/types"
 )
@@ -12,13 +10,13 @@ import (
 type QueryInput struct {
 	Index                     string
 	ExpressionAttributeValues map[string]types.Item
-	Limit                     *int64
+	Limit                     int64
 	ExclusiveStartKey         map[string]types.Item
-	KeyConditionExpression    *string
+	KeyConditionExpression    string
 	ConditionExpression       *string
-	FilterExpression          *string
+	FilterExpression          string
 	Aliases                   map[string]string
-	ScanIndexForward          *bool
+	ScanIndexForward          bool
 	Scan                      bool
 	started                   bool
 }
@@ -26,21 +24,21 @@ type QueryInput struct {
 // Table has the Indexes and the operation functions
 type Table struct {
 	Name                 string
-	Indexes              map[string]*index
+	Indexes              map[string]index
 	AttributesDef        map[string]string
 	SortedKeys           []string
 	Data                 map[string]map[string]types.Item
 	KeySchema            keySchema
-	BillingMode          *string
+	BillingMode          string
 	UseNativeInterpreter bool
-	NativeInterpreter    *interpreter.Native
-	LangInterpreter      *interpreter.Language
+	NativeInterpreter    interpreter.Native
+	LangInterpreter      interpreter.Language
 }
 
 func NewTable(name string) *Table {
 	return &Table{
 		Name:          name,
-		Indexes:       map[string]*index{},
+		Indexes:       map[string]index{},
 		AttributesDef: map[string]string{},
 		SortedKeys:    []string{},
 		Data:          map[string]map[string]types.Item{},
@@ -66,7 +64,7 @@ func parseKeySchema(schema []*types.KeySchemaElement) (keySchema, error) {
 	}
 
 	if ks.HashKey == "" {
-		return ks, awserr.New("ValidationException", "No Hash Key specified in schema. All Dynamo DB Tables must have exactly one hash key", nil)
+		return ks, types.NewError("ValidationException", "No Hash Key specified in schema. All Dynamo DB Tables must have exactly one hash key", nil)
 	}
 
 	return ks, nil
@@ -79,18 +77,18 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	}
 
 	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return awserr.New("ValidationException", "Hash Key not specified in Attribute Definitions.", nil)
+		return types.NewError("ValidationException", "Hash Key not specified in Attribute Definitions.", nil)
 	}
 
 	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return awserr.New("ValidationException", "Range Key not specified in Attribute Definitions.", nil)
+		return types.NewError("ValidationException", "Range Key not specified in Attribute Definitions.", nil)
 	}
 
 	// types-local check this after validate the key schema
-	if aws.StringValue(t.BillingMode) != "PAY_PER_REQUEST" {
+	if t.BillingMode != "PAY_PER_REQUEST" {
 		if input.ProvisionedThroughput == nil {
 			// https://github.com/aws/aws-sdk-go/issues/3140
-			return awserr.New("ValidationException", "No provisioned throughput specified for the table", nil)
+			return types.NewError("ValidationException", "No provisioned throughput specified for the table", nil)
 		}
 	}
 
@@ -100,10 +98,10 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 }
 
 func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
-	if aws.StringValue(t.BillingMode) != "PAY_PER_REQUEST" {
+	if t.BillingMode != "PAY_PER_REQUEST" {
 		if gsiInput.ProvisionedThroughput == nil {
 			// https://github.com/aws/aws-sdk-go/issues/3140
-			return nil, awserr.New("ValidationException", "No provisioned throughput specified for the global secondary index", nil)
+			return nil, types.NewError("ValidationException", "No provisioned throughput specified for the global secondary index", nil)
 		}
 	}
 
@@ -113,11 +111,11 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 	}
 
 	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return nil, awserr.New("ValidationException", "Global Secondary Index hash key not specified in Attribute Definitions.", nil)
+		return nil, types.NewError("ValidationException", "Global Secondary Index hash key not specified in Attribute Definitions.", nil)
 	}
 
 	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return nil, awserr.New("ValidationException", "Global Secondary Index range key not specified in Attribute Definitions.", nil)
+		return nil, types.NewError("ValidationException", "Global Secondary Index range key not specified in Attribute Definitions.", nil)
 	}
 
 	i := newIndex(t, indexTypeGlobal, ks)
@@ -149,7 +147,7 @@ func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error
 
 func (t *Table) AddGlobalIndexes(input []*types.GlobalSecondaryIndex) error {
 	if input != nil && len(input) == 0 {
-		return awserr.New("ValidationException", "GSI list is empty/invalid", nil)
+		return types.NewError("ValidationException", "GSI list is empty/invalid", nil)
 	}
 
 	for _, gsiInput := range input {
@@ -167,14 +165,14 @@ func (t *Table) addGlobalIndex(gsiInput *types.GlobalSecondaryIndex) error {
 		return err
 	}
 
-	t.Indexes[*gsiInput.IndexName] = i
+	t.Indexes[*gsiInput.IndexName] = *i
 
 	return nil
 }
 
 func (t *Table) deleteIndex(indexName string) error {
 	if _, ok := t.Indexes[indexName]; !ok {
-		return awserr.New(ErrCodeResourceNotFoundException, "Requested resource not found", nil)
+		return types.NewError("ResourceNotFoundException", "Requested resource not found", nil)
 	}
 
 	delete(t.Indexes, indexName)
@@ -194,11 +192,11 @@ func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 	}
 
 	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return nil, awserr.New("ValidationException", "Local Secondary Index hash key not specified in Attribute Definitions.", nil)
+		return nil, types.NewError("ValidationException", "Local Secondary Index hash key not specified in Attribute Definitions.", nil)
 	}
 
 	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return nil, awserr.New("ValidationException", "Local Secondary Index range key not specified in Attribute Definitions.", nil)
+		return nil, types.NewError("ValidationException", "Local Secondary Index range key not specified in Attribute Definitions.", nil)
 	}
 
 	i := newIndex(t, indexTypeLocal, ks)
@@ -209,7 +207,7 @@ func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 
 func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 	if input != nil && len(input) == 0 {
-		return awserr.New("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
+		return types.NewError("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
 	}
 
 	for _, lsi := range input {
@@ -218,7 +216,7 @@ func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 			return err
 		}
 
-		t.Indexes[*lsi.IndexName] = i
+		t.Indexes[*lsi.IndexName] = *i
 	}
 
 	return nil
@@ -243,15 +241,15 @@ func getPrimaryKey(index *index, k string) (string, bool) {
 	return pk, ok
 }
 
-func (t *Table) fetchQueryData(input QueryInput) (*index, []string) {
+func (t *Table) fetchQueryData(input QueryInput) (index, []string) {
 	if input.Index != "" {
 		i := t.Indexes[input.Index]
-		i.startSearch(aws.BoolValue(input.ScanIndexForward))
+		i.startSearch(input.ScanIndexForward)
 
 		return i, i.sortedKeys
 	}
 
-	return nil, t.SortedKeys
+	return index{}, t.SortedKeys
 }
 
 func prepareSearch(input *QueryInput, index *index, k, startKey string) (string, bool) {
@@ -315,7 +313,7 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 
 func (t *Table) SearchData(input QueryInput) ([]map[string]types.Item, map[string]types.Item) {
 	items := []map[string]types.Item{}
-	limit := aws.Int64Value(input.Limit)
+	limit := input.Limit
 	exclusiveStartKey := input.ExclusiveStartKey
 	index, sortedKeys := t.fetchQueryData(input)
 
@@ -323,14 +321,14 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]types.Item, map[strin
 	input.started = startKey == ""
 	last := map[string]types.Item{}
 	sortedKeysSize := int64(len(sortedKeys))
-	forward := aws.BoolValue(input.ScanIndexForward)
+	forward := input.ScanIndexForward
 
 	var count int64
 
 	for pos := range sortedKeys {
 		k := GetKeyAt(sortedKeys, sortedKeysSize, int64(pos), forward)
 
-		pk, ok := prepareSearch(&input, index, k, startKey)
+		pk, ok := prepareSearch(&input, &index, k, startKey)
 		if !ok {
 			continue
 		}
@@ -351,7 +349,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]types.Item, map[strin
 		}
 	}
 
-	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, index)
+	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, &index)
 }
 
 func (t *Table) getLastKey(item map[string]types.Item, startKey string, limit, count, keysSize int64, index *index) map[string]types.Item {
@@ -391,10 +389,10 @@ func (t *Table) matchKey(input QueryInput, item map[string]types.Item) (interpre
 	var lastMatchExpressionType interpreter.ExpressionType
 	matched := input.Scan
 
-	if input.KeyConditionExpression != nil {
+	if input.KeyConditionExpression != "nil" {
 		matched = t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
-			Expression:     aws.StringValue(input.KeyConditionExpression),
+			Expression:     input.KeyConditionExpression,
 			ExpressionType: interpreter.ExpressionTypeKey,
 			Item:           item,
 			Aliases:        input.Aliases,
@@ -403,10 +401,10 @@ func (t *Table) matchKey(input QueryInput, item map[string]types.Item) (interpre
 		lastMatchExpressionType = interpreter.ExpressionTypeKey
 	}
 
-	if input.FilterExpression != nil {
+	if input.FilterExpression != "nil" {
 		matched = matched && t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
-			Expression:     aws.StringValue(input.FilterExpression),
+			Expression:     input.FilterExpression,
 			ExpressionType: interpreter.ExpressionTypeFilter,
 			Item:           item,
 			Aliases:        input.Aliases,
@@ -418,9 +416,9 @@ func (t *Table) matchKey(input QueryInput, item map[string]types.Item) (interpre
 	if input.ConditionExpression != nil {
 		matched = t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
-			Expression:     aws.StringValue(input.ConditionExpression),
+			Expression:     *input.ConditionExpression,
 			ExpressionType: interpreter.ExpressionTypeConditional,
-			Item:     item,
+			Item:           item,
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
@@ -459,7 +457,7 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]types.Item, error) {
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
 	if err != nil {
-		return item, awserr.New("ValidationException", err.Error(), nil)
+		return item, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	// support conditional writes
@@ -468,12 +466,12 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]types.Item, error) {
 			Index:                     PrimaryIndexName,
 			ExpressionAttributeValues: input.ExpressionAttributeValues,
 			Aliases:                   input.ExpressionAttributeNames,
-			Limit:                     aws.Int64(1),
+			Limit:                     1,
 			ConditionExpression:       input.ConditionExpression,
 		}, t.getItem(key))
 
 		if !matched {
-			return item, awserr.New(ErrCodeConditionalCheckFailedException, ErrConditionalRequestFailed.Error(), nil)
+			return item, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
 		}
 	}
 
@@ -482,7 +480,7 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]types.Item, error) {
 	for _, index := range t.Indexes {
 		err := index.putData(key, item)
 		if err != nil {
-			return nil, awserr.New("ValidationException", err.Error(), nil)
+			return nil, types.NewError("ValidationException", err.Error(), nil)
 		}
 	}
 
@@ -501,7 +499,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]types.Item, err
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
-		return nil, awserr.New("ValidationException", err.Error(), nil)
+		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	item, ok := t.Data[key]
@@ -515,14 +513,14 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]types.Item, err
 		query := QueryInput{
 			Index:                     PrimaryIndexName,
 			ExpressionAttributeValues: input.ExpressionAttributeValues,
-			Limit:                     aws.Int64(1),
+			Limit:                     1,
 			ConditionExpression:       input.ConditionExpression,
 			Aliases:                   input.ExpressionAttributeNames,
 		}
 
 		_, matched := t.matchKey(query, item)
 		if !matched {
-			return nil, &types.ConditionalCheckFailedException{Message_: aws.String(ErrConditionalRequestFailed.Error())}
+			return nil, &types.ConditionalCheckFailedException{Message_: ErrConditionalRequestFailed.Error()}
 		}
 	}
 
@@ -535,8 +533,8 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]types.Item, err
 
 	err = t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.Name,
-		Expression: aws.StringValue(input.UpdateExpression),
-		Item: item,
+		Expression: input.UpdateExpression,
+		Item:       item,
 		Attributes: input.ExpressionAttributeValues,
 		Aliases:    input.ExpressionAttributeNames,
 	})
@@ -550,7 +548,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]types.Item, err
 	for _, index := range t.Indexes {
 		err := index.updateData(key, item, oldItem)
 		if err != nil {
-			return nil, awserr.New("ValidationException", err.Error(), nil)
+			return nil, types.NewError("ValidationException", err.Error(), nil)
 		}
 	}
 
@@ -560,7 +558,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]types.Item, err
 func (t *Table) Delete(input *types.DeleteItemInput) (map[string]types.Item, error) {
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
-		return nil, awserr.New("ValidationException", err.Error(), nil)
+		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	// delete is an idempotent operation,
@@ -587,7 +585,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]types.Item, err
 	for _, index := range t.Indexes {
 		err := index.delete(key, item)
 		if err != nil {
-			return nil, awserr.New("ValidationException", err.Error(), nil)
+			return nil, types.NewError("ValidationException", err.Error(), nil)
 		}
 	}
 
@@ -599,26 +597,26 @@ func (t *Table) Description(name string) *types.TableDescription {
 	gsi, lsi := t.IndexesDescription()
 
 	return &types.TableDescription{
-		TableName:              aws.String(name),
-		ItemCount:              aws.Int64(int64(len(t.SortedKeys))),
+		TableName:              name,
+		ItemCount:              int64(len(t.SortedKeys)),
 		KeySchema:              t.KeySchema.describe(),
 		GlobalSecondaryIndexes: gsi,
 		LocalSecondaryIndexes:  lsi,
 	}
 }
 
-func (t *Table) IndexesDescription() ([]*types.GlobalSecondaryIndexDescription, []*types.LocalSecondaryIndexDescription) {
-	gsi := []*types.GlobalSecondaryIndexDescription{}
-	lsi := []*types.LocalSecondaryIndexDescription{}
+func (t *Table) IndexesDescription() ([]types.GlobalSecondaryIndexDescription, []types.LocalSecondaryIndexDescription) {
+	gsi := []types.GlobalSecondaryIndexDescription{}
+	lsi := []types.LocalSecondaryIndexDescription{}
 
 	for indexName, index := range t.Indexes {
 		schema := index.keySchema.describe()
-		count := aws.Int64(index.count())
+		count := index.count()
 
 		switch index.typ {
 		case indexTypeGlobal:
 			{
-				gsi = append(gsi, &types.GlobalSecondaryIndexDescription{
+				gsi = append(gsi, types.GlobalSecondaryIndexDescription{
 					IndexName:  &indexName,
 					ItemCount:  count,
 					KeySchema:  schema,
@@ -627,7 +625,7 @@ func (t *Table) IndexesDescription() ([]*types.GlobalSecondaryIndexDescription, 
 			}
 		case indexTypeLocal:
 			{
-				lsi = append(lsi, &types.LocalSecondaryIndexDescription{
+				lsi = append(lsi, types.LocalSecondaryIndexDescription{
 					IndexName:  &indexName,
 					ItemCount:  count,
 					KeySchema:  schema,

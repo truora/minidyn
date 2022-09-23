@@ -93,7 +93,7 @@ func TestGetGoValue(t *testing.T) {
 	goVal, ok = getGoValue(all, "NS")
 	c.True(ok)
 
-	nsVal, ok := goVal.([]*string)
+	nsVal, ok := goVal.([]string)
 	c.True(ok)
 	c.Len(nsVal, 2)
 
@@ -104,7 +104,7 @@ func TestGetGoValue(t *testing.T) {
 	goVal, ok = getGoValue(all, "SS")
 	c.True(ok)
 
-	ssVal, ok := goVal.([]*string)
+	ssVal, ok := goVal.([]string)
 	c.True(ok)
 	c.Len(ssVal, 2)
 }

@@ -7,6 +7,64 @@ import (
 	"github.com/truora/minidyn/types"
 )
 
+func TestItemValue(t *testing.T) {
+	c := require.New(t)
+
+	v, err := getItemValue(map[string]types.Item{"S": {S: "test"}}, "S", "S")
+	c.NoError(err)
+	c.Equal(v, "test")
+
+	booleanVal := true
+	v, err = getItemValue(map[string]types.Item{"BOOL": {BOOL: &booleanVal}}, "BOOL", "BOOL")
+	c.NoError(err)
+	c.Equal(v, &booleanVal)
+
+	v, err = getItemValue(map[string]types.Item{"SS": {SS: []string{"t1", "t2"}}}, "SS", "SS")
+	c.NoError(err)
+	c.Equal(v, []string{"t1", "t2"})
+
+	v, err = getItemValue(map[string]types.Item{"N": {N: "123.45"}}, "N", "N")
+	c.NoError(err)
+	c.Equal(v, "123.45")
+
+	v, err = getItemValue(map[string]types.Item{"B": {B: []byte("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk")}}, "B", "B")
+	c.NoError(err)
+	c.Equal(v, []byte("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk"))
+
+	v, err = getItemValue(map[string]types.Item{"L": {L: []types.Item{{S: "Cookie"}}}}, "L", "L")
+	c.NoError(err)
+	c.Equal(v, []types.Item{{S: "Cookie"}})
+
+	v, err = getItemValue(map[string]types.Item{"M": {M: map[string]types.Item{"N": {N: "123.45"}}}}, "M", "M")
+	c.NoError(err)
+	c.Equal(v, map[string]types.Item{"N": {N: "123.45"}})
+
+	v, err = getItemValue(map[string]types.Item{"BS": {BS: [][]byte{123: []byte("x"), []byte("y"), []byte("z")}}}, "BS", "BS")
+	c.NoError(err)
+	c.Equal(v, [][]byte{123: []byte("x"), []byte("y"), []byte("z")})
+
+	v, err = getItemValue(map[string]types.Item{"NS": {NS: []string{"t1", "t2"}}}, "NS", "NS")
+	c.NoError(err)
+	c.Equal(v, []string{"t1", "t2"})
+}
+
+func TestFailedItemValue(t *testing.T) {
+	c := require.New(t)
+
+	_, err := getItemValue(map[string]types.Item{"D": {S: "test"}}, "S", "S")
+	c.Contains(err.Error(), errMissingField.Error())
+
+	_, err = getItemValue(map[string]types.Item{"S": {S: "test"}}, "S", "n")
+	c.Contains(err.Error(), ErrInvalidAtrributeValue.Error())
+}
+
+func TestCopyItem(t *testing.T) {
+	c := require.New(t)
+
+	cItem := copyItem(map[string]types.Item{"str": {N: "test"}})
+	c.Equal(cItem, map[string]types.Item{"str": {N: "test"}})
+}
+
 func TestMapToDynamoDBType(t *testing.T) {
 	c := require.New(t)
 
@@ -50,7 +108,7 @@ func TestGetGoValue(t *testing.T) {
 			{N: "1"}, {S: "a"},
 		},
 		M: map[string]types.Item{
-			"f": types.Item{
+			"f": {
 				S: "a",
 			},
 		},

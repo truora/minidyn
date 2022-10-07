@@ -5,16 +5,18 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/truora/minidyn/types"
 )
 
 var (
 	// revive:disable-next-line
-	errMissingField = errors.New("The number of conditions on the keys is invalid")
+	errMissingField = errors.New("number of conditions on the keys is invalid")
 
 	// ErrConditionalRequestFailed when the conditional write is not meet
-	ErrConditionalRequestFailed = errors.New("the conditional request failed")
+	ErrConditionalRequestFailed = errors.New("conditional request failed")
+
+	// ErrInvalidAtrributeValue when the attributte value is invalid
+	ErrInvalidAtrributeValue = errors.New("invalid attribute value type")
 )
 
 const (
@@ -71,7 +73,7 @@ func getItemValue(item map[string]types.Item, field, typ string) (interface{}, e
 	goVal, ok := getGoValue(val, typ)
 	if !ok {
 		// revive:disable-next-line
-		return nil, fmt.Errorf("Invalid attribute value type; field %q", field)
+		return nil, fmt.Errorf("%w; field %q", ErrInvalidAtrributeValue, field)
 	}
 
 	return goVal, nil
@@ -82,7 +84,7 @@ func getGoValue(val types.Item, typ string) (interface{}, bool) {
 	case "S":
 		return val.S, val.S != ""
 	case "BOOL":
-		return aws.BoolValue(val.BOOL), val.BOOL != nil
+		return val.BOOL, val.BOOL != nil
 	case "N":
 		return val.N, val.N != ""
 	}

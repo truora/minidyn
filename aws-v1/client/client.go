@@ -94,7 +94,7 @@ func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 	fd.nativeInterpreter = native
 
 	for _, table := range fd.tables {
-		table.NativeInterpreter = native
+		table.NativeInterpreter = *native
 	}
 }
 
@@ -115,28 +115,28 @@ func (fd *Client) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.Creat
 	}
 
 	newTable := core.NewTable(tableName)
-	newTable.SetAttributeDefinition(input.AttributeDefinitions)
-	newTable.BillingMode = input.BillingMode
-	newTable.NativeInterpreter = fd.nativeInterpreter
+	newTable.SetAttributeDefinition(mapAttributeDefinitionToTypes(input.AttributeDefinitions))
+	newTable.BillingMode = aws.StringValue(input.BillingMode)
+	newTable.NativeInterpreter = *fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
-	newTable.LangInterpreter = fd.langInterpreter
+	newTable.LangInterpreter = *fd.langInterpreter
 
-	if err := newTable.CreatePrimaryIndex(input); err != nil {
+	if err := newTable.CreatePrimaryIndex(mapCreateTableInputToTypes(input)); err != nil {
 		return nil, err
 	}
 
-	if err := newTable.AddGlobalIndexes(input.GlobalSecondaryIndexes); err != nil {
+	if err := newTable.AddGlobalIndexes(mapGlobalSecondaryIndexesToTypes(input.GlobalSecondaryIndexes)); err != nil {
 		return nil, err
 	}
 
-	if err := newTable.AddLocalIndexes(input.LocalSecondaryIndexes); err != nil {
+	if err := newTable.AddLocalIndexes(mapLocalSecondaryIndexesToTypes(input.LocalSecondaryIndexes)); err != nil {
 		return nil, err
 	}
 
 	fd.tables[tableName] = newTable
 
 	return &dynamodb.CreateTableOutput{
-		TableDescription: newTable.Description(tableName),
+		TableDescription: mapTableDescriptionToDynamodb(newTable.Description(tableName)),
 	}, nil
 }
 
@@ -163,7 +163,7 @@ func (fd *Client) DeleteTable(input *dynamodb.DeleteTableInput) (*dynamodb.Delet
 	delete(fd.tables, tableName)
 
 	return &dynamodb.DeleteTableOutput{
-		TableDescription: desc,
+		TableDescription: mapTableDescriptionToDynamodb(desc),
 	}, nil
 }
 
@@ -186,19 +186,19 @@ func (fd *Client) UpdateTable(input *dynamodb.UpdateTableInput) (*dynamodb.Updat
 	}
 
 	if input.AttributeDefinitions != nil {
-		table.SetAttributeDefinition(input.AttributeDefinitions)
+		table.SetAttributeDefinition(mapAttributeValueDefinitionToDynamodb(input.AttributeDefinitions))
 	}
 
 	for _, change := range input.GlobalSecondaryIndexUpdates {
-		if err := table.ApplyIndexChange(change); err != nil {
+		if err := table.ApplyIndexChange(mapGlobalSecondaryIndexUpdateToTypes(change)); err != nil {
 			return &dynamodb.UpdateTableOutput{
-				TableDescription: table.Description(tableName),
+				TableDescription: mapTableDescriptionToDynamodb(table.Description(tableName)),
 			}, err
 		}
 	}
 
 	return &dynamodb.UpdateTableOutput{
-		TableDescription: table.Description(tableName),
+		TableDescription: mapTableDescriptionToDynamodb(table.Description(tableName)),
 	}, nil
 }
 
@@ -217,7 +217,7 @@ func (fd *Client) DescribeTable(input *dynamodb.DescribeTableInput) (*dynamodb.D
 	}
 
 	output := &dynamodb.DescribeTableOutput{
-		Table: table.Description(tableName),
+		Table: mapTableDescriptionToDynamodb(table.Description(tableName)),
 	}
 
 	return output, nil
@@ -252,10 +252,10 @@ func (fd *Client) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 		return nil, err
 	}
 
-	item, err := table.Put(input)
+	item, err := table.Put(mapPutItemInputToTypes(input))
 
 	return &dynamodb.PutItemOutput{
-		Attributes: item,
+		Attributes: mapAttributeValueToDynamodb(item),
 	}, err
 }
 
@@ -292,9 +292,9 @@ func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteI
 	if input.ConditionExpression != nil {
 		items, _ := table.SearchData(core.QueryInput{
 			Index:                     core.PrimaryIndexName,
-			ExpressionAttributeValues: input.ExpressionAttributeValues,
-			Aliases:                   input.ExpressionAttributeNames,
-			Limit:                     aws.Int64(1),
+			ExpressionAttributeValues: mapAttributeValueToTypes(input.ExpressionAttributeValues),
+			Aliases:                   aws.StringValueMap(input.ExpressionAttributeNames),
+			Limit:                     1,
 			ConditionExpression:       input.ConditionExpression,
 		})
 		if len(items) == 0 {
@@ -302,14 +302,14 @@ func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteI
 		}
 	}
 
-	item, err := table.Delete(input)
+	item, err := table.Delete(mapDeleteItemInputToTypes(input))
 	if err != nil {
 		return nil, err
 	}
 
 	if aws.StringValue(input.ReturnValues) == "ALL_OLD" {
 		return &dynamodb.DeleteItemOutput{
-			Attributes: item,
+			Attributes: mapAttributeValueToDynamodb(item),
 		}, nil
 	}
 
@@ -345,7 +345,7 @@ func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 		return nil, err
 	}
 
-	item, err := table.Update(input)
+	item, err := table.Update(mapUpdateItemInputToTypes(input))
 	if err != nil {
 		if errors.Is(err, interpreter.ErrSyntaxError) {
 			return nil, awserr.New("ValidationException", err.Error(), nil)
@@ -355,7 +355,7 @@ func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 	}
 
 	output := &dynamodb.UpdateItemOutput{
-		Attributes: item,
+		Attributes: mapAttributeValueToDynamodb(item),
 	}
 
 	return output, nil
@@ -390,12 +390,12 @@ func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 		return nil, err
 	}
 
-	key, err := table.KeySchema.GetKey(table.AttributesDef, input.Key)
+	key, err := table.KeySchema.GetKey(table.AttributesDef, mapAttributeValueToTypes(input.Key))
 	if err != nil {
 		return nil, awserr.New("ValidationException", err.Error(), nil)
 	}
 
-	item := copyItem(table.Data[key])
+	item := copyItem(mapAttributeValueToDynamodb(table.Data[key]))
 
 	output := &dynamodb.GetItemOutput{
 		Item: item,
@@ -436,21 +436,21 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 
 	items, lastKey := table.SearchData(core.QueryInput{
 		Index:                     indexName,
-		ExpressionAttributeValues: input.ExpressionAttributeValues,
-		Aliases:                   input.ExpressionAttributeNames,
-		Limit:                     input.Limit,
-		ExclusiveStartKey:         input.ExclusiveStartKey,
-		KeyConditionExpression:    input.KeyConditionExpression,
-		FilterExpression:          input.FilterExpression,
-		ScanIndexForward:          input.ScanIndexForward,
+		ExpressionAttributeValues: mapAttributeValueToTypes(input.ExpressionAttributeValues),
+		Aliases:                   aws.StringValueMap(input.ExpressionAttributeNames),
+		Limit:                     aws.Int64Value(input.Limit),
+		ExclusiveStartKey:         mapAttributeValueToTypes(input.ExclusiveStartKey),
+		KeyConditionExpression:    *input.KeyConditionExpression,
+		FilterExpression:          aws.StringValue(input.FilterExpression),
+		ScanIndexForward:          aws.BoolValue(input.ScanIndexForward),
 	})
 
 	count := int64(len(items))
 
 	output := &dynamodb.QueryOutput{
-		Items:            items,
+		Items:            mapItemSliceToDynamodb(items),
 		Count:            &count,
-		LastEvaluatedKey: lastKey,
+		LastEvaluatedKey: mapAttributeValueToDynamodb(lastKey),
 	}
 
 	return output, nil
@@ -484,21 +484,21 @@ func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 
 	items, lastKey := table.SearchData(core.QueryInput{
 		Index:                     indexName,
-		ExpressionAttributeValues: input.ExpressionAttributeValues,
-		Aliases:                   input.ExpressionAttributeNames,
-		Limit:                     input.Limit,
-		ExclusiveStartKey:         input.ExclusiveStartKey,
-		FilterExpression:          input.FilterExpression,
+		ExpressionAttributeValues: mapAttributeValueToTypes(input.ExpressionAttributeValues),
+		Aliases:                   aws.StringValueMap(input.ExpressionAttributeNames),
+		Limit:                     *input.Limit,
+		ExclusiveStartKey:         mapAttributeValueToTypes(input.ExclusiveStartKey),
+		FilterExpression:          *input.FilterExpression,
 		Scan:                      true,
-		ScanIndexForward:          aws.Bool(true),
+		ScanIndexForward:          true,
 	})
 
 	count := int64(len(items))
 
 	output := &dynamodb.ScanOutput{
-		Items:            items,
+		Items:            mapItemSliceToDynamodb(items),
 		Count:            &count,
-		LastEvaluatedKey: lastKey,
+		LastEvaluatedKey: mapAttributeValueToDynamodb(lastKey),
 	}
 
 	return output, nil

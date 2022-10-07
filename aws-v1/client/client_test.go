@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/truora/minidyn/interpreter"
+	"github.com/truora/minidyn/types"
 )
 
 const tableName = "pokemons"
@@ -144,11 +145,11 @@ func setupDynamoDBLocal(endpoint string) dynamodbiface.DynamoDBAPI {
 }
 
 func setupNativeInterpreter(native *interpreter.Native, table string) {
-	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]*dynamodb.AttributeValue, updates map[string]*dynamodb.AttributeValue) {
+	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]types.Item, updates map[string]types.Item) {
 		item["second_type"] = updates[":ntype"]
 	})
 
-	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]*dynamodb.AttributeValue, updates map[string]*dynamodb.AttributeValue) {
+	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]types.Item, updates map[string]types.Item) {
 		item["type"] = updates[":ntype"]
 	})
 }
@@ -205,12 +206,13 @@ func TestSetInterpreter(t *testing.T) {
 		c.Error(err)
 	})
 
-	_ = AddTable(client, "tests", "hk", "rk")
+	err := AddTable(client, "tests", "hk", "rk")
+	c.NoError(err)
 
 	native := interpreter.NewNativeInterpreter()
 	client.SetInterpreter(native)
 
-	_, err := client.getTable("tests")
+	_, err = client.getTable("tests")
 	c.NoError(err)
 }
 

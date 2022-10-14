@@ -17,12 +17,12 @@ func MapToObject(val types.Item) (Object, error) {
 		}
 
 		return FALSE, nil
-	case val.N != "":
-		n, err := strconv.ParseFloat(val.N, 64)
+	case val.N != nil:
+		n, err := strconv.ParseFloat(types.StringValue(val.N), 64)
 
 		return &Number{Value: n}, err
-	case val.S != "":
-		return &String{Value: val.S}, nil
+	case val.S != nil:
+		return &String{Value: types.StringValue(val.S)}, nil
 	case val.NULL != nil && *val.NULL:
 		return &Null{}, nil
 	}
@@ -92,7 +92,7 @@ func mapAttributeToStringSet(val types.Item) (Object, error) {
 	ss := map[string]bool{}
 
 	for _, val := range val.SS {
-		ss[val] = true
+		ss[types.StringValue(val)] = true
 	}
 
 	return &StringSet{
@@ -120,7 +120,7 @@ func mapAttributeToNumberSet(val types.Item) (Object, error) {
 	ns := map[float64]bool{}
 
 	for _, val := range val.NS {
-		n, err := strconv.ParseFloat(val, 64)
+		n, err := strconv.ParseFloat(types.StringValue(val), 64)
 		if err != nil {
 			return nil, err
 		}

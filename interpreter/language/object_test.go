@@ -490,8 +490,8 @@ func TestToDynamo(t *testing.T) {
 	num := Number{Value: 3}
 	dNum := num.ToDynamoDB()
 
-	if num.Inspect() != dNum.N {
-		t.Errorf("expected number %s got=%q", num.Inspect(), dNum.N)
+	if num.Inspect() != types.StringValue(dNum.N) {
+		t.Errorf("expected number %s got=%q", num.Inspect(), types.StringValue(dNum.N))
 	}
 
 	boolean := Boolean{Value: true}
@@ -529,22 +529,22 @@ func TestToDynamo(t *testing.T) {
 	}
 	dMap := mapN.ToDynamoDB()
 
-	if mapN.Value["Key"].ToDynamoDB().S != dMap.M["Key"].S {
-		t.Errorf("expected value on Key to be %s got=%s", mapN.Value["Key"].ToDynamoDB().S, dMap.M["Key"].S)
+	if types.StringValue(mapN.Value["Key"].ToDynamoDB().S) != types.StringValue(dMap.M["Key"].S) {
+		t.Errorf("expected value on Key to be %s got=%s", types.StringValue(mapN.Value["Key"].ToDynamoDB().S), types.StringValue(dMap.M["Key"].S))
 	}
 
 	list := List{Value: []Object{&String{Value: "Cookies"}}}
 	dList := list.ToDynamoDB()
 
-	if list.Value[0].ToDynamoDB().S != dList.L[0].S {
-		t.Errorf("expected item to be %s got=%s", list.Value[0].ToDynamoDB().S, dList.L[0].S)
+	if types.StringValue(list.Value[0].ToDynamoDB().S) != types.StringValue(dList.L[0].S) {
+		t.Errorf("expected item to be %s got=%s", types.StringValue(list.Value[0].ToDynamoDB().S), types.StringValue(dList.L[0].S))
 	}
 
 	ss := StringSet{Value: map[string]bool{"Cookies": true}}
 	dSS := ss.ToDynamoDB()
 
-	if "Cookies" != dSS.SS[0] {
-		t.Errorf("expected item to be %s got=%s", "Cookies", dSS.SS[0])
+	if "Cookies" != types.StringValue(dSS.SS[0]) {
+		t.Errorf("expected item to be %s got=%s", "Cookies", types.StringValue(dSS.SS[0]))
 	}
 
 	bs := &BinarySet{Value: [][]byte{[]byte("a"), []byte("c"), []byte("c")}}
@@ -557,8 +557,8 @@ func TestToDynamo(t *testing.T) {
 	nm := NumberSet{Value: map[float64]bool{1: true}}
 	dNm := nm.ToDynamoDB()
 
-	if "1" != dNm.NS[0] {
-		t.Errorf("expected item to be %s got=%s", "1", dNm.NS[0])
+	if "1" != types.StringValue(dNm.NS[0]) {
+		t.Errorf("expected item to be %s got=%s", "1", types.StringValue(dNm.NS[0]))
 	}
 }
 

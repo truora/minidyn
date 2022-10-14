@@ -15,16 +15,16 @@ var (
 func TestNativeMatch(t *testing.T) {
 	item := map[string]types.Item{
 		"a": {
-			S: "a",
+			S: types.ToString("a"),
 		},
 		"n": {
-			N: "1",
+			N: types.ToString("1"),
 		},
 		"b": {
 			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: "hello world",
+			S: types.ToString("hello world"),
 		},
 	}
 
@@ -35,7 +35,7 @@ func TestNativeMatch(t *testing.T) {
 		ExpressionType: ExpressionTypeConditional,
 		Attributes: map[string]types.Item{
 			":a": {
-				S: "a",
+				S: types.ToString("a"),
 			},
 		},
 	}
@@ -102,16 +102,16 @@ func TestAddMatcher(t *testing.T) {
 func TestNativeUpdate(t *testing.T) {
 	item := map[string]types.Item{
 		"a": {
-			S: "a",
+			S: types.ToString("a"),
 		},
 		"n": {
-			N: "1",
+			N: types.ToString("1"),
 		},
 		"b": {
 			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: "hello world",
+			S: types.ToString("hello world"),
 		},
 	}
 
@@ -121,7 +121,7 @@ func TestNativeUpdate(t *testing.T) {
 		Item:       item,
 		Attributes: map[string]types.Item{
 			":b": {
-				S: "foo",
+				S: types.ToString("foo"),
 			},
 		},
 	}
@@ -142,7 +142,7 @@ func TestNativeUpdate(t *testing.T) {
 		t.Error("match with a defined expression should not fail")
 	}
 
-	if item["a"].S != "foo" {
+	if types.StringValue(item["a"].S) != "foo" {
 		t.Error("item should have been updated")
 	}
 }

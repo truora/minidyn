@@ -20,7 +20,7 @@ func TestString(t *testing.T) {
 func TestApply(t *testing.T) {
 	item := map[string]types.Item{
 		"a": {
-			S: "a",
+			S: types.ToString("a"),
 		},
 	}
 

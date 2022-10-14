@@ -43,7 +43,7 @@ type Item struct {
 	// Numbers are sent across the network to DynamoDB as strings, to maximize compatibility
 	// across languages and libraries. However, DynamoDB treats them as number type
 	// attributes for mathematical operations.
-	N string `type:"string"`
+	N *string `type:"string"`
 
 	// An attribute of type Number Set. For example:
 	//
@@ -52,7 +52,7 @@ type Item struct {
 	// Numbers are sent across the network to DynamoDB as strings, to maximize compatibility
 	// across languages and libraries. However, DynamoDB treats them as number type
 	// attributes for mathematical operations.
-	NS []string `type:"list"`
+	NS []*string `type:"list"`
 
 	// An attribute of type Null. For example:
 	//
@@ -62,12 +62,12 @@ type Item struct {
 	// An attribute of type String. For example:
 	//
 	// "S": "Hello"
-	S string `type:"string"`
+	S *string `type:"string"`
 
 	// An attribute of type String Set. For example:
 	//
 	// "SS": ["Giraffe", "Hippo" ,"Zebra"]
-	SS []string `type:"list"`
+	SS []*string `type:"list"`
 }
 
 type AttributeDefinition struct {
@@ -300,4 +300,12 @@ type TableDescription struct {
 	TableName              string                            `min:"3" type:"string"`
 	TableSizeBytes         int64                             `type:"long"`
 	TableStatus            string                            `type:"string" enum:"TableStatus"`
+}
+
+func ToString(str string) *string {
+	return &str
+}
+
+func StringValue(str *string) string {
+	return *str
 }

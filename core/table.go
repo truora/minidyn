@@ -389,7 +389,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]types.Item) (interpre
 	var lastMatchExpressionType interpreter.ExpressionType
 	matched := input.Scan
 
-	if input.KeyConditionExpression != "nil" {
+	if input.KeyConditionExpression != "" {
 		matched = t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
 			Expression:     input.KeyConditionExpression,
@@ -401,7 +401,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]types.Item) (interpre
 		lastMatchExpressionType = interpreter.ExpressionTypeKey
 	}
 
-	if input.FilterExpression != "nil" {
+	if input.FilterExpression != "" {
 		matched = matched && t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
 			Expression:     input.FilterExpression,
@@ -413,7 +413,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]types.Item) (interpre
 		lastMatchExpressionType = interpreter.ExpressionTypeFilter
 	}
 
-	if input.ConditionExpression != nil {
+	if input.ConditionExpression != nil && *input.ConditionExpression != "" {
 		matched = t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
 			Expression:     *input.ConditionExpression,

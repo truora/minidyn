@@ -124,7 +124,8 @@ func TestGetGoValue(t *testing.T) {
 
 	goVal, ok = getGoValue(all, "BOOL")
 	c.True(ok)
-	c.Equal(false, goVal)
+	b := false
+	c.Equal(&b, goVal)
 
 	goVal, ok = getGoValue(all, "BS")
 	c.True(ok)

@@ -9,6 +9,68 @@ import (
 
 var tableName = "pokemons"
 
+type pokemon struct {
+	ID         string   `json:"id"`
+	Type       string   `json:"type"`
+	SecondType string   `json:"second_type"`
+	Name       string   `json:"name"`
+	Level      int64    `json:"lvl"`
+	Moves      []string `json:"moves" dynamodbav:"moves,stringset,omitempty"`
+	Local      []string `json:"local"`
+}
+
+func createPokemon(creature pokemon) map[string]types.Item {
+	item := map[string]types.Item{
+		"id":   {S: creature.ID},
+		"type": {S: creature.Type},
+		"name": {S: creature.Name},
+	}
+
+	return item
+}
+
+func createPokemonTable() (*Table, error) {
+	table := NewTable(tableName)
+
+	table.AttributesDef = map[string]string{"id": "S", "name": "S"}
+	table.KeySchema = keySchema{"id", "name", false}
+	invertStr, allStr := "invert", "ALL"
+	globalSecondaryIndexes := []*types.GlobalSecondaryIndex{
+		{
+			ProvisionedThroughput: &types.ProvisionedThroughput{
+				ReadCapacityUnits:  1,
+				WriteCapacityUnits: 1,
+			},
+			IndexName: &invertStr,
+			KeySchema: []*types.KeySchemaElement{
+				{
+					AttributeName: "id",
+					KeyType:       "HASH",
+				},
+				{
+					AttributeName: "name",
+					KeyType:       "RANGE",
+				},
+			},
+			Projection: &types.Projection{
+				ProjectionType: &allStr,
+			},
+		},
+	}
+
+	globalSecondaryIndexes[0].ProvisionedThroughput = &types.ProvisionedThroughput{
+		ReadCapacityUnits:  1,
+		WriteCapacityUnits: 1,
+	}
+
+	err := table.AddGlobalIndexes(globalSecondaryIndexes)
+	if err != nil {
+		return nil, err
+	}
+
+	return table, nil
+}
+
 func TestCreateTableIndexes(t *testing.T) {
 	c := require.New(t)
 
@@ -129,114 +191,59 @@ func TestGetKeys(t *testing.T) {
 	c.Equal(val, "gk")
 }
 
-func TestDeleteItemError(t *testing.T) {
-	c := require.New(t)
-
-	newTable := NewTable(tableName)
-
-	item := map[string]types.Item{
-		"id":        {S: "123"},
-		"name":      {S: "Lili"},
-		"last_name": {S: "Cruz"},
-	}
-
-	newTable.AttributesDef = map[string]string{"id": "S", "name": "S"}
-	newTable.KeySchema = keySchema{"id", "name", false}
-
-	input := &types.PutItemInput{
-		Item:      item,
-		TableName: &newTable.Name,
-	}
-
-	_, err := newTable.Put(input)
-	c.NoError(err)
-
-	inp := &types.DeleteItemInput{
-		Key: map[string]types.Item{
-			"id":   {S: "123"},
-			"name": {S: "Lili"}},
-		TableName: &newTable.Name,
-	}
-
-	invertStr, allStr := "invert", "ALL"
-	globalSecondaryIndexes := []*types.GlobalSecondaryIndex{
-		{
-			ProvisionedThroughput: &types.ProvisionedThroughput{
-				ReadCapacityUnits:  1,
-				WriteCapacityUnits: 1,
-			},
-			IndexName: &invertStr,
-			KeySchema: []*types.KeySchemaElement{
-				{
-					AttributeName: "id",
-					KeyType:       "HASH",
-				},
-				{
-					AttributeName: "name",
-					KeyType:       "RANGE",
-				},
-			},
-			Projection: &types.Projection{
-				ProjectionType: &allStr,
-			},
-		},
-	}
-
-	globalSecondaryIndexes[0].ProvisionedThroughput = &types.ProvisionedThroughput{
-		ReadCapacityUnits:  1,
-		WriteCapacityUnits: 1,
-	}
-
-	err = newTable.AddGlobalIndexes(globalSecondaryIndexes)
-	c.NoError(err)
-
-	inp = &types.DeleteItemInput{
-		Key: map[string]types.Item{
-			"id":   {S: "123"},
-			"name": {S: "Lili"}},
-		TableName: &newTable.Name,
-	}
-
-	newTable.SortedKeys = []string{"123.Lili"}
-	newTable.Indexes = map[string]index{
-		"123.Lili": {keySchema: keySchema{"range", "HAS", false}, refs: map[string]string{"test": "other"}, Table: newTable},
-	}
-
-	_, err = newTable.Delete(inp)
-	c.EqualError(err, `ValidationException: number of conditions on the keys is invalid; field: "range"`)
-}
-
 func TestDeleteItem(t *testing.T) {
 	c := require.New(t)
 
-	newTable := NewTable(tableName)
+	item := createPokemon(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
 
-	item := map[string]types.Item{
-		"id":        {S: "123"},
-		"name":      {S: "Lili"},
-		"last_name": {S: "Cruz"},
-	}
-
-	newTable.AttributesDef = map[string]string{"id": "S", "name": "S"}
-	newTable.KeySchema = keySchema{"id", "name", false}
+	newTable, err := createPokemonTable()
+	c.NoError(err)
 
 	input := &types.PutItemInput{
 		Item:      item,
 		TableName: &newTable.Name,
 	}
 
-	_, err := newTable.Put(input)
+	_, err = newTable.Put(input)
 	c.NoError(err)
+
+	item = createPokemon(pokemon{
+		ID:   "002",
+		Type: "grass",
+		Name: "Ivysaur",
+	})
+	input.Item = item
+	_, err = newTable.Put(input)
+	c.NoError(err)
+
+	item = createPokemon(pokemon{
+		ID:   "003",
+		Type: "grass",
+		Name: "Venusaur",
+	})
+	input.Item = item
+	_, err = newTable.Put(input)
+	c.NoError(err)
+	c.Len(newTable.Data, 3)
 
 	inp := &types.DeleteItemInput{
 		Key: map[string]types.Item{
-			"id":   {S: "123"},
-			"name": {S: "Lili"}},
+			"id":   {S: "002"},
+			"name": {S: "Ivysaur"}},
 		TableName: &newTable.Name,
 	}
 
 	_, err = newTable.Delete(inp)
 	c.NoError(err)
+	c.Len(newTable.Data, 2)
+
+	_, err = newTable.Delete(inp)
+	c.NoError(err)
+	c.Len(newTable.Data, 2)
 
 	inp = &types.DeleteItemInput{
 		Key: map[string]types.Item{
@@ -246,4 +253,40 @@ func TestDeleteItem(t *testing.T) {
 
 	_, err = newTable.Delete(inp)
 	c.EqualError(err, `ValidationException: number of conditions on the keys is invalid; field: "name"`)
+}
+
+func TestPutItem(t *testing.T) {
+	c := require.New(t)
+
+	newTable := NewTable(tableName)
+
+	item := map[string]types.Item{
+		"id":        {S: "123"},
+		"name":      {S: "Lili"},
+		"last_name": {S: "Cruz"},
+	}
+
+	input := &types.PutItemInput{
+		Item:      item,
+		TableName: &newTable.Name,
+	}
+
+	_, err := newTable.Put(input)
+	c.EqualError(err, `ValidationException: number of conditions on the keys is invalid; field: ""`)
+
+	newTable.AttributesDef = map[string]string{"id": "S", "name": "S"}
+	newTable.KeySchema = keySchema{"id", "name", false}
+
+	condExp := "attribute_not_exists(#id)"
+	input.ConditionExpression = &condExp
+	input.ExpressionAttributeNames = map[string]string{
+		"#id": "id",
+	}
+
+	input.ExpressionAttributeValues = map[string]types.Item{
+		":id": {S: "456"},
+	}
+
+	_, err = newTable.Put(input)
+	c.NoError(err)
 }

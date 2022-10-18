@@ -13,7 +13,7 @@ var (
 )
 
 func TestNativeMatch(t *testing.T) {
-	item := map[string]types.Item{
+	item := map[string]*types.Item{
 		"a": {
 			S: types.ToString("a"),
 		},
@@ -33,7 +33,7 @@ func TestNativeMatch(t *testing.T) {
 		Expression:     ":a = a",
 		Item:           item,
 		ExpressionType: ExpressionTypeConditional,
-		Attributes: map[string]types.Item{
+		Attributes: map[string]*types.Item{
 			":a": {
 				S: types.ToString("a"),
 			},
@@ -47,7 +47,7 @@ func TestNativeMatch(t *testing.T) {
 		t.Error("match without a defined expression should fail")
 	}
 
-	native.AddMatcher("test", ExpressionTypeConditional, ":a = a", func(m1, m2 map[string]types.Item) bool {
+	native.AddMatcher("test", ExpressionTypeConditional, ":a = a", func(m1, m2 map[string]*types.Item) bool {
 		return true
 	})
 
@@ -70,7 +70,7 @@ func TestAddMatcher(t *testing.T) {
 	}
 
 	for _, etype := range etypes {
-		native.AddMatcher("test", etype, ":a = a", func(m1, m2 map[string]types.Item) bool {
+		native.AddMatcher("test", etype, ":a = a", func(m1, m2 map[string]*types.Item) bool {
 			return true
 		})
 	}
@@ -100,7 +100,7 @@ func TestAddMatcher(t *testing.T) {
 }
 
 func TestNativeUpdate(t *testing.T) {
-	item := map[string]types.Item{
+	item := map[string]*types.Item{
 		"a": {
 			S: types.ToString("a"),
 		},
@@ -119,7 +119,7 @@ func TestNativeUpdate(t *testing.T) {
 		TableName:  "test",
 		Expression: "set a = :b",
 		Item:       item,
-		Attributes: map[string]types.Item{
+		Attributes: map[string]*types.Item{
 			":b": {
 				S: types.ToString("foo"),
 			},
@@ -133,7 +133,7 @@ func TestNativeUpdate(t *testing.T) {
 		t.Error("update without a defined expression should fail")
 	}
 
-	native.AddUpdater("test", "set a = :b", func(m1, m2 map[string]types.Item) {
+	native.AddUpdater("test", "set a = :b", func(m1, m2 map[string]*types.Item) {
 		m1["a"] = m2[":b"]
 	})
 

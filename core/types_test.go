@@ -10,40 +10,40 @@ import (
 func TestItemValue(t *testing.T) {
 	c := require.New(t)
 
-	v, err := getItemValue(map[string]types.Item{"S": {S: types.ToString("test")}}, "S", "S")
+	v, err := getItemValue(map[string]*types.Item{"S": {S: types.ToString("test")}}, "S", "S")
 	c.NoError(err)
 	c.Equal(v, "test")
 
 	booleanVal := true
-	v, err = getItemValue(map[string]types.Item{"BOOL": {BOOL: &booleanVal}}, "BOOL", "BOOL")
+	v, err = getItemValue(map[string]*types.Item{"BOOL": {BOOL: &booleanVal}}, "BOOL", "BOOL")
 	c.NoError(err)
 	c.Equal(v, &booleanVal)
 
-	v, err = getItemValue(map[string]types.Item{"SS": {SS: []*string{types.ToString("t1"), types.ToString("t2")}}}, "SS", "SS")
+	v, err = getItemValue(map[string]*types.Item{"SS": {SS: []*string{types.ToString("t1"), types.ToString("t2")}}}, "SS", "SS")
 	c.NoError(err)
 	c.Equal(v, []*string{types.ToString("t1"), types.ToString("t2")})
 
-	v, err = getItemValue(map[string]types.Item{"N": {N: types.ToString("123.45")}}, "N", "N")
+	v, err = getItemValue(map[string]*types.Item{"N": {N: types.ToString("123.45")}}, "N", "N")
 	c.NoError(err)
 	c.Equal(v, "123.45")
 
-	v, err = getItemValue(map[string]types.Item{"B": {B: []byte("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk")}}, "B", "B")
+	v, err = getItemValue(map[string]*types.Item{"B": {B: []byte("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk")}}, "B", "B")
 	c.NoError(err)
 	c.Equal(v, []byte("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk"))
 
-	v, err = getItemValue(map[string]types.Item{"L": {L: []types.Item{{S: types.ToString("Cookie")}}}}, "L", "L")
+	v, err = getItemValue(map[string]*types.Item{"L": {L: []types.Item{{S: types.ToString("Cookie")}}}}, "L", "L")
 	c.NoError(err)
 	c.Equal(v, []types.Item{{S: types.ToString("Cookie")}})
 
-	v, err = getItemValue(map[string]types.Item{"M": {M: map[string]types.Item{"N": {N: types.ToString("123.45")}}}}, "M", "M")
+	v, err = getItemValue(map[string]*types.Item{"M": {M: map[string]types.Item{"N": {N: types.ToString("123.45")}}}}, "M", "M")
 	c.NoError(err)
 	c.Equal(v, map[string]types.Item{"N": {N: types.ToString("123.45")}})
 
-	v, err = getItemValue(map[string]types.Item{"BS": {BS: [][]byte{123: []byte("x"), []byte("y"), []byte("z")}}}, "BS", "BS")
+	v, err = getItemValue(map[string]*types.Item{"BS": {BS: [][]byte{123: []byte("x"), []byte("y"), []byte("z")}}}, "BS", "BS")
 	c.NoError(err)
 	c.Equal(v, [][]byte{123: []byte("x"), []byte("y"), []byte("z")})
 
-	v, err = getItemValue(map[string]types.Item{"NS": {NS: []*string{types.ToString("t1"), types.ToString("t2")}}}, "NS", "NS")
+	v, err = getItemValue(map[string]*types.Item{"NS": {NS: []*string{types.ToString("t1"), types.ToString("t2")}}}, "NS", "NS")
 	c.NoError(err)
 	c.Equal(v, []*string{types.ToString("t1"), types.ToString("t2")})
 }
@@ -51,18 +51,18 @@ func TestItemValue(t *testing.T) {
 func TestFailedItemValue(t *testing.T) {
 	c := require.New(t)
 
-	_, err := getItemValue(map[string]types.Item{"D": {S: types.ToString("test")}}, "S", "S")
+	_, err := getItemValue(map[string]*types.Item{"D": {S: types.ToString("test")}}, "S", "S")
 	c.Contains(err.Error(), errMissingField.Error())
 
-	_, err = getItemValue(map[string]types.Item{"S": {S: types.ToString("test")}}, "S", "n")
+	_, err = getItemValue(map[string]*types.Item{"S": {S: types.ToString("test")}}, "S", "n")
 	c.Contains(err.Error(), ErrInvalidAtrributeValue.Error())
 }
 
 func TestCopyItem(t *testing.T) {
 	c := require.New(t)
 
-	cItem := copyItem(map[string]types.Item{"str": {N: types.ToString("test")}})
-	c.Equal(cItem, map[string]types.Item{"str": {N: types.ToString("test")}})
+	cItem := copyItem(map[string]*types.Item{"str": {N: types.ToString("test")}})
+	c.Equal(cItem, map[string]*types.Item{"str": {N: types.ToString("test")}})
 }
 
 func TestMapToDynamoDBType(t *testing.T) {
@@ -100,7 +100,7 @@ func TestGetGoValue(t *testing.T) {
 	c := require.New(t)
 	boolFalse := false
 
-	all := types.Item{
+	all := &types.Item{
 		B:    []byte{1},
 		BOOL: &boolFalse,
 		BS:   [][]byte{{123}},

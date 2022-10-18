@@ -20,8 +20,8 @@ type pokemon struct {
 	Local      []string `json:"local"`
 }
 
-func createPokemon(creature pokemon) map[string]types.Item {
-	item := map[string]types.Item{
+func createPokemon(creature pokemon) map[string]*types.Item {
+	item := map[string]*types.Item{
 		"id":   {S: types.ToString(creature.ID)},
 		"type": {S: types.ToString(creature.Type)},
 		"name": {S: types.ToString(creature.Name)},
@@ -126,14 +126,14 @@ func TestApplyIndexChange(t *testing.T) {
 	err := newTable.ApplyIndexChange(globalSecondaryIndex)
 	c.Contains(err.Error(), "No provisioned throughput specified for the global secondary index")
 
-	newTable.BillingMode = "PAY_PER_REQUEST"
+	newTable.BillingMode = types.ToString("PAY_PER_REQUEST")
 	err = newTable.ApplyIndexChange(globalSecondaryIndex)
 	c.Contains(err.Error(), "No Hash Key specified in schema.")
 
 	newTable, err = createPokemonTable()
 	c.NoError(err)
 
-	newTable.BillingMode = "PAY_PER_REQUEST"
+	newTable.BillingMode = types.ToString("PAY_PER_REQUEST")
 	createTableInput := &types.CreateTableInput{
 		KeySchema: []*types.KeySchemaElement{
 			{
@@ -215,7 +215,7 @@ func TestCreatePrimaryIndex(t *testing.T) {
 	err = newTable.CreatePrimaryIndex(createTableInput)
 	c.Contains(err.Error(), "No provisioned throughput specified for the table")
 
-	newTable.BillingMode = "PAY_PER_REQUEST"
+	newTable.BillingMode = types.ToString("PAY_PER_REQUEST")
 	err = newTable.CreatePrimaryIndex(createTableInput)
 	c.NoError(err)
 }
@@ -309,18 +309,18 @@ func TestGetKey(t *testing.T) {
 	newTable.AttributesDef = map[string]string{"HASH": "S", "range": "S"}
 	newTable.KeySchema = keySchema{"range", "HASH", false}
 
-	k, err := newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "range": "S"}, map[string]types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	k, err := newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "range": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
 	c.NoError(err)
 	c.Equal("range.HASH", k)
 
-	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
 	c.EqualError(err, `invalid attribute value type; field "HASH"`)
 
-	_, err = newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "": "S"}, map[string]types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	_, err = newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
 	c.EqualError(err, `invalid attribute value type; field "range"`)
 
 	newTable.KeySchema = keySchema{"", "", true}
-	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
 	c.NoError(err)
 }
 
@@ -380,7 +380,7 @@ func TestDeleteItem(t *testing.T) {
 	c.Len(newTable.Data, 3)
 
 	inp := &types.DeleteItemInput{
-		Key: map[string]types.Item{
+		Key: map[string]*types.Item{
 			"id":   {S: types.ToString("002")},
 			"name": {S: types.ToString("Ivysaur")}},
 		TableName: &newTable.Name,
@@ -395,7 +395,7 @@ func TestDeleteItem(t *testing.T) {
 	c.Len(newTable.Data, 2)
 
 	inp = &types.DeleteItemInput{
-		Key: map[string]types.Item{
+		Key: map[string]*types.Item{
 			"id": {S: types.ToString("123")}},
 		TableName: &newTable.Name,
 	}
@@ -444,7 +444,7 @@ func TestDeleteIndex(t *testing.T) {
 	c.Len(newTable.Data, 3)
 
 	inp := &types.DeleteItemInput{
-		Key: map[string]types.Item{
+		Key: map[string]*types.Item{
 			"id":   {S: types.ToString("002")},
 			"name": {S: types.ToString("Ivysaur")}},
 		TableName: &newTable.Name,
@@ -467,8 +467,8 @@ func TestSearchData(t *testing.T) {
 	queryInput := QueryInput{}
 
 	result, lastItem := newTable.SearchData(queryInput)
-	c.Equal([]map[string]types.Item{}, result)
-	c.Equal(map[string]types.Item{}, lastItem)
+	c.Equal([]map[string]*types.Item{}, result)
+	c.Equal(map[string]*types.Item{}, lastItem)
 
 	item := createPokemon(pokemon{
 		ID:   "001",
@@ -485,14 +485,14 @@ func TestSearchData(t *testing.T) {
 	c.NoError(err)
 
 	queryInput = QueryInput{
-		ExpressionAttributeValues: map[string]types.Item{
+		ExpressionAttributeValues: map[string]*types.Item{
 			":id": {S: types.ToString("001")},
 		},
 	}
 
 	result, lastItem = newTable.SearchData(queryInput)
-	c.Equal([]map[string]types.Item{}, result)
-	c.Equal(map[string]types.Item{}, lastItem)
+	c.Equal([]map[string]*types.Item{}, result)
+	c.Equal(map[string]*types.Item{}, lastItem)
 
 	queryInput.Aliases = input.ExpressionAttributeNames
 	queryInput.Limit = 1
@@ -514,13 +514,13 @@ func TestSearchData(t *testing.T) {
 	queryInput.started = true
 
 	result, lastItem = newTable.SearchData(queryInput)
-	c.Equal([]map[string]types.Item{{}}, result)
-	c.Equal(map[string]types.Item{}, lastItem)
+	c.Equal([]map[string]*types.Item{{}}, result)
+	c.Equal(map[string]*types.Item{}, lastItem)
 
 	queryInput.ExclusiveStartKey = item
 	result, lastItem = newTable.SearchData(queryInput)
-	c.Equal([]map[string]types.Item{}, result)
-	c.Equal(map[string]types.Item{}, lastItem)
+	c.Equal([]map[string]*types.Item{}, result)
+	c.Equal(map[string]*types.Item{}, lastItem)
 
 	newIndex.Clear()
 }
@@ -553,7 +553,7 @@ func TestUpdate(t *testing.T) {
 		ExpressionAttributeNames: map[string]string{
 			"#id": "id",
 		},
-		ExpressionAttributeValues: map[string]types.Item{
+		ExpressionAttributeValues: map[string]*types.Item{
 			":id": {S: types.ToString("002")},
 		},
 		Key: item,
@@ -582,7 +582,7 @@ func TestPutItem(t *testing.T) {
 
 	newTable := NewTable(tableName)
 
-	item := map[string]types.Item{
+	item := map[string]*types.Item{
 		"id":        {S: types.ToString("123")},
 		"name":      {S: types.ToString("Lili")},
 		"last_name": {S: types.ToString("Cruz")},
@@ -605,7 +605,7 @@ func TestPutItem(t *testing.T) {
 		"#id": "id",
 	}
 
-	input.ExpressionAttributeValues = map[string]types.Item{
+	input.ExpressionAttributeValues = map[string]*types.Item{
 		":id": {S: types.ToString("456")},
 	}
 
@@ -625,7 +625,7 @@ func TestGetItem(t *testing.T) {
 	newTable, err := createPokemonTable()
 	c.NoError(err)
 
-	newTable.Data = map[string]map[string]types.Item{
+	newTable.Data = map[string]map[string]*types.Item{
 		"item": item,
 	}
 
@@ -678,7 +678,7 @@ func TestInterpreterMatch(t *testing.T) {
 		TableName:  tableName,
 		Expression: "#id = :id",
 		Item:       item,
-		Attributes: map[string]types.Item{
+		Attributes: map[string]*types.Item{
 			":id": {
 				S: types.ToString("001"),
 			},
@@ -712,7 +712,7 @@ func TestMatchKey(t *testing.T) {
 	})
 
 	queryInput := QueryInput{
-		ExpressionAttributeValues: map[string]types.Item{
+		ExpressionAttributeValues: map[string]*types.Item{
 			":id": {S: types.ToString("001")},
 		},
 		KeyConditionExpression: "#id = :id",

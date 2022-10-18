@@ -113,7 +113,7 @@ func TestEval(t *testing.T) {
 		"#alias_field_name": "field_name",
 	}
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":a":        {BOOL: &boolTrue},
 		":b":        {BOOL: &boolFalse},
 		":s":        {S: types.ToString("HELLO WORLD!")},
@@ -225,7 +225,7 @@ func TestEvalFunctions(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":s":       {S: types.ToString("HELLO WORLD!")},
 		":sSize":   {N: types.ToString("12")},
 		":type":    {S: types.ToString("S")},
@@ -267,7 +267,7 @@ func TestEvalFunctions(t *testing.T) {
 func startEvalUpdateEnv(t *testing.T) *Environment {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":x":    {BOOL: &boolTrue},
 		":val":  {S: types.ToString("text")},
 		":one":  {N: types.ToString("1")},
@@ -636,7 +636,7 @@ func TestErrorHandling(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":a":   {BOOL: &boolTrue},
 		":b":   {BOOL: &boolFalse},
 		":x":   {N: types.ToString("24")},
@@ -692,7 +692,7 @@ func TestEvalUpdateReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":status": {S: types.ToString("healthy")},
 		":keys":   {SS: []*string{types.ToString("Key"), types.ToString("Another Key")}},
 	})
@@ -736,7 +736,7 @@ func TestEvalReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":y":   {N: types.ToString("25")},
 		":str": {S: types.ToString("TEXT")},
 		":obj": {
@@ -812,7 +812,7 @@ func TestIsString(t *testing.T) {
 func TestEvalErrors(t *testing.T) {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":x":   {BOOL: &boolTrue},
 		":val": {S: types.ToString("text")},
 		":one": {N: types.ToString("1")},
@@ -949,7 +949,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":x":   {BOOL: &boolTrue},
 		":val": {S: types.ToString("text")},
 		":one": {N: types.ToString("1")},
@@ -989,7 +989,7 @@ func BenchmarkEval(b *testing.B) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":a": {BOOL: &boolTrue},
 		":b": {BOOL: &boolFalse},
 	})

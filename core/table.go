@@ -249,7 +249,7 @@ func (t *Table) fetchQueryData(input QueryInput) (*index, []string) {
 		return i, i.sortedKeys
 	}
 
-	return &index{}, t.SortedKeys
+	return nil, t.SortedKeys
 }
 
 func prepareSearch(input *QueryInput, index *index, k, startKey string) (string, bool) {

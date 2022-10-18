@@ -30,8 +30,8 @@ type MatchInput struct {
 	TableName      string
 	Expression     string
 	ExpressionType ExpressionType
-	Item           map[string]types.Item
-	Attributes     map[string]types.Item
+	Item           map[string]*types.Item
+	Attributes     map[string]*types.Item
 	Aliases        map[string]string
 }
 
@@ -39,8 +39,8 @@ type MatchInput struct {
 type UpdateInput struct {
 	TableName  string
 	Expression string
-	Item       map[string]types.Item
-	Attributes map[string]types.Item
+	Item       map[string]*types.Item
+	Attributes map[string]*types.Item
 	Aliases    map[string]string
 }
 

@@ -113,7 +113,7 @@ func TestEval(t *testing.T) {
 		"#alias_field_name": "field_name",
 	}
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":a":        {BOOL: &boolTrue},
 		":b":        {BOOL: &boolFalse},
 		":s":        {S: types.ToString("HELLO WORLD!")},
@@ -129,24 +129,24 @@ func TestEval(t *testing.T) {
 		":nil":      {NULL: &boolTrue},
 		":otherNil": {NULL: &boolTrue},
 		":hashA": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				":a": {BOOL: &boolTrue},
 			},
 		},
 		":hashB": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				":b": {BOOL: &boolTrue},
 			},
 		},
 		":listA": {
-			L: []types.Item{
+			L: []*types.Item{
 				{S: types.ToString("a")},
 				{S: types.ToString("b")},
 				{S: types.ToString("c")},
 			},
 		},
 		":listB": {
-			L: []types.Item{
+			L: []*types.Item{
 				{S: types.ToString("x")},
 				{S: types.ToString("y")},
 				{S: types.ToString("z")},
@@ -171,21 +171,21 @@ func TestEval(t *testing.T) {
 			NS: []*string{types.ToString("10"), types.ToString("10"), types.ToString("11")},
 		},
 		":matrix": {
-			L: []types.Item{
-				{L: []types.Item{
+			L: []*types.Item{
+				{L: []*types.Item{
 					{S: types.ToString("a")},
 					{S: types.ToString("b")},
 				}},
-				{L: []types.Item{
+				{L: []*types.Item{
 					{S: types.ToString("c")},
 				}},
 			},
 		},
 		":listIndex": {N: types.ToString("0")},
 		":nestedMap": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				"lvl1": {
-					M: map[string]types.Item{
+					M: map[string]*types.Item{
 						"lvl2": {BOOL: &boolTrue},
 					},
 				},
@@ -225,7 +225,7 @@ func TestEvalFunctions(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":s":       {S: types.ToString("HELLO WORLD!")},
 		":sSize":   {N: types.ToString("12")},
 		":type":    {S: types.ToString("S")},
@@ -236,7 +236,7 @@ func TestEvalFunctions(t *testing.T) {
 		":element": {S: types.ToString("a")},
 		":num":     {N: types.ToString("1")},
 		":list": {
-			L: []types.Item{
+			L: []*types.Item{
 				{S: types.ToString("a")},
 				{S: types.ToString("b")},
 				{S: types.ToString("c")},
@@ -267,27 +267,27 @@ func TestEvalFunctions(t *testing.T) {
 func startEvalUpdateEnv(t *testing.T) *Environment {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":x":    {BOOL: &boolTrue},
 		":val":  {S: types.ToString("text")},
 		":one":  {N: types.ToString("1")},
 		":bin":  {B: []byte("c")},
-		":list": {L: []types.Item{{N: types.ToString("0")}}},
+		":list": {L: []*types.Item{{N: types.ToString("0")}}},
 		":hash": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				"a": {BOOL: &boolTrue},
 			},
 		},
 		":mapField": {S: types.ToString("key")},
 		":matrix": {
-			L: []types.Item{
-				{L: []types.Item{{N: types.ToString("0")}}},
+			L: []*types.Item{
+				{L: []*types.Item{{N: types.ToString("0")}}},
 			},
 		},
 		":nestedMap": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				"lvl1": {
-					M: map[string]types.Item{
+					M: map[string]*types.Item{
 						"lvl2": {N: types.ToString("0")},
 					},
 				},
@@ -312,7 +312,7 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 		":two": {
 			N: types.ToString("2"),
 		},
-		":tools": {L: []types.Item{
+		":tools": {L: []*types.Item{
 			{S: types.ToString("Chisel")},
 			{S: types.ToString("Hammer")},
 			{S: types.ToString("Nails")},
@@ -636,7 +636,7 @@ func TestErrorHandling(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":a":   {BOOL: &boolTrue},
 		":b":   {BOOL: &boolFalse},
 		":x":   {N: types.ToString("24")},
@@ -644,7 +644,7 @@ func TestErrorHandling(t *testing.T) {
 		":z":   {N: types.ToString("26")},
 		":str": {S: types.ToString("TEXT")},
 		":nil": {NULL: &boolTrue},
-		":list": {L: []types.Item{
+		":list": {L: []*types.Item{
 			{S: types.ToString("a")},
 		}},
 	})
@@ -692,7 +692,7 @@ func TestEvalUpdateReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":status": {S: types.ToString("healthy")},
 		":keys":   {SS: []*string{types.ToString("Key"), types.ToString("Another Key")}},
 	})
@@ -736,11 +736,11 @@ func TestEvalReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":y":   {N: types.ToString("25")},
 		":str": {S: types.ToString("TEXT")},
 		":obj": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				"a": {BOOL: &boolTrue},
 			},
 		},
@@ -812,19 +812,19 @@ func TestIsString(t *testing.T) {
 func TestEvalErrors(t *testing.T) {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":x":   {BOOL: &boolTrue},
 		":val": {S: types.ToString("text")},
 		":one": {N: types.ToString("1")},
 		":h": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				"a": {BOOL: &boolTrue},
 			},
 		},
 		":voidVal": {
 			NULL: &boolTrue,
 		},
-		":list": {L: []types.Item{
+		":list": {L: []*types.Item{
 			{S: types.ToString("a")},
 		}},
 	})
@@ -949,19 +949,19 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":x":   {BOOL: &boolTrue},
 		":val": {S: types.ToString("text")},
 		":one": {N: types.ToString("1")},
 		":h": {
-			M: map[string]types.Item{
+			M: map[string]*types.Item{
 				"a": {BOOL: &boolTrue},
 			},
 		},
 		":voidVal": {
 			NULL: &boolTrue,
 		},
-		":list": {L: []types.Item{
+		":list": {L: []*types.Item{
 			{S: types.ToString("a")},
 		}},
 	})
@@ -989,7 +989,7 @@ func BenchmarkEval(b *testing.B) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]types.Item{
+	err := env.AddAttributes(map[string]*types.Item{
 		":a": {BOOL: &boolTrue},
 		":b": {BOOL: &boolFalse},
 	})

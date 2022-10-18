@@ -18,7 +18,7 @@ func TestString(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	item := map[string]types.Item{
+	item := map[string]*types.Item{
 		"a": {
 			S: types.ToString("a"),
 		},

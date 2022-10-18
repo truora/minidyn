@@ -9,10 +9,10 @@ import (
 )
 
 // UpdaterFunc function used emule to UpdateItem expressions
-type UpdaterFunc func(map[string]types.Item, map[string]types.Item)
+type UpdaterFunc func(map[string]*types.Item, map[string]*types.Item)
 
 // MatcherFunc function used to filter data
-type MatcherFunc func(map[string]types.Item, map[string]types.Item) bool
+type MatcherFunc func(map[string]*types.Item, map[string]*types.Item) bool
 
 // Native simple interpreter using pure go functions
 type Native struct {

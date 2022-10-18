@@ -20,7 +20,7 @@ func NewEnvironment() *Environment {
 }
 
 // AddAttributes adds the types attributes to the environment
-func (e *Environment) AddAttributes(attributes map[string]types.Item) error {
+func (e *Environment) AddAttributes(attributes map[string]*types.Item) error {
 	for name, value := range attributes {
 		obj, err := MapToObject(value)
 		if err != nil {
@@ -153,7 +153,7 @@ func (e *Environment) Compact() {
 }
 
 // Apply assigns the environment field to the item
-func (e *Environment) Apply(item map[string]types.Item, aliases map[string]string, exclude map[string]bool) {
+func (e *Environment) Apply(item map[string]*types.Item, aliases map[string]string, exclude map[string]bool) {
 	for k, v := range e.store {
 		if _, ok := exclude[k]; ok {
 			continue
@@ -163,7 +163,8 @@ func (e *Environment) Apply(item map[string]types.Item, aliases map[string]strin
 			k = alias
 		}
 
-		item[k] = v.ToDynamoDB()
+		vItem := v.ToDynamoDB()
+		item[k] = &vItem
 	}
 }
 

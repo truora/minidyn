@@ -458,7 +458,7 @@ func TestUpdateTable(t *testing.T) {
 			},
 		},
 		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{
-			dynamodbtypes.GlobalSecondaryIndexUpdate{
+			{
 				Create: &dynamodbtypes.CreateGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
 					KeySchema: []dynamodbtypes.KeySchemaElement{
@@ -486,7 +486,7 @@ func TestUpdateTable(t *testing.T) {
 
 	input = &dynamodb.UpdateTableInput{
 		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{
-			dynamodbtypes.GlobalSecondaryIndexUpdate{
+			{
 				Update: &dynamodbtypes.UpdateGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
 					ProvisionedThroughput: &dynamodbtypes.ProvisionedThroughput{
@@ -503,7 +503,7 @@ func TestUpdateTable(t *testing.T) {
 
 	input = &dynamodb.UpdateTableInput{
 		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{
-			dynamodbtypes.GlobalSecondaryIndexUpdate{
+			{
 				Delete: &dynamodbtypes.DeleteGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
 				},
@@ -1033,7 +1033,7 @@ func TestUpdateExpressions(t *testing.T) {
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				a.Empty(item["local"].(*dynamodbtypes.AttributeValueMemberL).Value)
+				a.True(item["local"].(*dynamodbtypes.AttributeValueMemberNULL).Value)
 			},
 		},
 		"delete": {
@@ -1518,11 +1518,9 @@ func TestDeleteItem(t *testing.T) {
 		output, forcedError := client.DeleteItem(context.Background(), input)
 		c.Nil(output)
 
-		var oe smithy.APIError
 		var errInternalServerError *dynamodbtypes.InternalServerError
 
-		c.True(errors.As(err, &errInternalServerError))
-		c.True(errors.As(forcedError, &oe))
+		c.True(errors.As(forcedError, &errInternalServerError))
 	}
 }
 
@@ -1675,7 +1673,7 @@ func TestBatchWriteItem(t *testing.T) {
 	c.NoError(err)
 
 	requests := []dynamodbtypes.WriteRequest{
-		dynamodbtypes.WriteRequest{
+		{
 			PutRequest: &dynamodbtypes.PutRequest{
 				Item: item,
 			},
@@ -1711,8 +1709,8 @@ func TestBatchWriteItem(t *testing.T) {
 
 	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]dynamodbtypes.WriteRequest{
-			tableName: []dynamodbtypes.WriteRequest{
-				dynamodbtypes.WriteRequest{
+			tableName: {
+				{
 					DeleteRequest: &dynamodbtypes.DeleteRequest{Key: map[string]dynamodbtypes.AttributeValue{
 						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
 					}},
@@ -1731,8 +1729,8 @@ func TestBatchWriteItem(t *testing.T) {
 
 	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]dynamodbtypes.WriteRequest{
-			tableName: []dynamodbtypes.WriteRequest{
-				dynamodbtypes.WriteRequest{
+			tableName: {
+				{
 					DeleteRequest: &dynamodbtypes.DeleteRequest{Key: map[string]dynamodbtypes.AttributeValue{
 						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
 						"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
@@ -1747,9 +1745,7 @@ func TestBatchWriteItem(t *testing.T) {
 
 	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]dynamodbtypes.WriteRequest{
-			tableName: []dynamodbtypes.WriteRequest{
-				dynamodbtypes.WriteRequest{},
-			},
+			tableName: {{}},
 		},
 	})
 	c.Contains(err.Error(), "ValidationException: Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes")
@@ -1788,7 +1784,7 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	c.NoError(err)
 
 	requests := []dynamodbtypes.WriteRequest{
-		dynamodbtypes.WriteRequest{
+		{
 			PutRequest: &dynamodbtypes.PutRequest{
 				Item: item,
 			},

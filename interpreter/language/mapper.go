@@ -8,7 +8,7 @@ import (
 )
 
 // MapToObject convert an types attribute value to an object representation
-func MapToObject(val types.Item) (Object, error) {
+func MapToObject(val *types.Item) (Object, error) {
 	switch {
 	case val.BOOL != nil:
 		b := *val.BOOL
@@ -30,7 +30,7 @@ func MapToObject(val types.Item) (Object, error) {
 	return mapComplexAttributeToObject(val)
 }
 
-func mapComplexAttributeToObject(val types.Item) (Object, error) {
+func mapComplexAttributeToObject(val *types.Item) (Object, error) {
 	switch {
 	case len(val.B) != 0:
 		b := make([]byte, len(val.B))
@@ -54,11 +54,11 @@ func mapComplexAttributeToObject(val types.Item) (Object, error) {
 	return nil, fmt.Errorf("value type is not supported yet %#v", val)
 }
 
-func mapAttributeToMap(val types.Item) (Object, error) {
+func mapAttributeToMap(val *types.Item) (Object, error) {
 	m := make(map[string]Object)
 
 	for k, attr := range val.M {
-		obj, err := MapToObject(attr)
+		obj, err := MapToObject(&attr)
 		if err != nil {
 			return nil, err
 		}
@@ -71,11 +71,11 @@ func mapAttributeToMap(val types.Item) (Object, error) {
 	}, nil
 }
 
-func mapAttributeToList(val types.Item) (Object, error) {
+func mapAttributeToList(val *types.Item) (Object, error) {
 	l := make([]Object, len(val.L))
 
 	for i, attr := range val.L {
-		obj, err := MapToObject(attr)
+		obj, err := MapToObject(&attr)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +88,7 @@ func mapAttributeToList(val types.Item) (Object, error) {
 	}, nil
 }
 
-func mapAttributeToStringSet(val types.Item) (Object, error) {
+func mapAttributeToStringSet(val *types.Item) (Object, error) {
 	ss := map[string]bool{}
 
 	for _, val := range val.SS {
@@ -100,7 +100,7 @@ func mapAttributeToStringSet(val types.Item) (Object, error) {
 	}, nil
 }
 
-func mapAttributeToBinarySet(val types.Item) (Object, error) {
+func mapAttributeToBinarySet(val *types.Item) (Object, error) {
 	bs := BinarySet{
 		Value: make([][]byte, 0, len(val.BS)),
 	}
@@ -116,7 +116,7 @@ func mapAttributeToBinarySet(val types.Item) (Object, error) {
 	return &bs, nil
 }
 
-func mapAttributeToNumberSet(val types.Item) (Object, error) {
+func mapAttributeToNumberSet(val *types.Item) (Object, error) {
 	ns := map[float64]bool{}
 
 	for _, val := range val.NS {

@@ -168,7 +168,7 @@ func TestApplyIndexChange(t *testing.T) {
 	err = newTable.ApplyIndexChange(globalSecondaryIndex)
 	c.NoError(err)
 
-	newTable.Indexes = map[string]index{}
+	newTable.Indexes = map[string]*index{}
 	err = newTable.ApplyIndexChange(globalSecondaryIndex)
 	c.Contains(err.Error(), "Requested resource not found")
 
@@ -506,8 +506,8 @@ func TestSearchData(t *testing.T) {
 		Table:      newTable,
 	}
 
-	newTable.Indexes = map[string]index{
-		"indice": newIndex,
+	newTable.Indexes = map[string]*index{
+		"indice": &newIndex,
 	}
 
 	queryInput.Index = "indice"
@@ -656,7 +656,7 @@ func TestGetLastKey(t *testing.T) {
 	c.Equal(item["id"], result["id"])
 }
 
-func TestInterpreterUpdate(t *testing.T) {
+func TestInterpreterMatch(t *testing.T) {
 	c := require.New(t)
 
 	newTable, err := createPokemonTable()
@@ -692,7 +692,11 @@ func TestInterpreterUpdate(t *testing.T) {
 		TableName: tableName,
 	}
 
-	c.Panics(func(){newTable.interpreterMatch(matchInput)})
+	c.Panics(func() { newTable.interpreterMatch(matchInput) })
+
+	newTable.UseNativeInterpreter = false
+	matchInput.Expression = "bad_expression(id)"
+	c.Panics(func() { newTable.interpreterMatch(matchInput) })
 }
 
 func TestMatchKey(t *testing.T) {
@@ -736,4 +740,73 @@ func TestSetAttributeDefinition(t *testing.T) {
 
 	newTable.SetAttributeDefinition(newAttributesDef)
 	c.Equal(types.StringValue(newAttributesDef[0].AttributeType), newTable.AttributesDef["name"])
+}
+
+func TestFetchQueryData(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+	input := &types.PutItemInput{
+		Item:      item,
+		TableName: &newTable.Name,
+	}
+	_, err = newTable.Put(input)
+	c.NoError(err)
+
+	item = createPokemon(pokemon{
+		ID:   "002",
+		Type: "grass",
+		Name: "Ivysaur",
+	})
+	input.Item = item
+	_, err = newTable.Put(input)
+	c.NoError(err)
+
+	item = createPokemon(pokemon{
+		ID:   "003",
+		Type: "grass",
+		Name: "Venusaur",
+	})
+	input.Item = item
+	_, err = newTable.Put(input)
+	c.NoError(err)
+	item = createPokemon(pokemon{
+		ID:   "005",
+		Type: "grass",
+		Name: "Oddish",
+	})
+	input.Item = item
+	_, err = newTable.Put(input)
+	c.NoError(err)
+	item = createPokemon(pokemon{
+		ID:   "004",
+		Type: "grass",
+		Name: "Gloom",
+	})
+	input.Item = item
+	_, err = newTable.Put(input)
+	c.NoError(err)
+	item = createPokemon(pokemon{
+		ID:   "006",
+		Type: "grass",
+		Name: "Bellsprout",
+	})
+	input.Item = item
+	_, err = newTable.Put(input)
+	c.NoError(err)
+	c.Len(newTable.Data, 6)
+
+	index, sortedKeys := newTable.fetchQueryData(QueryInput{
+		Index: "invert",
+	})
+
+	c.NotEmpty(sortedKeys)
+	c.Equal(index.sortedRefs[0][0], "006.Bellsprout")
 }

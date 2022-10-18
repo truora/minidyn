@@ -24,7 +24,7 @@ type QueryInput struct {
 // Table has the Indexes and the operation functions
 type Table struct {
 	Name                 string
-	Indexes              map[string]index
+	Indexes              map[string]*index
 	AttributesDef        map[string]string
 	SortedKeys           []string
 	Data                 map[string]map[string]types.Item
@@ -38,7 +38,7 @@ type Table struct {
 func NewTable(name string) *Table {
 	return &Table{
 		Name:          name,
-		Indexes:       map[string]index{},
+		Indexes:       map[string]*index{},
 		AttributesDef: map[string]string{},
 		SortedKeys:    []string{},
 		Data:          map[string]map[string]types.Item{},
@@ -165,7 +165,7 @@ func (t *Table) addGlobalIndex(gsiInput *types.GlobalSecondaryIndex) error {
 		return err
 	}
 
-	t.Indexes[*gsiInput.IndexName] = *i
+	t.Indexes[*gsiInput.IndexName] = i
 
 	return nil
 }
@@ -216,7 +216,7 @@ func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 			return err
 		}
 
-		t.Indexes[*lsi.IndexName] = *i
+		t.Indexes[*lsi.IndexName] = i
 	}
 
 	return nil
@@ -241,7 +241,7 @@ func getPrimaryKey(index *index, k string) (string, bool) {
 	return pk, ok
 }
 
-func (t *Table) fetchQueryData(input QueryInput) (index, []string) {
+func (t *Table) fetchQueryData(input QueryInput) (*index, []string) {
 	if input.Index != "" {
 		i := t.Indexes[input.Index]
 		i.startSearch(input.ScanIndexForward)
@@ -249,7 +249,7 @@ func (t *Table) fetchQueryData(input QueryInput) (index, []string) {
 		return i, i.sortedKeys
 	}
 
-	return index{}, t.SortedKeys
+	return &index{}, t.SortedKeys
 }
 
 func prepareSearch(input *QueryInput, index *index, k, startKey string) (string, bool) {
@@ -328,7 +328,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]types.Item, map[strin
 	for pos := range sortedKeys {
 		k := GetKeyAt(sortedKeys, sortedKeysSize, int64(pos), forward)
 
-		pk, ok := prepareSearch(&input, &index, k, startKey)
+		pk, ok := prepareSearch(&input, index, k, startKey)
 		if !ok {
 			continue
 		}
@@ -349,7 +349,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]types.Item, map[strin
 		}
 	}
 
-	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, &index)
+	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, index)
 }
 
 func (t *Table) getLastKey(item map[string]types.Item, startKey string, limit, count, keysSize int64, index *index) map[string]types.Item {

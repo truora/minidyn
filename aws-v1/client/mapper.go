@@ -281,11 +281,11 @@ func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[str
 			BS:   attr.BS,
 			L:    mapAttributeValueListToTypes(attr.L),
 			M:    mapAttributeValueToTypes(attr.M),
-			N:    aws.StringValue(attr.N),
-			NS:   aws.StringValueSlice(attr.NS),
+			N:    attr.N,
+			NS:   attr.NS,
 			NULL: attr.NULL,
-			S:    aws.StringValue(attr.S),
-			SS:   aws.StringValueSlice(attr.SS),
+			S:    attr.S,
+			SS:   attr.SS,
 		}
 	}
 
@@ -302,11 +302,11 @@ func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []types.Item
 			BS:   attr.BS,
 			L:    mapAttributeValueListToTypes(attr.L),
 			M:    mapAttributeValueToTypes(attr.M),
-			N:    aws.StringValue(attr.N),
-			NS:   aws.StringValueSlice(attr.NS),
+			N:    attr.N,
+			NS:   attr.NS,
 			NULL: attr.NULL,
-			S:    aws.StringValue(attr.S),
-			SS:   aws.StringValueSlice(attr.SS),
+			S:    attr.S,
+			SS:   attr.SS,
 		}
 	}
 
@@ -323,11 +323,11 @@ func mapAttributeValueToDynamodb(attrs map[string]types.Item) map[string]*dynamo
 			BS:   attr.BS,
 			L:    mapAttributeValueListToDynamodb(attr.L),
 			M:    mapAttributeValueToDynamodb(attr.M),
-			N:    aws.String(attr.N),
-			NS:   aws.StringSlice(attr.NS),
+			N:    attr.N,
+			NS:   attr.NS,
 			NULL: attr.NULL,
-			S:    aws.String(attr.S),
-			SS:   aws.StringSlice(attr.SS),
+			S:    attr.S,
+			SS:   attr.SS,
 		}
 	}
 
@@ -353,11 +353,11 @@ func mapAttributeValueListToDynamodb(attrs []types.Item) []*dynamodb.AttributeVa
 			BS:   attr.BS,
 			L:    mapAttributeValueListToDynamodb(attr.L),
 			M:    mapAttributeValueToDynamodb(attr.M),
-			N:    aws.String(attr.N),
-			NS:   aws.StringSlice(attr.NS),
+			N:    attr.N,
+			NS:   attr.NS,
 			NULL: attr.NULL,
-			S:    aws.String(attr.S),
-			SS:   aws.StringSlice(attr.SS),
+			S:    attr.S,
+			SS:   attr.SS,
 		}
 	}
 

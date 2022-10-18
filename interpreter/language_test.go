@@ -34,7 +34,7 @@ func matchTestCaseVerify(tc matchTestCase, t *testing.T) {
 }
 
 func TestLanguageMatch(t *testing.T) {
-	item := map[string]types.Item{
+	item := map[string]*types.Item{
 		"a": {
 			S: types.ToString("a"),
 		},
@@ -56,7 +56,7 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: ":a = a",
 				Item:       item,
-				Attributes: map[string]types.Item{
+				Attributes: map[string]*types.Item{
 					":a": {
 						S: types.ToString("a"),
 					},
@@ -70,7 +70,7 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: "attribute_exists(b",
 				Item:       item,
-				Attributes: map[string]types.Item{},
+				Attributes: map[string]*types.Item{},
 			},
 			expectedErr: ErrSyntaxError,
 		},
@@ -80,7 +80,7 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: "contains(txt, :b)",
 				Item:       item,
-				Attributes: map[string]types.Item{
+				Attributes: map[string]*types.Item{
 					":b": {
 						BOOL: &boolTrue,
 					},
@@ -100,7 +100,7 @@ func TestLanguageMatch(t *testing.T) {
 type updateTestCase struct {
 	name        string
 	input       UpdateInput
-	output      map[string]types.Item
+	output      map[string]*types.Item
 	expectedErr error
 	pending     bool
 }
@@ -133,12 +133,12 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "SET #t = :a + :a, a = :a",
-				Item: map[string]types.Item{
+				Item: map[string]*types.Item{
 					"a": {
 						S: types.ToString("a"),
 					},
 				},
-				Attributes: map[string]types.Item{
+				Attributes: map[string]*types.Item{
 					":a": {
 						N: types.ToString("1"),
 					},
@@ -147,7 +147,7 @@ func TestLanguageUpdate(t *testing.T) {
 					"#t": "two",
 				},
 			},
-			output: map[string]types.Item{
+			output: map[string]*types.Item{
 				"a": {
 					N: types.ToString("1"),
 				},
@@ -161,12 +161,12 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "SET",
-				Item: map[string]types.Item{
+				Item: map[string]*types.Item{
 					"a": {
 						S: types.ToString("a"),
 					},
 				},
-				Attributes: map[string]types.Item{
+				Attributes: map[string]*types.Item{
 					":a": {
 						N: types.ToString("1"),
 					},

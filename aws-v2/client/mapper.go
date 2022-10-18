@@ -219,12 +219,12 @@ func mapDynamoToTypesPutItemInput(input *dynamodb.PutItemInput) *types.PutItemIn
 	}
 }
 
-func mapDynamoToTypesMapItem(input map[string]dynamodbtypes.AttributeValue) map[string]types.Item {
+func mapDynamoToTypesMapItem(input map[string]dynamodbtypes.AttributeValue) map[string]*types.Item {
 	if len(input) == 0 {
 		return nil
 	}
 
-	output := map[string]types.Item{}
+	output := map[string]*types.Item{}
 
 	for key, item := range input {
 		output[strings.ToLower(key)] = mapDynamoToTypesItem(item)
@@ -233,12 +233,12 @@ func mapDynamoToTypesMapItem(input map[string]dynamodbtypes.AttributeValue) map[
 	return output
 }
 
-func mapDynamoToTypesSliceItem(input []dynamodbtypes.AttributeValue) []types.Item {
+func mapDynamoToTypesSliceItem(input []dynamodbtypes.AttributeValue) []*types.Item {
 	if len(input) == 0 {
 		return nil
 	}
 
-	output := []types.Item{}
+	output := []*types.Item{}
 
 	for _, item := range input {
 		output = append(output, mapDynamoToTypesItem(item))
@@ -247,55 +247,55 @@ func mapDynamoToTypesSliceItem(input []dynamodbtypes.AttributeValue) []types.Ite
 	return output
 }
 
-func mapDynamoToTypesItem(item dynamodbtypes.AttributeValue) types.Item {
+func mapDynamoToTypesItem(item dynamodbtypes.AttributeValue) *types.Item {
 	itemB, ok := item.(*dynamodbtypes.AttributeValueMemberB)
 	if ok {
-		return types.Item{B: itemB.Value}
+		return &types.Item{B: itemB.Value}
 	}
 
 	itemBOOL, ok := item.(*dynamodbtypes.AttributeValueMemberBOOL)
 	if ok {
-		return types.Item{BOOL: &itemBOOL.Value}
+		return &types.Item{BOOL: &itemBOOL.Value}
 	}
 
 	itemBS, ok := item.(*dynamodbtypes.AttributeValueMemberBS)
 	if ok {
-		return types.Item{BS: itemBS.Value}
+		return &types.Item{BS: itemBS.Value}
 	}
 
 	itemS, ok := item.(*dynamodbtypes.AttributeValueMemberS)
 	if ok {
-		return types.Item{S: types.ToString(itemS.Value)}
+		return &types.Item{S: types.ToString(itemS.Value)}
 	}
 
 	itemN, ok := item.(*dynamodbtypes.AttributeValueMemberN)
 	if ok {
-		return types.Item{N: types.ToString(itemN.Value)}
+		return &types.Item{N: types.ToString(itemN.Value)}
 	}
 
 	itemNS, ok := item.(*dynamodbtypes.AttributeValueMemberNS)
 	if ok {
-		return types.Item{NS: toStringSlice(itemNS.Value)}
+		return &types.Item{NS: toStringSlice(itemNS.Value)}
 	}
 
 	itemSS, ok := item.(*dynamodbtypes.AttributeValueMemberSS)
 	if ok {
-		return types.Item{SS: toStringSlice(itemSS.Value)}
+		return &types.Item{SS: toStringSlice(itemSS.Value)}
 	}
 
 	return mapDynamoToTypesAttributeDefinitionMapOrList(item)
 }
 
-func mapDynamoToTypesAttributeDefinitionMapOrList(item dynamodbtypes.AttributeValue) types.Item {
+func mapDynamoToTypesAttributeDefinitionMapOrList(item dynamodbtypes.AttributeValue) *types.Item {
 	itemL, ok := item.(*dynamodbtypes.AttributeValueMemberL)
 	if ok {
 		output := []types.Item{}
 
 		for _, itemLValue := range itemL.Value {
-			output = append(output, mapDynamoToTypesItem(itemLValue))
+			output = append(output, *mapDynamoToTypesItem(itemLValue))
 		}
 
-		return types.Item{L: output}
+		return &types.Item{L: output}
 	}
 
 	itemM, ok := item.(*dynamodbtypes.AttributeValueMemberM)
@@ -303,15 +303,15 @@ func mapDynamoToTypesAttributeDefinitionMapOrList(item dynamodbtypes.AttributeVa
 		output := map[string]types.Item{}
 
 		for key, itemMValue := range itemM.Value {
-			output[key] = mapDynamoToTypesItem(itemMValue)
+			output[key] = *mapDynamoToTypesItem(itemMValue)
 		}
 
-		return types.Item{M: output}
+		return &types.Item{M: output}
 	}
 
 	nullTrue := true
 
-	return types.Item{NULL: &nullTrue}
+	return &types.Item{NULL: &nullTrue}
 }
 
 func mapDynamoToTypesDeleteItemInput(input *dynamodb.DeleteItemInput) *types.DeleteItemInput {

@@ -314,10 +314,11 @@ func (m *Map) Type() ObjectType {
 
 // ToDynamoDB returns the types attribute value
 func (m *Map) ToDynamoDB() types.Item {
-	attr := types.Item{M: map[string]types.Item{}}
+	attr := types.Item{M: map[string]*types.Item{}}
 
 	for k, v := range m.Value {
-		attr.M[k] = v.ToDynamoDB()
+		value := v.ToDynamoDB()
+		attr.M[k] = &value
 	}
 
 	return attr
@@ -403,10 +404,11 @@ func (l *List) Type() ObjectType {
 
 // ToDynamoDB returns the types attribute value
 func (l *List) ToDynamoDB() types.Item {
-	attr := types.Item{L: []types.Item{}}
+	attr := types.Item{L: []*types.Item{}}
 
 	for _, v := range l.Value {
-		attr.L = append(attr.L, v.ToDynamoDB())
+		value := v.ToDynamoDB()
+		attr.L = append(attr.L, &value)
 	}
 
 	return attr

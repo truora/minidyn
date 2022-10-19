@@ -29,12 +29,12 @@ type Item struct {
 	// An attribute of type List. For example:
 	//
 	// "L": [ {"S": "Cookies"} , {"S": "Coffee"}, {"N": "3.14159"}]
-	L []Item `type:"list"`
+	L []*Item `type:"list"`
 
 	// An attribute of type Map. For example:
 	//
 	// "M": {"Name": {"S": "Joe"}, "Age": {"N": "35"}}
-	M map[string]Item `type:"map"`
+	M map[string]*Item `type:"map"`
 
 	// An attribute of type Number. For example:
 	//

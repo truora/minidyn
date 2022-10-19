@@ -273,9 +273,17 @@ func mapUpdateItemInputToTypes(input *dynamodb.UpdateItemInput) *types.UpdateIte
 }
 
 func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[string]*types.Item {
+	if len(attrs) == 0 {
+		return nil
+	}
+
 	mapItems := make(map[string]*types.Item, len(attrs))
 
 	for key, attr := range attrs {
+		if attr == nil {
+			continue
+		}
+
 		mapItems[key] = &types.Item{
 			B:    attr.B,
 			BOOL: attr.BOOL,
@@ -286,25 +294,25 @@ func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[str
 			NS:   attr.NS,
 			NULL: attr.NULL,
 			S:    attr.S,
-			SS:   mapSlicePointers(attr.SS),
+			SS:   attr.SS,
 		}
 	}
 
 	return mapItems
 }
 
-func mapSlicePointers(arr []*string) []*string {
-	newArr := make([]*string, len(arr))
-	for i, st := range arr {
-		newArr[i] = aws.String(*st)
+func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []*types.Item {
+	if len(attrs) == 0 {
+		return nil
 	}
 
-	return newArr
-}
-
-func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []*types.Item {
 	mapItems := make([]*types.Item, len(attrs))
+
 	for i, attr := range attrs {
+		if attr == nil {
+			continue
+		}
+
 		mapItems[i] = &types.Item{
 			B:    attr.B,
 			BOOL: attr.BOOL,
@@ -315,7 +323,7 @@ func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []*types.Ite
 			NS:   attr.NS,
 			NULL: attr.NULL,
 			S:    attr.S,
-			SS:   mapSlicePointers(attr.SS),
+			SS:   attr.SS,
 		}
 	}
 

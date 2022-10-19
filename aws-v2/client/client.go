@@ -292,12 +292,6 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		return nil, fd.forceFailureErr
 	}
 
-	/*fmt.Println((fd.tables["pokemons"].Data))
-	lst := fd.tables["pokemons"].Data["001"]["moves"].SS
-	for _, i := range lst {
-		fmt.Println(aws.ToString(i))
-	}*/
-
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.UpdateExpression), aws.ToString(input.ConditionExpression))
 	if err != nil {
 		return nil, err

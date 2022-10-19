@@ -145,11 +145,11 @@ func setupDynamoDBLocal(endpoint string) dynamodbiface.DynamoDBAPI {
 }
 
 func setupNativeInterpreter(native *interpreter.Native, table string) {
-	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]types.Item, updates map[string]types.Item) {
+	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]*types.Item, updates map[string]*types.Item) {
 		item["second_type"] = updates[":ntype"]
 	})
 
-	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]types.Item, updates map[string]types.Item) {
+	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]*types.Item, updates map[string]*types.Item) {
 		item["type"] = updates[":ntype"]
 	})
 }
@@ -561,7 +561,7 @@ func TestPutAndGetItem(t *testing.T) {
 	})
 
 	c.Error(err)
-	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "number of conditions on the keys is invalid")
 }
 
 func TestPutWithGSI(t *testing.T) {
@@ -969,7 +969,7 @@ func TestUpdateItemError(t *testing.T) {
 	}
 
 	_, err = client.UpdateItem(input)
-	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "number of conditions on the keys is invalid")
 
 	ActiveForceFailure(client)
 	defer DeactiveForceFailure(client)
@@ -1728,7 +1728,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 	delete(item, "id")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), input)
-	c.Contains(err.Error(), "ValidationException: The number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "ValidationException: number of conditions on the keys is invalid")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]*dynamodb.WriteRequest{

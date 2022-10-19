@@ -116,7 +116,7 @@ func (fd *Client) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.Creat
 
 	newTable := core.NewTable(tableName)
 	newTable.SetAttributeDefinition(mapAttributeDefinitionToTypes(input.AttributeDefinitions))
-	newTable.BillingMode = aws.StringValue(input.BillingMode)
+	newTable.BillingMode = input.BillingMode
 	newTable.NativeInterpreter = *fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
 	newTable.LangInterpreter = *fd.langInterpreter
@@ -486,9 +486,9 @@ func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 		Index:                     indexName,
 		ExpressionAttributeValues: mapAttributeValueToTypes(input.ExpressionAttributeValues),
 		Aliases:                   aws.StringValueMap(input.ExpressionAttributeNames),
-		Limit:                     *input.Limit,
+		Limit:                     aws.Int64Value(input.Limit),
 		ExclusiveStartKey:         mapAttributeValueToTypes(input.ExclusiveStartKey),
-		FilterExpression:          *input.FilterExpression,
+		FilterExpression:          aws.StringValue(input.FilterExpression),
 		Scan:                      true,
 		ScanIndexForward:          true,
 	})

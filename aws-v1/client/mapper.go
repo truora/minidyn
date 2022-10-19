@@ -266,16 +266,17 @@ func mapUpdateItemInputToTypes(input *dynamodb.UpdateItemInput) *types.UpdateIte
 		ReturnItemCollectionMetrics: input.ReturnItemCollectionMetrics,
 		ExpressionAttributeValues:   mapAttributeValueToTypes(input.ExpressionAttributeValues),
 		Key:                         mapAttributeValueToTypes(input.Key),
+		UpdateExpression:            aws.StringValue(input.UpdateExpression),
 	}
 
 	return updateInput
 }
 
-func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[string]types.Item {
-	mapItems := make(map[string]types.Item, len(attrs))
+func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[string]*types.Item {
+	mapItems := make(map[string]*types.Item, len(attrs))
 
 	for key, attr := range attrs {
-		mapItems[key] = types.Item{
+		mapItems[key] = &types.Item{
 			B:    attr.B,
 			BOOL: attr.BOOL,
 			BS:   attr.BS,
@@ -285,18 +286,26 @@ func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[str
 			NS:   attr.NS,
 			NULL: attr.NULL,
 			S:    attr.S,
-			SS:   attr.SS,
+			SS:   mapSlicePointers(attr.SS),
 		}
 	}
 
 	return mapItems
 }
 
-func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []types.Item {
-	mapItems := make([]types.Item, len(attrs))
+func mapSlicePointers(arr []*string) []*string {
+	newArr := make([]*string, len(arr))
+	for i, st := range arr {
+		newArr[i] = aws.String(*st)
+	}
 
+	return newArr
+}
+
+func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []*types.Item {
+	mapItems := make([]*types.Item, len(attrs))
 	for i, attr := range attrs {
-		mapItems[i] = types.Item{
+		mapItems[i] = &types.Item{
 			B:    attr.B,
 			BOOL: attr.BOOL,
 			BS:   attr.BS,
@@ -306,14 +315,14 @@ func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []types.Item
 			NS:   attr.NS,
 			NULL: attr.NULL,
 			S:    attr.S,
-			SS:   attr.SS,
+			SS:   mapSlicePointers(attr.SS),
 		}
 	}
 
 	return mapItems
 }
 
-func mapAttributeValueToDynamodb(attrs map[string]types.Item) map[string]*dynamodb.AttributeValue {
+func mapAttributeValueToDynamodb(attrs map[string]*types.Item) map[string]*dynamodb.AttributeValue {
 	mapItems := make(map[string]*dynamodb.AttributeValue, len(attrs))
 
 	for key, attr := range attrs {
@@ -333,7 +342,8 @@ func mapAttributeValueToDynamodb(attrs map[string]types.Item) map[string]*dynamo
 
 	return mapItems
 }
-func mapItemSliceToDynamodb(items []map[string]types.Item) []map[string]*dynamodb.AttributeValue {
+
+func mapItemSliceToDynamodb(items []map[string]*types.Item) []map[string]*dynamodb.AttributeValue {
 	mapAttrs := make([]map[string]*dynamodb.AttributeValue, 0)
 
 	for _, item := range items {
@@ -343,7 +353,7 @@ func mapItemSliceToDynamodb(items []map[string]types.Item) []map[string]*dynamod
 	return mapAttrs
 }
 
-func mapAttributeValueListToDynamodb(attrs []types.Item) []*dynamodb.AttributeValue {
+func mapAttributeValueListToDynamodb(attrs []*types.Item) []*dynamodb.AttributeValue {
 	mapItems := make([]*dynamodb.AttributeValue, len(attrs))
 
 	for i, attr := range attrs {

@@ -273,10 +273,10 @@ type DeleteItemInput struct {
 
 type ExpectedAttributeValue struct {
 	_                  struct{} `type:"structure"`
-	AttributeValueList []*Item   `type:"list"`
+	AttributeValueList []*Item  `type:"list"`
 	ComparisonOperator *string  `type:"string" enum:"ComparisonOperator"`
 	Exists             *bool    `type:"boolean"`
-	Value              *Item     `type:"structure"`
+	Value              *Item    `type:"structure"`
 }
 
 type AttributeValueUpdate struct {
@@ -307,5 +307,9 @@ func ToString(str string) *string {
 }
 
 func StringValue(str *string) string {
+	if str == nil {
+		return ""
+	}
+
 	return *str
 }

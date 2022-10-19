@@ -31,13 +31,13 @@ func TestItemValue(t *testing.T) {
 	c.NoError(err)
 	c.Equal(v, []byte("dGhpcyB0ZXh0IGlzIGJhc2U2NC1lbmNvZGVk"))
 
-	v, err = getItemValue(map[string]*types.Item{"L": {L: []types.Item{{S: types.ToString("Cookie")}}}}, "L", "L")
+	v, err = getItemValue(map[string]*types.Item{"L": {L: []*types.Item{{S: types.ToString("Cookie")}}}}, "L", "L")
 	c.NoError(err)
-	c.Equal(v, []types.Item{{S: types.ToString("Cookie")}})
+	c.Equal(v, []*types.Item{{S: types.ToString("Cookie")}})
 
-	v, err = getItemValue(map[string]*types.Item{"M": {M: map[string]types.Item{"N": {N: types.ToString("123.45")}}}}, "M", "M")
+	v, err = getItemValue(map[string]*types.Item{"M": {M: map[string]*types.Item{"N": {N: types.ToString("123.45")}}}}, "M", "M")
 	c.NoError(err)
-	c.Equal(v, map[string]types.Item{"N": {N: types.ToString("123.45")}})
+	c.Equal(v, map[string]*types.Item{"N": {N: types.ToString("123.45")}})
 
 	v, err = getItemValue(map[string]*types.Item{"BS": {BS: [][]byte{123: []byte("x"), []byte("y"), []byte("z")}}}, "BS", "BS")
 	c.NoError(err)
@@ -104,10 +104,10 @@ func TestGetGoValue(t *testing.T) {
 		B:    []byte{1},
 		BOOL: &boolFalse,
 		BS:   [][]byte{{123}},
-		L: []types.Item{
+		L: []*types.Item{
 			{N: types.ToString("1")}, {S: types.ToString("a")},
 		},
-		M: map[string]types.Item{
+		M: map[string]*types.Item{
 			"f": {
 				S: types.ToString("a"),
 			},
@@ -134,14 +134,14 @@ func TestGetGoValue(t *testing.T) {
 	goVal, ok = getGoValue(all, "L")
 	c.True(ok)
 
-	sliceVal, ok := goVal.([]types.Item)
+	sliceVal, ok := goVal.([]*types.Item)
 	c.True(ok)
 	c.Len(sliceVal, 2)
 
 	goVal, ok = getGoValue(all, "M")
 	c.True(ok)
 
-	mapVal, ok := goVal.(map[string]types.Item)
+	mapVal, ok := goVal.(map[string]*types.Item)
 	c.True(ok)
 	c.Equal("a", types.StringValue(mapVal["f"].S))
 

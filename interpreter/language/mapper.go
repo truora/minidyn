@@ -58,7 +58,7 @@ func mapAttributeToMap(val *types.Item) (Object, error) {
 	m := make(map[string]Object)
 
 	for k, attr := range val.M {
-		obj, err := MapToObject(&attr)
+		obj, err := MapToObject(attr)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func mapAttributeToList(val *types.Item) (Object, error) {
 	l := make([]Object, len(val.L))
 
 	for i, attr := range val.L {
-		obj, err := MapToObject(&attr)
+		obj, err := MapToObject(attr)
 		if err != nil {
 			return nil, err
 		}

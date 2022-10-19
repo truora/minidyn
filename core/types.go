@@ -82,11 +82,11 @@ func getItemValue(item map[string]*types.Item, field, typ string) (interface{}, 
 func getGoValue(val *types.Item, typ string) (interface{}, bool) {
 	switch typ {
 	case "S":
-		return types.StringValue(val.S), types.StringValue(val.S) != ""
+		return types.StringValue(val.S), val.S != nil
 	case "BOOL":
 		return val.BOOL, val.BOOL != nil
 	case "N":
-		return types.StringValue(val.N), types.StringValue(val.N) != ""
+		return types.StringValue(val.N), val.N != nil
 	}
 
 	return getGoComplexValue(val, typ)

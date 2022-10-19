@@ -58,7 +58,11 @@ func ensurePokemonTypeIndex(client FakeClient) error {
 }
 
 func createPokemon(client FakeClient, creature pokemon) error {
-	item, err := attributevalue.MarshalMap(creature)
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(creature, opt)
 	if err != nil {
 		return err
 	}
@@ -144,11 +148,11 @@ func setupDynamoDBLocal(endpoint string) FakeClient {
 }
 
 func setupNativeInterpreter(native *interpreter.Native, table string) {
-	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]types.Item, updates map[string]types.Item) {
+	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]*types.Item, updates map[string]*types.Item) {
 		item["second_type"] = updates[":ntype"]
 	})
 
-	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]types.Item, updates map[string]types.Item) {
+	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]*types.Item, updates map[string]*types.Item) {
 		item["type"] = updates[":ntype"]
 	})
 }
@@ -525,11 +529,15 @@ func TestPutAndGetItem(t *testing.T) {
 	err := ensurePokemonTable(client)
 	c.NoError(err)
 
-	item, err := attributevalue.MarshalMap(pokemon{
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(pokemon{
 		ID:   "001",
 		Type: "grass",
 		Name: "Bulbasaur",
-	})
+	}, opt)
 	c.NoError(err)
 
 	input := &dynamodb.PutItemInput{
@@ -573,11 +581,11 @@ func TestPutWithGSI(t *testing.T) {
 	err = ensurePokemonTypeIndex(client)
 	c.NoError(err)
 
-	item, err := attributevalue.MarshalMap(pokemon{
-		ID:   "001",
-		Name: "Bulbasaur",
-	})
-	c.NoError(err)
+	item := map[string]dynamodbtypes.AttributeValue{
+		"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+		"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+		"type": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
+	}
 
 	input := &dynamodb.PutItemInput{
 		Item:      item,
@@ -589,7 +597,7 @@ func TestPutWithGSI(t *testing.T) {
 	c.Contains(err.Error(), "ValidationException")
 	c.Contains(err.Error(), "value type")
 
-	delete(item, "Type")
+	delete(item, "type")
 
 	_, err = client.PutItem(context.Background(), input)
 	c.NoError(err)
@@ -667,11 +675,15 @@ func TestPutItemWithConditions(t *testing.T) {
 	err := ensurePokemonTable(client)
 	c.NoError(err)
 
-	item, err := attributevalue.MarshalMap(pokemon{
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(pokemon{
 		ID:   "001",
 		Type: "grass",
 		Name: "Bulbasaur",
-	})
+	}, opt)
 	c.NoError(err)
 
 	input := &dynamodb.PutItemInput{
@@ -1669,7 +1681,11 @@ func TestBatchWriteItem(t *testing.T) {
 		Name: "Bulbasaur",
 	}
 
-	item, err := attributevalue.MarshalMap(m)
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(m, opt)
 	c.NoError(err)
 
 	requests := []dynamodbtypes.WriteRequest{
@@ -1725,7 +1741,7 @@ func TestBatchWriteItem(t *testing.T) {
 	delete(item, "id")
 
 	_, err = client.BatchWriteItem(context.Background(), input)
-	c.Contains(err.Error(), "ValidationException: The number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "number of conditions on the keys is invalid")
 
 	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]dynamodbtypes.WriteRequest{
@@ -1780,7 +1796,11 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 		Name: "Bulbasaur",
 	}
 
-	item, err := attributevalue.MarshalMap(m)
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(m, opt)
 	c.NoError(err)
 
 	requests := []dynamodbtypes.WriteRequest{

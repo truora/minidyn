@@ -31,7 +31,7 @@ func mapDynamoToTypesAttributeDefinitionSlice(input []dynamodbtypes.AttributeDef
 func mapDynamoToTypesAttributeDefinition(input dynamodbtypes.AttributeDefinition) types.AttributeDefinition {
 	return types.AttributeDefinition{
 		AttributeName: input.AttributeName,
-		AttributeType: aws.String(string(input.AttributeType)),
+		AttributeType: toString(string(input.AttributeType)),
 	}
 }
 
@@ -82,7 +82,7 @@ func mapDynamoToTypesProjection(input *dynamodbtypes.Projection) *types.Projecti
 
 	return &types.Projection{
 		NonKeyAttributes: mapDynamoToTypesStringSlice(input.NonKeyAttributes),
-		ProjectionType:   aws.String(string(input.ProjectionType)),
+		ProjectionType:   toString(string(input.ProjectionType)),
 	}
 }
 
@@ -94,7 +94,7 @@ func mapDynamoToTypesStringSlice(input []string) []*string {
 	output := []*string{}
 
 	for _, str := range input {
-		output = append(output, aws.String(str))
+		output = append(output, toString(str))
 	}
 
 	return output
@@ -108,7 +108,7 @@ func mapDynamoToTypesStringMap(input map[string]string) map[string]*string {
 	output := map[string]*string{}
 
 	for key, value := range input {
-		output[key] = aws.String(value)
+		output[key] = toString(value)
 	}
 
 	return output
@@ -208,13 +208,13 @@ func mapDynamoToTypesPutItemInput(input *dynamodb.PutItemInput) *types.PutItemIn
 
 	return &types.PutItemInput{
 		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         aws.String(string(input.ConditionalOperator)),
+		ConditionalOperator:         toString(string(input.ConditionalOperator)),
 		ExpressionAttributeNames:    input.ExpressionAttributeNames,
 		ExpressionAttributeValues:   mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
 		Item:                        mapDynamoToTypesMapItem(input.Item),
-		ReturnConsumedCapacity:      aws.String(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: aws.String(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                aws.String(string(input.ReturnValues)),
+		ReturnConsumedCapacity:      toString(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics: toString(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                toString(string(input.ReturnValues)),
 		TableName:                   input.TableName,
 	}
 }
@@ -289,10 +289,10 @@ func mapDynamoToTypesItem(item dynamodbtypes.AttributeValue) *types.Item {
 func mapDynamoToTypesAttributeDefinitionMapOrList(item dynamodbtypes.AttributeValue) *types.Item {
 	itemL, ok := item.(*dynamodbtypes.AttributeValueMemberL)
 	if ok {
-		output := []types.Item{}
+		output := []*types.Item{}
 
 		for _, itemLValue := range itemL.Value {
-			output = append(output, *mapDynamoToTypesItem(itemLValue))
+			output = append(output, mapDynamoToTypesItem(itemLValue))
 		}
 
 		return &types.Item{L: output}
@@ -300,10 +300,10 @@ func mapDynamoToTypesAttributeDefinitionMapOrList(item dynamodbtypes.AttributeVa
 
 	itemM, ok := item.(*dynamodbtypes.AttributeValueMemberM)
 	if ok {
-		output := map[string]types.Item{}
+		output := map[string]*types.Item{}
 
 		for key, itemMValue := range itemM.Value {
-			output[key] = *mapDynamoToTypesItem(itemMValue)
+			output[key] = mapDynamoToTypesItem(itemMValue)
 		}
 
 		return &types.Item{M: output}
@@ -321,14 +321,14 @@ func mapDynamoToTypesDeleteItemInput(input *dynamodb.DeleteItemInput) *types.Del
 
 	return &types.DeleteItemInput{
 		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         aws.String(string(input.ConditionalOperator)),
+		ConditionalOperator:         toString(string(input.ConditionalOperator)),
 		Expected:                    mapDynamoToTypesExpectedAttributeValueMap(input.Expected),
 		ExpressionAttributeNames:    mapDynamoToTypesStringMap(input.ExpressionAttributeNames),
 		ExpressionAttributeValues:   mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
 		Key:                         mapDynamoToTypesMapItem(input.Key),
-		ReturnConsumedCapacity:      aws.String(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: aws.String(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                aws.String(string(input.ReturnValues)),
+		ReturnConsumedCapacity:      toString(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics: toString(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                toString(string(input.ReturnValues)),
 		TableName:                   input.TableName,
 	}
 }
@@ -336,7 +336,7 @@ func mapDynamoToTypesDeleteItemInput(input *dynamodb.DeleteItemInput) *types.Del
 func mapDynamoToTypesExpectedAttributeValue(input dynamodbtypes.ExpectedAttributeValue) *types.ExpectedAttributeValue {
 	return &types.ExpectedAttributeValue{
 		AttributeValueList: mapDynamoToTypesSliceItem(input.AttributeValueList),
-		ComparisonOperator: aws.String(string(input.ComparisonOperator)),
+		ComparisonOperator: toString(string(input.ComparisonOperator)),
 		Exists:             input.Exists,
 		Value:              mapDynamoToTypesItem(input.Value),
 	}
@@ -359,14 +359,14 @@ func mapDynamoToTypesExpectedAttributeValueMap(input map[string]dynamodbtypes.Ex
 func mapDynamoToTypesUpdateItemInput(input *dynamodb.UpdateItemInput) *types.UpdateItemInput {
 	return &types.UpdateItemInput{
 		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         aws.String(string(input.ConditionalOperator)),
+		ConditionalOperator:         toString(string(input.ConditionalOperator)),
 		Expected:                    mapDynamoToTypesExpectedAttributeValueMap(input.Expected),
 		ExpressionAttributeNames:    input.ExpressionAttributeNames,
 		ExpressionAttributeValues:   mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
 		Key:                         mapDynamoToTypesMapItem(input.Key),
-		ReturnConsumedCapacity:      aws.String(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: aws.String(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                aws.String(string(input.ReturnValues)),
+		ReturnConsumedCapacity:      toString(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics: toString(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                toString(string(input.ReturnValues)),
 		TableName:                   input.TableName,
 		UpdateExpression:            *input.UpdateExpression,
 	}
@@ -406,7 +406,7 @@ func mapTypesToDynamoTableDescription(input *types.TableDescription) *dynamodbty
 	}
 
 	return &dynamodbtypes.TableDescription{
-		TableName:              aws.String(input.TableName),
+		TableName:              toString(input.TableName),
 		ItemCount:              input.ItemCount,
 		KeySchema:              mapTypesToDynamoKeySchemaElements(input.KeySchema),
 		GlobalSecondaryIndexes: mapTypesToDynamoTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes),
@@ -530,7 +530,7 @@ func mapTypesToDynamoLocalSecondaryIndexes(input []types.LocalSecondaryIndexDesc
 	return output
 }
 
-func mapTypesToDynamoItem(item types.Item) dynamodbtypes.AttributeValue {
+func mapTypesToDynamoItem(item *types.Item) dynamodbtypes.AttributeValue {
 	if len(item.B) != 0 {
 		return &dynamodbtypes.AttributeValueMemberB{
 			Value: item.B,
@@ -576,7 +576,7 @@ func mapTypesToDynamoItem(item types.Item) dynamodbtypes.AttributeValue {
 	return mapTypesToDynamoAttributeDefinitionMapOrList(item)
 }
 
-func mapTypesToDynamoAttributeDefinitionMapOrList(item types.Item) dynamodbtypes.AttributeValue {
+func mapTypesToDynamoAttributeDefinitionMapOrList(item *types.Item) dynamodbtypes.AttributeValue {
 	if len(item.L) != 0 {
 		output := []dynamodbtypes.AttributeValue{}
 
@@ -600,7 +600,7 @@ func mapTypesToDynamoAttributeDefinitionMapOrList(item types.Item) dynamodbtypes
 	return &dynamodbtypes.AttributeValueMemberNULL{Value: true}
 }
 
-func mapTypesToDynamoMapItem(input map[string]types.Item) map[string]dynamodbtypes.AttributeValue {
+func mapTypesToDynamoMapItem(input map[string]*types.Item) map[string]dynamodbtypes.AttributeValue {
 	output := map[string]dynamodbtypes.AttributeValue{}
 
 	for key, item := range input {
@@ -610,7 +610,7 @@ func mapTypesToDynamoMapItem(input map[string]types.Item) map[string]dynamodbtyp
 	return output
 }
 
-func mapTypesToDynamoSliceMapItem(input []map[string]types.Item) []map[string]dynamodbtypes.AttributeValue {
+func mapTypesToDynamoSliceMapItem(input []map[string]*types.Item) []map[string]dynamodbtypes.AttributeValue {
 	output := []map[string]dynamodbtypes.AttributeValue{}
 
 	for _, item := range input {
@@ -624,7 +624,8 @@ func toStringSlice(slice []string) []*string {
 	output := []*string{}
 
 	for _, item := range slice {
-		output = append(output, &item)
+		newItem := item
+		output = append(output, &newItem)
 	}
 
 	return output
@@ -638,4 +639,12 @@ func toStringValueSlice(slice []*string) []string {
 	}
 
 	return output
+}
+
+func toString(str string) *string {
+	if str == "" {
+		return nil
+	}
+
+	return aws.String(str)
 }

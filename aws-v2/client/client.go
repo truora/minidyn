@@ -126,7 +126,7 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 
 	newTable := core.NewTable(tableName)
 	newTable.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions))
-	newTable.BillingMode = string(input.BillingMode)
+	newTable.BillingMode = aws.String(string(input.BillingMode))
 	newTable.NativeInterpreter = *fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
 	newTable.LangInterpreter = *fd.langInterpreter
@@ -291,6 +291,12 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
 	}
+
+	/*fmt.Println((fd.tables["pokemons"].Data))
+	lst := fd.tables["pokemons"].Data["001"]["moves"].SS
+	for _, i := range lst {
+		fmt.Println(aws.ToString(i))
+	}*/
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.UpdateExpression), aws.ToString(input.ConditionExpression))
 	if err != nil {

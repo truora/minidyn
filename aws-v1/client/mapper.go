@@ -3,7 +3,7 @@ package client
 import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 func mapAttributeDefinitionToTypes(attrs []*dynamodb.AttributeDefinition) []*types.AttributeDefinition {

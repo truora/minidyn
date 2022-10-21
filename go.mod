@@ -1,4 +1,4 @@
-module github.com/truora/minidyn
+module github.com/ldelacruztruora/minidyn
 
 go 1.17
 

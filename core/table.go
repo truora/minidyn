@@ -3,8 +3,8 @@ package core
 import (
 	"sort"
 
-	"github.com/truora/minidyn/interpreter"
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/interpreter"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 type QueryInput struct {

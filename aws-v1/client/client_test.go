@@ -14,10 +14,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/ldelacruztruora/minidyn/interpreter"
+	"github.com/ldelacruztruora/minidyn/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/truora/minidyn/interpreter"
-	"github.com/truora/minidyn/types"
 )
 
 const tableName = "pokemons"

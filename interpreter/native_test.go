@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 var (

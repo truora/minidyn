@@ -3,7 +3,7 @@ package core
 import (
 	"sort"
 
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 type indexType string

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 type keySchema struct {

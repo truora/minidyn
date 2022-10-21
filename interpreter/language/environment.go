@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 // Environment represents the execution enviroment

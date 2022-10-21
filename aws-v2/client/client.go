@@ -12,8 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
-	"github.com/truora/minidyn/core"
-	"github.com/truora/minidyn/interpreter"
+	"github.com/ldelacruztruora/minidyn/core"
+	"github.com/ldelacruztruora/minidyn/interpreter"
 )
 
 const (

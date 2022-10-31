@@ -7,10 +7,7 @@ import (
 	"github.com/ldelacruztruora/minidyn/types"
 )
 
-var (
-	boolTrue  = true
-	boolFalse = false
-)
+var boolTrue = true
 
 func TestNativeMatch(t *testing.T) {
 	item := map[string]*types.Item{

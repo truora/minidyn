@@ -97,6 +97,7 @@ func mapProvisionedThroughputToTypes(pt *dynamodb.ProvisionedThroughput) *types.
 	if pt == nil {
 		return nil
 	}
+
 	provisionedThroughput := &types.ProvisionedThroughput{
 		ReadCapacityUnits:  aws.Int64Value(pt.ReadCapacityUnits),
 		WriteCapacityUnits: aws.Int64Value(pt.WriteCapacityUnits),

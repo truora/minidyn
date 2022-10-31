@@ -1,3 +1,4 @@
+// Package types contains general types to use in core and interpreter
 package types
 
 import (
@@ -7,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/private/protocol"
 )
 
+// Item is the general attribute value type
 type Item struct {
 	_ struct{} `type:"structure"`
 
@@ -70,29 +72,34 @@ type Item struct {
 	SS []*string `type:"list"`
 }
 
+// Represents the properties of AttributeDefinition
 type AttributeDefinition struct {
 	_             struct{} `type:"structure"`
 	AttributeName *string  `min:"1" type:"string" required:"true"`
 	AttributeType *string  `type:"string" required:"true" enum:"ScalarAttributeType"`
 }
 
+// Represents the properties of KeySchemaElement
 type KeySchemaElement struct {
 	_             struct{} `type:"structure"`
 	AttributeName string   `min:"1" type:"string" required:"true"`
 	KeyType       string   `type:"string" required:"true" enum:"KeyType"`
 }
 
+// Represents the properties of ProvisionedThroughput
 type ProvisionedThroughput struct {
 	_                  struct{} `type:"structure"`
 	ReadCapacityUnits  int64    `min:"1" type:"long" required:"true"`
 	WriteCapacityUnits int64    `min:"1" type:"long" required:"true"`
 }
 
+// Represents the properties of CreateTableInput
 type CreateTableInput struct {
 	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
 	KeySchema             []*KeySchemaElement    `min:"1" type:"list" required:"true"`
 }
 
+// Represents the properties of CreateTableInput
 type Projection struct {
 	_                struct{}  `type:"structure"`
 	NonKeyAttributes []*string `min:"1" type:"list"`
@@ -108,6 +115,7 @@ type GlobalSecondaryIndex struct {
 	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
 }
 
+// Represents the properties of a global secondary index update.
 type GlobalSecondaryIndexUpdate struct {
 	_      struct{}                          `type:"structure"`
 	Create *CreateGlobalSecondaryIndexAction `type:"structure"`
@@ -187,12 +195,6 @@ func (s ConditionalCheckFailedException) GoString() string {
 	return s.String()
 }
 
-func newErrorConditionalCheckFailedException(v protocol.ResponseMetadata) error {
-	return &ConditionalCheckFailedException{
-		RespMetadata: v,
-	}
-}
-
 // Code returns the exception type name.
 func (s *ConditionalCheckFailedException) Code() string {
 	return "ConditionalCheckFailedException"
@@ -203,6 +205,7 @@ func (s *ConditionalCheckFailedException) Message() string {
 	if s.Message_ != "" {
 		return s.Message_
 	}
+
 	return ""
 }
 
@@ -271,6 +274,7 @@ type DeleteItemInput struct {
 	TableName                   *string                            `min:"3" type:"string" required:"true"`
 }
 
+// Represents the properties of ExpectedAttributeValue
 type ExpectedAttributeValue struct {
 	_                  struct{} `type:"structure"`
 	AttributeValueList []*Item  `type:"list"`
@@ -279,6 +283,7 @@ type ExpectedAttributeValue struct {
 	Value              *Item    `type:"structure"`
 }
 
+// Represents the properties of attribute value
 type AttributeValueUpdate struct {
 	_      struct{} `type:"structure"`
 	Action *string  `type:"string" enum:"AttributeAction"`
@@ -302,10 +307,12 @@ type TableDescription struct {
 	TableStatus            string                            `type:"string" enum:"TableStatus"`
 }
 
+// Function to cast from string to pointer string
 func ToString(str string) *string {
 	return &str
 }
 
+// Function to get string value from a pointerb string
 func StringValue(str *string) string {
 	if str == nil {
 		return ""

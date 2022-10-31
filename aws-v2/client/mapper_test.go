@@ -47,7 +47,7 @@ func TestMapDynamoToTypes(t *testing.T) {
 
 	trueValue := true
 
-	expectedMap := map[string]*types.Item(map[string]*types.Item{"test": &types.Item{BOOL: &trueValue}})
+	expectedMap := map[string]*types.Item(map[string]*types.Item{"test": {BOOL: &trueValue}})
 	item = mapDynamoToTypesAttributeDefinitionMapOrList(&dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{"test": &dynamodbtypes.AttributeValueMemberBOOL{Value: true}}})
 	c.Equal(expectedMap, item.M)
 }
@@ -125,7 +125,7 @@ func TestMapDynamoToTypesExpectedAttributeValue(t *testing.T) {
 	output := mapDynamoToTypesExpectedAttributeValue(dynamodbtypes.ExpectedAttributeValue{})
 	c.NotNil(output)
 
-	attributeValueOutput := mapDynamoToTypesExpectedAttributeValueMap(map[string]dynamodbtypes.ExpectedAttributeValue{"test": dynamodbtypes.ExpectedAttributeValue{}})
+	attributeValueOutput := mapDynamoToTypesExpectedAttributeValueMap(map[string]dynamodbtypes.ExpectedAttributeValue{"test": {}})
 	c.Len(attributeValueOutput, 1)
 
 	keySchemaElementsOutput := mapTypesToDynamoKeySchemaElementsPointer(nil)

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/ldelacruztruora/minidyn/interpreter"
@@ -76,12 +77,9 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 		return err
 	}
 
-	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return types.NewError("ValidationException", "Hash Key not specified in Attribute Definitions.", nil)
-	}
-
-	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return types.NewError("ValidationException", "Range Key not specified in Attribute Definitions.", nil)
+	err = t.validateAttributeDefinition(ks, "")
+	if err != nil {
+		return err
 	}
 
 	// types-local check this after validate the key schema
@@ -93,6 +91,18 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	}
 
 	t.KeySchema = ks
+
+	return nil
+}
+
+func (t *Table) validateAttributeDefinition(ks keySchema, message string) error {
+	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
+		return types.NewError("ValidationException", fmt.Sprintf("%sHash Key not specified in Attribute Definitions.", message), nil)
+	}
+
+	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
+		return types.NewError("ValidationException", fmt.Sprintf("%sRange Key not specified in Attribute Definitions.", message), nil)
+	}
 
 	return nil
 }
@@ -110,12 +120,9 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 		return nil, err
 	}
 
-	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return nil, types.NewError("ValidationException", "Global Secondary Index hash key not specified in Attribute Definitions.", nil)
-	}
-
-	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return nil, types.NewError("ValidationException", "Global Secondary Index range key not specified in Attribute Definitions.", nil)
+	err = t.validateAttributeDefinition(ks, "Global Secondary Index ")
+	if err != nil {
+		return nil, err
 	}
 
 	i := newIndex(t, indexTypeGlobal, ks)
@@ -191,12 +198,9 @@ func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 		return nil, err
 	}
 
-	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return nil, types.NewError("ValidationException", "Local Secondary Index hash key not specified in Attribute Definitions.", nil)
-	}
-
-	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return nil, types.NewError("ValidationException", "Local Secondary Index range key not specified in Attribute Definitions.", nil)
+	err = t.validateAttributeDefinition(ks, "Local Secondary Index ")
+	if err != nil {
+		return nil, err
 	}
 
 	i := newIndex(t, indexTypeLocal, ks)

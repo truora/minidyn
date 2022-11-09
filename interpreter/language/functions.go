@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 // Function represents a function in the types expression

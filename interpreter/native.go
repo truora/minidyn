@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 // UpdaterFunc function used emule to UpdateItem expressions

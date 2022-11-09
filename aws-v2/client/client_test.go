@@ -14,10 +14,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
+	"github.com/ldelacruztruora/minidyn/interpreter"
+	"github.com/ldelacruztruora/minidyn/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/truora/minidyn/interpreter"
-	"github.com/truora/minidyn/types"
 )
 
 const tableName = "pokemons"
@@ -334,7 +334,7 @@ func TestCreateTableWithGSI(t *testing.T) {
 	}
 
 	_, err = client.CreateTable(context.Background(), input)
-	c.Contains(err.Error(), "Global Secondary Index range key not specified in Attribute")
+	c.Contains(err.Error(), "Global Secondary Index Range Key not specified in Attribute Definitions")
 
 	input.GlobalSecondaryIndexes[0].KeySchema[1].AttributeName = aws.String("partition")
 
@@ -400,7 +400,7 @@ func TestCreateTableWithLSI(t *testing.T) {
 	})
 
 	_, err = client.CreateTable(context.Background(), input)
-	c.Contains(err.Error(), "Local Secondary Index range key not specified in Attribute")
+	c.Contains(err.Error(), "Local Secondary Index Range Key not specified in Attribute Definitions")
 
 	input.LocalSecondaryIndexes[0].KeySchema[1].AttributeName = aws.String("data")
 

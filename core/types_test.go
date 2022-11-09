@@ -3,8 +3,8 @@ package core
 import (
 	"testing"
 
+	"github.com/ldelacruztruora/minidyn/types"
 	"github.com/stretchr/testify/require"
-	"github.com/truora/minidyn/types"
 )
 
 func TestItemValue(t *testing.T) {

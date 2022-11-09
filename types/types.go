@@ -1,3 +1,4 @@
+// Package types contains general types to use in core and interpreter
 package types
 
 import (

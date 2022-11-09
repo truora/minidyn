@@ -6,8 +6,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/truora/minidyn/core"
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/core"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
 // maps dynamo to types

@@ -4,12 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/truora/minidyn/types"
+	"github.com/ldelacruztruora/minidyn/types"
 )
 
-var (
-	boolTrue = true
-)
+var boolTrue = true
 
 func TestNativeMatch(t *testing.T) {
 	item := map[string]*types.Item{

@@ -3,9 +3,9 @@ package core
 import (
 	"testing"
 
+	"github.com/ldelacruztruora/minidyn/interpreter"
+	"github.com/ldelacruztruora/minidyn/types"
 	"github.com/stretchr/testify/require"
-	"github.com/truora/minidyn/interpreter"
-	"github.com/truora/minidyn/types"
 )
 
 var tableName = "pokemons"
@@ -105,7 +105,7 @@ func TestAddLocalIndexes(t *testing.T) {
 	}
 
 	err = newTable.AddLocalIndexes(localIndexes)
-	c.Contains(err.Error(), "Local Secondary Index hash key not specified in Attribute Definitions.")
+	c.Contains(err.Error(), "Local Secondary Index Hash Key not specified in Attribute Definitions.")
 
 	newTable, err = createPokemonTable()
 	c.NoError(err)
@@ -256,7 +256,7 @@ func TestCreateTableIndexes(t *testing.T) {
 	}
 
 	err = newTable.AddGlobalIndexes(globalSecondaryIndexes)
-	c.Contains(err.Error(), "Global Secondary Index range key not specified in Attribute Definitions")
+	c.Contains(err.Error(), "Global Secondary Index Range Key not specified in Attribute Definitions")
 
 	globalSecondaryIndexes[0].KeySchema[1].AttributeName = "partition"
 

@@ -63,6 +63,7 @@ func mapDynamoToTypesKeySchemaElements(input []dynamodbtypes.KeySchemaElement) [
 	}
 
 	output := []*types.KeySchemaElement{}
+
 	for _, keySchemaElement := range input {
 		keySchemaElementOutput := &types.KeySchemaElement{
 			AttributeName: aws.ToString(keySchemaElement.AttributeName),
@@ -387,6 +388,7 @@ func mapDynamoToTypesQueryInput(input *dynamodb.QueryInput, indexName string) co
 	if input.KeyConditionExpression != nil {
 		output.KeyConditionExpression = aws.ToString(input.KeyConditionExpression)
 	}
+
 	if input.FilterExpression != nil {
 		output.FilterExpression = aws.ToString(input.FilterExpression)
 	}
@@ -420,9 +422,11 @@ func mapTypesToDynamoKeySchemaElements(input []types.KeySchemaElement) []dynamod
 	}
 
 	output := []dynamodbtypes.KeySchemaElement{}
+
 	for _, keySchemaElement := range input {
+		attributeName := keySchemaElement.AttributeName
 		keySchemaElementOutput := dynamodbtypes.KeySchemaElement{
-			AttributeName: &keySchemaElement.AttributeName,
+			AttributeName: &attributeName,
 			KeyType:       dynamodbtypes.KeyType(keySchemaElement.KeyType),
 		}
 
@@ -438,6 +442,7 @@ func mapTypesToDynamoKeySchemaElementsPointer(input []*types.KeySchemaElement) [
 	}
 
 	output := []dynamodbtypes.KeySchemaElement{}
+
 	for _, keySchemaElement := range input {
 		keySchemaElementOutput := dynamodbtypes.KeySchemaElement{
 			AttributeName: &keySchemaElement.AttributeName,

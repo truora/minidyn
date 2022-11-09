@@ -546,7 +546,7 @@ func TestUpdate(t *testing.T) {
 	c.NoError(err)
 
 	updateInput := &types.UpdateItemInput{}
-	result, err := newTable.Update(updateInput)
+	_, err = newTable.Update(updateInput)
 	c.Contains(err.Error(), "number of conditions on the keys is invalid;")
 
 	updateInput = &types.UpdateItemInput{
@@ -559,18 +559,18 @@ func TestUpdate(t *testing.T) {
 		Key: item,
 	}
 
-	result, err = newTable.Update(updateInput)
+	_, err = newTable.Update(updateInput)
 	c.Contains(err.Error(), "invalid update expression")
 
 	updateInput.ConditionExpression = types.ToString("attribute_not_exists(#id)")
 
-	result, err = newTable.Update(updateInput)
+	_, err = newTable.Update(updateInput)
 	c.Contains(err.Error(), "conditional request failed")
 
 	updateInput.ConditionExpression = types.ToString("attribute_exists(id)")
 	updateInput.UpdateExpression = "SET id = :id"
 
-	result, err = newTable.Update(updateInput)
+	result, err := newTable.Update(updateInput)
 	c.NoError(err)
 	c.Equal("002", types.StringValue(result["id"].S))
 
@@ -696,6 +696,7 @@ func TestInterpreterMatch(t *testing.T) {
 
 	newTable.UseNativeInterpreter = false
 	matchInput.Expression = "bad_expression(id)"
+
 	c.Panics(func() { newTable.interpreterMatch(matchInput) })
 }
 
@@ -777,6 +778,7 @@ func TestFetchQueryData(t *testing.T) {
 	input.Item = item
 	_, err = newTable.Put(input)
 	c.NoError(err)
+
 	item = createPokemon(pokemon{
 		ID:   "005",
 		Type: "grass",
@@ -785,6 +787,7 @@ func TestFetchQueryData(t *testing.T) {
 	input.Item = item
 	_, err = newTable.Put(input)
 	c.NoError(err)
+
 	item = createPokemon(pokemon{
 		ID:   "004",
 		Type: "grass",
@@ -793,6 +796,7 @@ func TestFetchQueryData(t *testing.T) {
 	input.Item = item
 	_, err = newTable.Put(input)
 	c.NoError(err)
+
 	item = createPokemon(pokemon{
 		ID:   "006",
 		Type: "grass",

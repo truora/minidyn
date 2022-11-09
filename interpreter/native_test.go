@@ -8,8 +8,7 @@ import (
 )
 
 var (
-	boolTrue  = true
-	boolFalse = false
+	boolTrue = true
 )
 
 func TestNativeMatch(t *testing.T) {

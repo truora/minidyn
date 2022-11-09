@@ -7,6 +7,7 @@ import (
 	"github.com/truora/minidyn/types"
 )
 
+// QueryInput struct to represent a query input
 type QueryInput struct {
 	Index                     string
 	ExpressionAttributeValues map[string]*types.Item
@@ -21,7 +22,7 @@ type QueryInput struct {
 	started                   bool
 }
 
-// Table has the Indexes and the operation functions
+// Table struct to mock a dynamodb table
 type Table struct {
 	Name                 string
 	Indexes              map[string]*index
@@ -35,6 +36,7 @@ type Table struct {
 	LangInterpreter      interpreter.Language
 }
 
+// NewTable creates a new Table
 func NewTable(name string) *Table {
 	return &Table{
 		Name:          name,
@@ -45,6 +47,7 @@ func NewTable(name string) *Table {
 	}
 }
 
+// SetAttributeDefinition sets the attribute definition of a table
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {
 		t.AttributesDef[*attr.AttributeName] = *attr.AttributeType
@@ -70,18 +73,16 @@ func parseKeySchema(schema []*types.KeySchemaElement) (keySchema, error) {
 	return ks, nil
 }
 
+// CreatePrimaryIndex creates the primary index of a table
 func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	ks, err := parseKeySchema(input.KeySchema)
 	if err != nil {
 		return err
 	}
 
-	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return types.NewError("ValidationException", "Hash Key not specified in Attribute Definitions.", nil)
-	}
-
-	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return types.NewError("ValidationException", "Range Key not specified in Attribute Definitions.", nil)
+	err = validateKeySchemaPrimaryIndex(t, ks)
+	if err != nil {
+		return err
 	}
 
 	// types-local check this after validate the key schema
@@ -93,6 +94,18 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	}
 
 	t.KeySchema = ks
+
+	return nil
+}
+
+func validateKeySchemaPrimaryIndex(t *Table, ks keySchema) error {
+	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
+		return types.NewError("ValidationException", "Hash Key not specified in Attribute Definitions.", nil)
+	}
+
+	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
+		return types.NewError("ValidationException", "Range Key not specified in Attribute Definitions.", nil)
+	}
 
 	return nil
 }
@@ -110,12 +123,9 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 		return nil, err
 	}
 
-	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return nil, types.NewError("ValidationException", "Global Secondary Index hash key not specified in Attribute Definitions.", nil)
-	}
-
-	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return nil, types.NewError("ValidationException", "Global Secondary Index range key not specified in Attribute Definitions.", nil)
+	err = validateKeySchemaGSI(t, ks)
+	if err != nil {
+		return nil, err
 	}
 
 	i := newIndex(t, indexTypeGlobal, ks)
@@ -124,6 +134,19 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 	return i, nil
 }
 
+func validateKeySchemaGSI(t *Table, ks keySchema) error {
+	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
+		return types.NewError("ValidationException", "Global Secondary Index hash key not specified in Attribute Definitions.", nil)
+	}
+
+	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
+		return types.NewError("ValidationException", "Global Secondary Index range key not specified in Attribute Definitions.", nil)
+	}
+
+	return nil
+}
+
+// ApplyIndexChange applies the index change
 func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error {
 	switch {
 	case change.Create != nil:
@@ -145,6 +168,7 @@ func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error
 	return nil
 }
 
+// AddGlobalIndexes adds global indexes to a table
 func (t *Table) AddGlobalIndexes(input []*types.GlobalSecondaryIndex) error {
 	if input != nil && len(input) == 0 {
 		return types.NewError("ValidationException", "GSI list is empty/invalid", nil)
@@ -205,6 +229,7 @@ func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 	return i, nil
 }
 
+// AddLocalIndexes adds local indexes to a table
 func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 	if input != nil && len(input) == 0 {
 		return types.NewError("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
@@ -303,6 +328,7 @@ func shouldBreakPage(count, limit int64) bool {
 	return limit != 0 && limit == count
 }
 
+// GetKeyAt returns the key value in a given position
 func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 	if !forward {
 		return sortedKeys[size-1-int64(pos)]
@@ -311,6 +337,7 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 	return sortedKeys[pos]
 }
 
+// SearchData quiery the table based on the input
 func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item) {
 	items := []map[string]*types.Item{}
 	limit := input.Limit
@@ -447,11 +474,13 @@ func (t *Table) getItem(key string) map[string]*types.Item {
 	return item
 }
 
+// Clear removes data and sorted keys from a table
 func (t *Table) Clear() {
 	t.SortedKeys = []string{}
 	t.Data = map[string]map[string]*types.Item{}
 }
 
+// Put puts items into table
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 	item := copyItem(input.Item)
 
@@ -495,6 +524,7 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 	return t.LangInterpreter.Update(input)
 }
 
+// Update updates an item in the table based on the input
 func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, error) {
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
@@ -520,7 +550,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 		_, matched := t.matchKey(query, item)
 		if !matched {
-			return nil, &types.ConditionalCheckFailedException{Message_: ErrConditionalRequestFailed.Error()}
+			return nil, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
 		}
 	}
 
@@ -555,6 +585,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 	return copyItem(item), nil
 }
 
+// Delete deletes an item in the table based on the input
 func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) {
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
@@ -592,6 +623,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 	return item, nil
 }
 
+// Description returns the description of a table
 func (t *Table) Description(name string) *types.TableDescription {
 	// TODO: implement other fields for TableDescription
 	gsi, lsi := t.IndexesDescription()
@@ -605,6 +637,7 @@ func (t *Table) Description(name string) *types.TableDescription {
 	}
 }
 
+// IndexesDescription returns the description of the table indexes
 func (t *Table) IndexesDescription() ([]types.GlobalSecondaryIndexDescription, []types.LocalSecondaryIndexDescription) {
 	gsi := []types.GlobalSecondaryIndexDescription{}
 	lsi := []types.LocalSecondaryIndexDescription{}

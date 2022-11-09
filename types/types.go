@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/private/protocol"
 )
 
+// Item describes the DynamoDB item structure
 type Item struct {
 	_ struct{} `type:"structure"`
 
@@ -70,36 +71,41 @@ type Item struct {
 	SS []*string `type:"list"`
 }
 
+// AttributeDefinition represents an attribute for describing the key schema for the table and indexes.
 type AttributeDefinition struct {
 	_             struct{} `type:"structure"`
 	AttributeName *string  `min:"1" type:"string" required:"true"`
 	AttributeType *string  `type:"string" required:"true" enum:"ScalarAttributeType"`
 }
 
+// KeySchemaElement represents a single element of a key schema
 type KeySchemaElement struct {
 	_             struct{} `type:"structure"`
 	AttributeName string   `min:"1" type:"string" required:"true"`
 	KeyType       string   `type:"string" required:"true" enum:"KeyType"`
 }
 
+// ProvisionedThroughput represents the provisioned throughput settings for a specified table or index.
 type ProvisionedThroughput struct {
 	_                  struct{} `type:"structure"`
 	ReadCapacityUnits  int64    `min:"1" type:"long" required:"true"`
 	WriteCapacityUnits int64    `min:"1" type:"long" required:"true"`
 }
 
+// CreateTableInput input to create a table
 type CreateTableInput struct {
 	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
 	KeySchema             []*KeySchemaElement    `min:"1" type:"list" required:"true"`
 }
 
+// Projection represents attributes that are copied (projected) from the table into an index
 type Projection struct {
 	_                struct{}  `type:"structure"`
 	NonKeyAttributes []*string `min:"1" type:"list"`
 	ProjectionType   *string   `type:"string" enum:"ProjectionType"`
 }
 
-// Represents the properties of a global secondary index.
+// GlobalSecondaryIndex represents the properties of a global secondary index.
 type GlobalSecondaryIndex struct {
 	_                     struct{}               `type:"structure"`
 	IndexName             *string                `min:"3" type:"string" required:"true"`
@@ -108,6 +114,7 @@ type GlobalSecondaryIndex struct {
 	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
 }
 
+// GlobalSecondaryIndexUpdate represents the properties of a global secondary index update
 type GlobalSecondaryIndexUpdate struct {
 	_      struct{}                          `type:"structure"`
 	Create *CreateGlobalSecondaryIndexAction `type:"structure"`
@@ -115,21 +122,20 @@ type GlobalSecondaryIndexUpdate struct {
 	Update *UpdateGlobalSecondaryIndexAction `type:"structure"`
 }
 
-// Represents the new provisioned throughput settings to be applied to a global
-// secondary index.
+// UpdateGlobalSecondaryIndexAction struct to handle updates in index
 type UpdateGlobalSecondaryIndexAction struct {
 	_                     struct{}               `type:"structure"`
 	IndexName             *string                `min:"3" type:"string" required:"true"`
 	ProvisionedThroughput *ProvisionedThroughput `type:"structure" required:"true"`
 }
 
-// Represents a global secondary index to be deleted from an existing table.
+// DeleteGlobalSecondaryIndexAction struct to handle the deletion of a index
 type DeleteGlobalSecondaryIndexAction struct {
 	_         struct{} `type:"structure"`
 	IndexName *string  `min:"3" type:"string" required:"true"`
 }
 
-// Represents a new global secondary index to be added to an existing table.
+// CreateGlobalSecondaryIndexAction represents a new global secondary index to be added to an existing table.
 type CreateGlobalSecondaryIndexAction struct {
 	_                     struct{}               `type:"structure"`
 	IndexName             *string                `min:"3" type:"string" required:"true"`
@@ -138,7 +144,7 @@ type CreateGlobalSecondaryIndexAction struct {
 	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
 }
 
-// Represents the properties of a local secondary index.
+// LocalSecondaryIndex represents the properties of a local secondary index.
 type LocalSecondaryIndex struct {
 	_          struct{}            `type:"structure"`
 	IndexName  *string             `min:"3" type:"string" required:"true"`
@@ -146,7 +152,7 @@ type LocalSecondaryIndex struct {
 	Projection *Projection         `type:"structure" required:"true"`
 }
 
-// Represents the properties of a global secondary index.
+// GlobalSecondaryIndexDescription represents the properties of a global secondary index.
 type GlobalSecondaryIndexDescription struct {
 	_              struct{}           `type:"structure"`
 	Backfilling    *bool              `type:"boolean"`
@@ -159,7 +165,7 @@ type GlobalSecondaryIndexDescription struct {
 	Projection     *Projection        `type:"structure"`
 }
 
-// Represents the properties of a local secondary index.
+// LocalSecondaryIndexDescription represents the properties of a local secondary index.
 type LocalSecondaryIndexDescription struct {
 	_              struct{}           `type:"structure"`
 	IndexArn       *string            `type:"string"`
@@ -170,11 +176,11 @@ type LocalSecondaryIndexDescription struct {
 	Projection     *Projection        `type:"structure"`
 }
 
-// A condition specified in the operation could not be evaluated.
+// ConditionalCheckFailedException a condition specified in the operation could not be evaluated.
 type ConditionalCheckFailedException struct {
 	_            struct{}                  `type:"structure"`
 	RespMetadata protocol.ResponseMetadata `json:"-" xml:"-"`
-	Message_     string                    `locationName:"message" type:"string"`
+	MessageText  string                    `locationName:"message" type:"string"`
 }
 
 // String returns the string representation
@@ -187,12 +193,6 @@ func (s ConditionalCheckFailedException) GoString() string {
 	return s.String()
 }
 
-func newErrorConditionalCheckFailedException(v protocol.ResponseMetadata) error {
-	return &ConditionalCheckFailedException{
-		RespMetadata: v,
-	}
-}
-
 // Code returns the exception type name.
 func (s *ConditionalCheckFailedException) Code() string {
 	return "ConditionalCheckFailedException"
@@ -200,9 +200,10 @@ func (s *ConditionalCheckFailedException) Code() string {
 
 // Message returns the exception's message.
 func (s *ConditionalCheckFailedException) Message() string {
-	if s.Message_ != "" {
-		return s.Message_
+	if s.MessageText != "" {
+		return s.MessageText
 	}
+
 	return ""
 }
 
@@ -215,7 +216,7 @@ func (s *ConditionalCheckFailedException) Error() string {
 	return fmt.Sprintf("%s: %s", s.Code(), s.Message())
 }
 
-// Status code returns the HTTP status code for the request's response error.
+// StatusCode returns the HTTP status code for the request's response error.
 func (s *ConditionalCheckFailedException) StatusCode() int {
 	return s.RespMetadata.StatusCode
 }
@@ -225,7 +226,7 @@ func (s *ConditionalCheckFailedException) RequestID() string {
 	return s.RespMetadata.RequestID
 }
 
-// Represents the input of a PutItem operation.
+// PutItemInput represents the input of a PutItem operation.
 type PutItemInput struct {
 	_                           struct{}          `type:"structure"`
 	ConditionExpression         *string           `type:"string"`
@@ -239,7 +240,7 @@ type PutItemInput struct {
 	TableName                   *string           `min:"3" type:"string" required:"true"`
 }
 
-// Represents the input of an UpdateItem operation.
+// UpdateItemInput represents the input of an UpdateItem operation.
 type UpdateItemInput struct {
 	_                           struct{}                           `type:"structure"`
 	AttributeUpdates            map[string]*AttributeValueUpdate   `type:"map"`
@@ -256,7 +257,7 @@ type UpdateItemInput struct {
 	UpdateExpression            string                             `type:"string"`
 }
 
-// Represents the input of a DeleteItem operation.
+// DeleteItemInput represents the input of a DeleteItem operation.
 type DeleteItemInput struct {
 	_                           struct{}                           `type:"structure"`
 	ConditionExpression         *string                            `type:"string"`
@@ -271,6 +272,7 @@ type DeleteItemInput struct {
 	TableName                   *string                            `min:"3" type:"string" required:"true"`
 }
 
+// ExpectedAttributeValue represents a condition to be compared with an attribute value
 type ExpectedAttributeValue struct {
 	_                  struct{} `type:"structure"`
 	AttributeValueList []*Item  `type:"list"`
@@ -279,13 +281,15 @@ type ExpectedAttributeValue struct {
 	Value              *Item    `type:"structure"`
 }
 
+// AttributeValueUpdate represents the attributes to be modified, the
+// action to perform on each, and the new value for each.
 type AttributeValueUpdate struct {
 	_      struct{} `type:"structure"`
 	Action *string  `type:"string" enum:"AttributeAction"`
 	Value  Item     `type:"structure"`
 }
 
-// Represents the properties of a table.
+// TableDescription represents the properties of a table.
 type TableDescription struct {
 	_                      struct{}                          `type:"structure"`
 	GlobalSecondaryIndexes []GlobalSecondaryIndexDescription `type:"list"`
@@ -296,16 +300,18 @@ type TableDescription struct {
 	LatestStreamLabel      string                            `type:"string"`
 	LocalSecondaryIndexes  []LocalSecondaryIndexDescription  `type:"list"`
 	TableArn               string                            `type:"string"`
-	TableId                string                            `type:"string"`
+	TableID                string                            `type:"string"`
 	TableName              string                            `min:"3" type:"string"`
 	TableSizeBytes         int64                             `type:"long"`
 	TableStatus            string                            `type:"string" enum:"TableStatus"`
 }
 
+// ToString returns the pointer of a string
 func ToString(str string) *string {
 	return &str
 }
 
+// StringValue returns the string value of a string pointer
 func StringValue(str *string) string {
 	if str == nil {
 		return ""

@@ -20,6 +20,7 @@ var (
 )
 
 const (
+	// PrimaryIndexName default primary index name
 	PrimaryIndexName = ""
 )
 

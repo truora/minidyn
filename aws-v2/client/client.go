@@ -33,6 +33,7 @@ var (
 	expressionAttributeValuesRegex = regexp.MustCompile("^:[A-Za-z0-9_]+$")
 )
 
+// FakeClient mocks the Dynamodb client
 type FakeClient interface {
 	CreateTable(ctx context.Context, input *dynamodb.CreateTableInput, opt ...func(*dynamodb.Options)) (*dynamodb.CreateTableOutput, error)
 	DeleteTable(ctx context.Context, input *dynamodb.DeleteTableInput, opt ...func(*dynamodb.Options)) (*dynamodb.DeleteTableOutput, error)

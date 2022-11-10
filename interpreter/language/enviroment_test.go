@@ -3,7 +3,7 @@ package language
 import (
 	"testing"
 
-	"github.com/ldelacruztruora/minidyn/types"
+	"github.com/truora/minidyn/types"
 )
 
 func TestString(t *testing.T) {

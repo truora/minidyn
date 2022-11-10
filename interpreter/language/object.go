@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ldelacruztruora/minidyn/types"
+	"github.com/truora/minidyn/types"
 )
 
 var (

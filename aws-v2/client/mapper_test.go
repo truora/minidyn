@@ -5,8 +5,8 @@ import (
 
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/ldelacruztruora/minidyn/types"
 	"github.com/stretchr/testify/require"
+	"github.com/truora/minidyn/types"
 )
 
 func TestMapDynamoToTypesStringSlice(t *testing.T) {

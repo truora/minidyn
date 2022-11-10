@@ -3,7 +3,7 @@ package interpreter
 import (
 	"errors"
 
-	"github.com/ldelacruztruora/minidyn/types"
+	"github.com/truora/minidyn/types"
 )
 
 var (

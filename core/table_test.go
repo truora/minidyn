@@ -3,9 +3,9 @@ package core
 import (
 	"testing"
 
-	"github.com/ldelacruztruora/minidyn/interpreter"
-	"github.com/ldelacruztruora/minidyn/types"
 	"github.com/stretchr/testify/require"
+	"github.com/truora/minidyn/interpreter"
+	"github.com/truora/minidyn/types"
 )
 
 var tableName = "pokemons"

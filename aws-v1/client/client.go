@@ -12,8 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
-	"github.com/ldelacruztruora/minidyn/core"
-	"github.com/ldelacruztruora/minidyn/interpreter"
+	"github.com/truora/minidyn/core"
+	"github.com/truora/minidyn/interpreter"
 )
 
 const (

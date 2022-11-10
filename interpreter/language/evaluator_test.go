@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ldelacruztruora/minidyn/types"
+	"github.com/truora/minidyn/types"
 )
 
 var (

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ldelacruztruora/minidyn/interpreter"
-	"github.com/ldelacruztruora/minidyn/types"
+	"github.com/truora/minidyn/interpreter"
+	"github.com/truora/minidyn/types"
 )
 
 // QueryInput struct to represent a query input

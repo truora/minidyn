@@ -1,4 +1,4 @@
-package minidyn
+package client
 
 import (
 	"testing"
@@ -75,7 +75,7 @@ func TestAddIndex(t *testing.T) {
 	err = AddIndex(client, tableName, "index", "hk", "rk")
 	c.NoError(err)
 
-	c.Len(client.tables[tableName].indexes, 1)
+	c.Len(client.tables[tableName].Indexes, 1)
 }
 
 func BenchmarkClearTable(b *testing.B) {

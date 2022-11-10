@@ -2,6 +2,9 @@ package language
 
 import (
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/truora/minidyn/types"
 )
 
 func TestFunctionInspect(t *testing.T) {
@@ -14,8 +17,8 @@ func TestFunctionInspect(t *testing.T) {
 		t.Fatalf("not equal actual=%s expected=%s", fn.Inspect(), "attribute_exists")
 	}
 
-	if fn.ToDynamoDB() != nil {
-		t.Fatalf("not nil actual=%s", fn.ToDynamoDB())
+	if !cmp.Equal(fn.ToDynamoDB(), types.Item{}) {
+		t.Fatalf("not empty actual=%v", fn.ToDynamoDB())
 	}
 }
 

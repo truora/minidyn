@@ -1,6 +1,6 @@
 package language
 
-// Lexer DynamoDB expression lexer
+// Lexer types expression lexer
 type Lexer struct {
 	input    string
 	position int

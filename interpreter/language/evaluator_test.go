@@ -4,8 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
+)
+
+var (
+	boolTrue  = true
+	boolFalse = false
 )
 
 func TestEval(t *testing.T) {
@@ -109,50 +113,50 @@ func TestEval(t *testing.T) {
 		"#alias_field_name": "field_name",
 	}
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":a":        {BOOL: aws.Bool(true)},
-		":b":        {BOOL: aws.Bool(false)},
-		":s":        {S: aws.String("HELLO WORLD!")},
-		":x":        {N: aws.String("24")},
-		":y":        {N: aws.String("25")},
-		":z":        {N: aws.String("26")},
-		":txtA":     {S: aws.String("a")},
-		":txtB":     {S: aws.String("b")},
-		":txtC":     {S: aws.String("c")},
+	err := env.AddAttributes(map[string]*types.Item{
+		":a":        {BOOL: &boolTrue},
+		":b":        {BOOL: &boolFalse},
+		":s":        {S: types.ToString("HELLO WORLD!")},
+		":x":        {N: types.ToString("24")},
+		":y":        {N: types.ToString("25")},
+		":z":        {N: types.ToString("26")},
+		":txtA":     {S: types.ToString("a")},
+		":txtB":     {S: types.ToString("b")},
+		":txtC":     {S: types.ToString("c")},
 		":binA":     {B: []byte("a")},
 		":binB":     {B: []byte("b")},
 		":binC":     {B: []byte("c")},
-		":nil":      {NULL: aws.Bool(true)},
-		":otherNil": {NULL: aws.Bool(true)},
+		":nil":      {NULL: &boolTrue},
+		":otherNil": {NULL: &boolTrue},
 		":hashA": {
-			M: map[string]*dynamodb.AttributeValue{
-				":a": {BOOL: aws.Bool(true)},
+			M: map[string]*types.Item{
+				":a": {BOOL: &boolTrue},
 			},
 		},
 		":hashB": {
-			M: map[string]*dynamodb.AttributeValue{
-				":b": {BOOL: aws.Bool(true)},
+			M: map[string]*types.Item{
+				":b": {BOOL: &boolTrue},
 			},
 		},
 		":listA": {
-			L: []*dynamodb.AttributeValue{
-				{S: aws.String("a")},
-				{S: aws.String("b")},
-				{S: aws.String("c")},
+			L: []*types.Item{
+				{S: types.ToString("a")},
+				{S: types.ToString("b")},
+				{S: types.ToString("c")},
 			},
 		},
 		":listB": {
-			L: []*dynamodb.AttributeValue{
-				{S: aws.String("x")},
-				{S: aws.String("y")},
-				{S: aws.String("z")},
+			L: []*types.Item{
+				{S: types.ToString("x")},
+				{S: types.ToString("y")},
+				{S: types.ToString("z")},
 			},
 		},
 		":strSetA": {
-			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
+			SS: []*string{types.ToString("a"), types.ToString("a"), types.ToString("b")},
 		},
 		":strSetB": {
-			SS: []*string{aws.String("x"), aws.String("x"), aws.String("y")},
+			SS: []*string{types.ToString("x"), types.ToString("x"), types.ToString("y")},
 		},
 		":binSetA": {
 			BS: [][]byte{[]byte("a"), []byte("a"), []byte("b")},
@@ -161,28 +165,28 @@ func TestEval(t *testing.T) {
 			BS: [][]byte{[]byte("x"), []byte("x"), []byte("y")},
 		},
 		":numSetA": {
-			NS: []*string{aws.String("1"), aws.String("2"), aws.String("4")},
+			NS: []*string{types.ToString("1"), types.ToString("2"), types.ToString("4")},
 		},
 		":numSetB": {
-			NS: []*string{aws.String("10"), aws.String("10"), aws.String("11")},
+			NS: []*string{types.ToString("10"), types.ToString("10"), types.ToString("11")},
 		},
 		":matrix": {
-			L: []*dynamodb.AttributeValue{
-				{L: []*dynamodb.AttributeValue{
-					{S: aws.String("a")},
-					{S: aws.String("b")},
+			L: []*types.Item{
+				{L: []*types.Item{
+					{S: types.ToString("a")},
+					{S: types.ToString("b")},
 				}},
-				{L: []*dynamodb.AttributeValue{
-					{S: aws.String("c")},
+				{L: []*types.Item{
+					{S: types.ToString("c")},
 				}},
 			},
 		},
-		":listIndex": {N: aws.String("0")},
+		":listIndex": {N: types.ToString("0")},
 		":nestedMap": {
-			M: map[string]*dynamodb.AttributeValue{
+			M: map[string]*types.Item{
 				"lvl1": {
-					M: map[string]*dynamodb.AttributeValue{
-						"lvl2": {BOOL: aws.Bool(true)},
+					M: map[string]*types.Item{
+						"lvl2": {BOOL: &boolTrue},
 					},
 				},
 			},
@@ -221,31 +225,31 @@ func TestEvalFunctions(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":s":       {S: aws.String("HELLO WORLD!")},
-		":sSize":   {N: aws.String("12")},
-		":type":    {S: aws.String("S")},
+	err := env.AddAttributes(map[string]*types.Item{
+		":s":       {S: types.ToString("HELLO WORLD!")},
+		":sSize":   {N: types.ToString("12")},
+		":type":    {S: types.ToString("S")},
 		":bin":     {B: []byte{10, 10, 10}},
-		":binSize": {N: aws.String("3")},
-		":prefix":  {S: aws.String("HELLO")},
-		":subtext": {S: aws.String("ELL")},
-		":element": {S: aws.String("a")},
-		":num":     {N: aws.String("1")},
+		":binSize": {N: types.ToString("3")},
+		":prefix":  {S: types.ToString("HELLO")},
+		":subtext": {S: types.ToString("ELL")},
+		":element": {S: types.ToString("a")},
+		":num":     {N: types.ToString("1")},
 		":list": {
-			L: []*dynamodb.AttributeValue{
-				{S: aws.String("a")},
-				{S: aws.String("b")},
-				{S: aws.String("c")},
+			L: []*types.Item{
+				{S: types.ToString("a")},
+				{S: types.ToString("b")},
+				{S: types.ToString("c")},
 			},
 		},
 		":strSet": {
-			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
+			SS: []*string{types.ToString("a"), types.ToString("a"), types.ToString("b")},
 		},
 		":binSet": {
 			BS: [][]byte{{10, 10, 10}},
 		},
 		":numSet": {
-			NS: []*string{aws.String("1"), aws.String("2"), aws.String("4")},
+			NS: []*string{types.ToString("1"), types.ToString("2"), types.ToString("4")},
 		},
 	})
 	if err != nil {
@@ -263,38 +267,38 @@ func TestEvalFunctions(t *testing.T) {
 func startEvalUpdateEnv(t *testing.T) *Environment {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":    {BOOL: aws.Bool(true)},
-		":val":  {S: aws.String("text")},
-		":one":  {N: aws.String("1")},
+	err := env.AddAttributes(map[string]*types.Item{
+		":x":    {BOOL: &boolTrue},
+		":val":  {S: types.ToString("text")},
+		":one":  {N: types.ToString("1")},
 		":bin":  {B: []byte("c")},
-		":list": {L: []*dynamodb.AttributeValue{{N: aws.String("0")}}},
+		":list": {L: []*types.Item{{N: types.ToString("0")}}},
 		":hash": {
-			M: map[string]*dynamodb.AttributeValue{
-				"a": {BOOL: aws.Bool(true)},
+			M: map[string]*types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
-		":mapField": {S: aws.String("key")},
+		":mapField": {S: types.ToString("key")},
 		":matrix": {
-			L: []*dynamodb.AttributeValue{
-				{L: []*dynamodb.AttributeValue{{N: aws.String("0")}}},
+			L: []*types.Item{
+				{L: []*types.Item{{N: types.ToString("0")}}},
 			},
 		},
 		":nestedMap": {
-			M: map[string]*dynamodb.AttributeValue{
+			M: map[string]*types.Item{
 				"lvl1": {
-					M: map[string]*dynamodb.AttributeValue{
-						"lvl2": {N: aws.String("0")},
+					M: map[string]*types.Item{
+						"lvl2": {N: types.ToString("0")},
 					},
 				},
 			},
 		},
 
 		":strSet": {
-			SS: []*string{aws.String("a"), aws.String("a"), aws.String("b")},
+			SS: []*string{types.ToString("a"), types.ToString("a"), types.ToString("b")},
 		},
 		":a": {
-			S: aws.String("a"),
+			S: types.ToString("a"),
 		},
 		":binSet": {
 			BS: [][]byte{[]byte("a"), []byte("b")},
@@ -303,19 +307,20 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 			B: []byte("a"),
 		},
 		":numSet": {
-			NS: []*string{aws.String("2"), aws.String("4")},
+			NS: []*string{types.ToString("2"), types.ToString("4")},
 		},
 		":two": {
-			N: aws.String("2"),
+			N: types.ToString("2"),
 		},
-		":tools": {L: []*dynamodb.AttributeValue{
-			{S: aws.String("Chisel")},
-			{S: aws.String("Hammer")},
-			{S: aws.String("Nails")},
-			{S: aws.String("Screwdriver")},
-			{S: aws.String("Hacksaw")},
+		":tools": {L: []*types.Item{
+			{S: types.ToString("Chisel")},
+			{S: types.ToString("Hammer")},
+			{S: types.ToString("Nails")},
+			{S: types.ToString("Screwdriver")},
+			{S: types.ToString("Hacksaw")},
 		}},
 	})
+
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
 	}
@@ -446,11 +451,11 @@ func TestEvalAddUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"ADD :one :one", ":one", &Number{Value: 2}, false},
-		{"ADD :numSet :one", ":numSet", &NumberSet{Value: map[float64]bool{1: true, 2: true, 4: true}}, false},
-		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, false},
-		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": true, "b": true, "text": true}}, false},
-		{"ADD newVal :val", ":val", &String{Value: "text"}, false},
+		{"ADD :one :one", ":one", &Number{Value: 2}, boolFalse},
+		{"ADD :numSet :one", ":numSet", &NumberSet{Value: map[float64]bool{1: boolTrue, 2: boolTrue, 4: boolTrue}}, boolFalse},
+		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, boolFalse},
+		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": boolTrue, "b": boolTrue, "text": boolTrue}}, boolFalse},
+		{"ADD newVal :val", ":val", &String{Value: "text"}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -480,10 +485,10 @@ func TestEvalRemoveUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"REMOVE :binSet", ":binSet", NULL, false},
-		{"REMOVE :binSet,:a", ":a", NULL, false},
-		{"REMOVE :tools[1], :tools[2]", ":tools", &List{Value: []Object{&String{Value: "Chisel"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}}, false},
-		{"REMOVE :nestedMap.lvl1.lvl2", ":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{}}}}, false},
+		{"REMOVE :binSet", ":binSet", NULL, boolFalse},
+		{"REMOVE :binSet,:a", ":a", NULL, boolFalse},
+		{"REMOVE :tools[1], :tools[2]", ":tools", &List{Value: []Object{&String{Value: "Chisel"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}}, boolFalse},
+		{"REMOVE :nestedMap.lvl1.lvl2", ":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{}}}}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -513,9 +518,9 @@ func TestEvalDELETEUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"DELETE :binSet :binA", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, false},
-		{"DELETE :strSet :a", ":strSet", &StringSet{Value: map[string]bool{"b": true}}, false},
-		{"DELETE :numSet :two", ":numSet", &NumberSet{Value: map[float64]bool{4: true}}, false},
+		{"DELETE :binSet :binA", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, boolFalse},
+		{"DELETE :strSet :a", ":strSet", &StringSet{Value: map[string]bool{"b": boolTrue}}, boolFalse},
+		{"DELETE :numSet :two", ":numSet", &NumberSet{Value: map[float64]bool{4: boolTrue}}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -631,16 +636,16 @@ func TestErrorHandling(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":a":   {BOOL: aws.Bool(true)},
-		":b":   {BOOL: aws.Bool(false)},
-		":x":   {N: aws.String("24")},
-		":y":   {N: aws.String("25")},
-		":z":   {N: aws.String("26")},
-		":str": {S: aws.String("TEXT")},
-		":nil": {NULL: aws.Bool(true)},
-		":list": {L: []*dynamodb.AttributeValue{
-			{S: aws.String("a")},
+	err := env.AddAttributes(map[string]*types.Item{
+		":a":   {BOOL: &boolTrue},
+		":b":   {BOOL: &boolFalse},
+		":x":   {N: types.ToString("24")},
+		":y":   {N: types.ToString("25")},
+		":z":   {N: types.ToString("26")},
+		":str": {S: types.ToString("TEXT")},
+		":nil": {NULL: &boolTrue},
+		":list": {L: []*types.Item{
+			{S: types.ToString("a")},
 		}},
 	})
 	if err != nil {
@@ -687,9 +692,9 @@ func TestEvalUpdateReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":status": {S: aws.String("healthy")},
-		":keys":   {SS: []*string{aws.String("Key"), aws.String("Another Key")}},
+	err := env.AddAttributes(map[string]*types.Item{
+		":status": {S: types.ToString("healthy")},
+		":keys":   {SS: []*string{types.ToString("Key"), types.ToString("Another Key")}},
 	})
 	if err != nil {
 		panic(err)
@@ -731,12 +736,12 @@ func TestEvalReservedKeywords(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":y":   {N: aws.String("25")},
-		":str": {S: aws.String("TEXT")},
+	err := env.AddAttributes(map[string]*types.Item{
+		":y":   {N: types.ToString("25")},
+		":str": {S: types.ToString("TEXT")},
 		":obj": {
-			M: map[string]*dynamodb.AttributeValue{
-				"a": {BOOL: aws.Bool(true)},
+			M: map[string]*types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
 	})
@@ -771,56 +776,56 @@ func TestEvalReservedKeywords(t *testing.T) {
 func TestIsError(t *testing.T) {
 	b := isError(nil)
 	if b {
-		t.Fatal("expected to be false")
+		t.Fatal("expected to be boolFalse")
 	}
 
 	err := newError("testing")
 
 	b = isError(err)
 	if !b {
-		t.Fatal("expected to be true")
+		t.Fatal("expected to be boolTrue")
 	}
 }
 
 func TestIsNumber(t *testing.T) {
 	if isNumber(nil) {
-		t.Fatal("expected to be false")
+		t.Fatal("expected to be boolFalse")
 	}
 
 	num := Number{Value: 10}
 	if !isNumber(&num) {
-		t.Fatal("expected to be true")
+		t.Fatal("expected to be boolTrue")
 	}
 }
 
 func TestIsString(t *testing.T) {
 	if isString(nil) {
-		t.Fatal("expected to be false")
+		t.Fatal("expected to be boolFalse")
 	}
 
 	str := String{Value: "txt"}
 	if !isString(&str) {
-		t.Fatal("expected to be true")
+		t.Fatal("expected to be boolTrue")
 	}
 }
 
 func TestEvalErrors(t *testing.T) {
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":   {BOOL: aws.Bool(true)},
-		":val": {S: aws.String("text")},
-		":one": {N: aws.String("1")},
+	err := env.AddAttributes(map[string]*types.Item{
+		":x":   {BOOL: &boolTrue},
+		":val": {S: types.ToString("text")},
+		":one": {N: types.ToString("1")},
 		":h": {
-			M: map[string]*dynamodb.AttributeValue{
-				"a": {BOOL: aws.Bool(true)},
+			M: map[string]*types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
 		":voidVal": {
-			NULL: aws.Bool(true),
+			NULL: &boolTrue,
 		},
-		":list": {L: []*dynamodb.AttributeValue{
-			{S: aws.String("a")},
+		":list": {L: []*types.Item{
+			{S: types.ToString("a")},
 		}},
 	})
 	if err != nil {
@@ -839,25 +844,6 @@ func TestEvalErrors(t *testing.T) {
 				return evalBangOperatorExpression(arg)
 			},
 			expected: newError("unknown operator: NOT S"),
-		},
-		{
-			inputs: []interface{}{&IndexExpression{
-				Token: Token{Type: LBRACKET, Literal: "["},
-				Left: &Identifier{
-					Token: Token{Type: IDENT, Literal: "a"},
-					Value: "a",
-				},
-				Index: &Identifier{
-					Token: Token{Type: LPAREN, Literal: "("},
-					Value: ":i",
-				}}, env},
-			function: func(args ...interface{}) Object {
-				arg := args[0].(*IndexExpression)
-				arg1 := args[1].(*Environment)
-				_, _, err := evalIndexPositions(arg, arg1)
-				return err
-			},
-			expected: newError("index operator not supported: got \":i\""),
 		},
 		{
 			inputs: []interface{}{
@@ -963,20 +949,20 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":x":   {BOOL: aws.Bool(true)},
-		":val": {S: aws.String("text")},
-		":one": {N: aws.String("1")},
+	err := env.AddAttributes(map[string]*types.Item{
+		":x":   {BOOL: &boolTrue},
+		":val": {S: types.ToString("text")},
+		":one": {N: types.ToString("1")},
 		":h": {
-			M: map[string]*dynamodb.AttributeValue{
-				"a": {BOOL: aws.Bool(true)},
+			M: map[string]*types.Item{
+				"a": {BOOL: &boolTrue},
 			},
 		},
 		":voidVal": {
-			NULL: aws.Bool(true),
+			NULL: &boolTrue,
 		},
-		":list": {L: []*dynamodb.AttributeValue{
-			{S: aws.String("a")},
+		":list": {L: []*types.Item{
+			{S: types.ToString("a")},
 		}},
 	})
 	if err != nil {
@@ -1003,9 +989,9 @@ func BenchmarkEval(b *testing.B) {
 
 	env := NewEnvironment()
 
-	err := env.AddAttributes(map[string]*dynamodb.AttributeValue{
-		":a": {BOOL: aws.Bool(true)},
-		":b": {BOOL: aws.Bool(false)},
+	err := env.AddAttributes(map[string]*types.Item{
+		":a": {BOOL: &boolTrue},
+		":b": {BOOL: &boolFalse},
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -1022,7 +1008,7 @@ func BenchmarkEval(b *testing.B) {
 
 		evaluated := Eval(conditional, env)
 		if evaluated != TRUE {
-			b.Fatal("expected to be true")
+			b.Fatal("expected to be boolTrue")
 		}
 	}
 }

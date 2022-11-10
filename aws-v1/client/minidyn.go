@@ -1,4 +1,4 @@
-package minidyn
+package client
 
 import (
 	"errors"
@@ -138,10 +138,10 @@ func ClearTable(client dynamodbiface.DynamoDBAPI, tableName string) error {
 	fakeClient.mu.Lock()
 	defer fakeClient.mu.Unlock()
 
-	table.clear()
+	table.Clear()
 
-	for _, index := range table.indexes {
-		index.clear()
+	for _, index := range table.Indexes {
+		index.Clear()
 	}
 
 	return nil

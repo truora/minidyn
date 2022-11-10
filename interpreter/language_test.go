@@ -5,8 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
 type matchTestCase struct {
@@ -35,18 +34,18 @@ func matchTestCaseVerify(tc matchTestCase, t *testing.T) {
 }
 
 func TestLanguageMatch(t *testing.T) {
-	item := map[string]*dynamodb.AttributeValue{
+	item := map[string]*types.Item{
 		"a": {
-			S: aws.String("a"),
+			S: types.ToString("a"),
 		},
 		"n": {
-			N: aws.String("1"),
+			N: types.ToString("1"),
 		},
 		"b": {
-			BOOL: aws.Bool(true),
+			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: aws.String("hello world"),
+			S: types.ToString("hello world"),
 		},
 	}
 
@@ -57,9 +56,9 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: ":a = a",
 				Item:       item,
-				Attributes: map[string]*dynamodb.AttributeValue{
+				Attributes: map[string]*types.Item{
 					":a": {
-						S: aws.String("a"),
+						S: types.ToString("a"),
 					},
 				},
 			},
@@ -71,7 +70,7 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: "attribute_exists(b",
 				Item:       item,
-				Attributes: map[string]*dynamodb.AttributeValue{},
+				Attributes: map[string]*types.Item{},
 			},
 			expectedErr: ErrSyntaxError,
 		},
@@ -81,9 +80,9 @@ func TestLanguageMatch(t *testing.T) {
 				TableName:  "test",
 				Expression: "contains(txt, :b)",
 				Item:       item,
-				Attributes: map[string]*dynamodb.AttributeValue{
+				Attributes: map[string]*types.Item{
 					":b": {
-						BOOL: aws.Bool(true),
+						BOOL: &boolTrue,
 					},
 				},
 			},
@@ -101,7 +100,7 @@ func TestLanguageMatch(t *testing.T) {
 type updateTestCase struct {
 	name        string
 	input       UpdateInput
-	output      map[string]*dynamodb.AttributeValue
+	output      map[string]*types.Item
 	expectedErr error
 	pending     bool
 }
@@ -134,26 +133,26 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "SET #t = :a + :a, a = :a",
-				Item: map[string]*dynamodb.AttributeValue{
+				Item: map[string]*types.Item{
 					"a": {
-						S: aws.String("a"),
+						S: types.ToString("a"),
 					},
 				},
-				Attributes: map[string]*dynamodb.AttributeValue{
+				Attributes: map[string]*types.Item{
 					":a": {
-						N: aws.String("1"),
+						N: types.ToString("1"),
 					},
 				},
-				Aliases: map[string]*string{
-					"#t": aws.String("two"),
+				Aliases: map[string]string{
+					"#t": "two",
 				},
 			},
-			output: map[string]*dynamodb.AttributeValue{
+			output: map[string]*types.Item{
 				"a": {
-					N: aws.String("1"),
+					N: types.ToString("1"),
 				},
 				"two": {
-					N: aws.String("2"),
+					N: types.ToString("2"),
 				},
 			},
 		},
@@ -162,14 +161,14 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "SET",
-				Item: map[string]*dynamodb.AttributeValue{
+				Item: map[string]*types.Item{
 					"a": {
-						S: aws.String("a"),
+						S: types.ToString("a"),
 					},
 				},
-				Attributes: map[string]*dynamodb.AttributeValue{
+				Attributes: map[string]*types.Item{
 					":a": {
-						N: aws.String("1"),
+						N: types.ToString("1"),
 					},
 				},
 			},
@@ -180,8 +179,8 @@ func TestLanguageUpdate(t *testing.T) {
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "REMOVE ,",
-				Aliases: map[string]*string{
-					"#t": aws.String("two"),
+				Aliases: map[string]string{
+					"#t": "two",
 				},
 			},
 			output:      nil,

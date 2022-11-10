@@ -1,18 +1,37 @@
-package minidyn
+package core
 
 import (
 	"errors"
 	"fmt"
 	"reflect"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
 var (
 	// revive:disable-next-line
-	errMissingField = errors.New("The number of conditions on the keys is invalid")
+	errMissingField = errors.New("number of conditions on the keys is invalid")
+
+	// ErrConditionalRequestFailed when the conditional write is not meet
+	ErrConditionalRequestFailed = errors.New("conditional request failed")
+
+	// ErrInvalidAtrributeValue when the attributte value is invalid
+	ErrInvalidAtrributeValue = errors.New("invalid attribute value type")
 )
+
+const (
+	// PrimaryIndexName default primary index name
+	PrimaryIndexName = ""
+)
+
+func copyItem(item map[string]*types.Item) map[string]*types.Item {
+	copy := map[string]*types.Item{}
+	for key, val := range item {
+		copy[key] = val
+	}
+
+	return copy
+}
 
 func mapSliceType(t reflect.Type) string {
 	e := t.Elem()
@@ -46,7 +65,7 @@ func mapToDynamoDBType(v interface{}) string {
 	return ""
 }
 
-func getItemValue(item map[string]*dynamodb.AttributeValue, field, typ string) (interface{}, error) {
+func getItemValue(item map[string]*types.Item, field, typ string) (interface{}, error) {
 	val, ok := item[field]
 	if !ok {
 		return nil, fmt.Errorf("%w; field: %q", errMissingField, field)
@@ -55,26 +74,26 @@ func getItemValue(item map[string]*dynamodb.AttributeValue, field, typ string) (
 	goVal, ok := getGoValue(val, typ)
 	if !ok {
 		// revive:disable-next-line
-		return nil, fmt.Errorf("Invalid attribute value type; field %q", field)
+		return nil, fmt.Errorf("%w; field %q", ErrInvalidAtrributeValue, field)
 	}
 
 	return goVal, nil
 }
 
-func getGoValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
+func getGoValue(val *types.Item, typ string) (interface{}, bool) {
 	switch typ {
 	case "S":
-		return aws.StringValue(val.S), val.S != nil
+		return types.StringValue(val.S), val.S != nil
 	case "BOOL":
-		return aws.BoolValue(val.BOOL), val.BOOL != nil
+		return val.BOOL, val.BOOL != nil
 	case "N":
-		return aws.StringValue(val.N), val.N != nil
+		return types.StringValue(val.N), val.N != nil
 	}
 
 	return getGoComplexValue(val, typ)
 }
 
-func getGoComplexValue(val *dynamodb.AttributeValue, typ string) (interface{}, bool) {
+func getGoComplexValue(val *types.Item, typ string) (interface{}, bool) {
 	switch typ {
 	case "B":
 		return val.B, val.B != nil

@@ -1,4 +1,4 @@
-package minidyn
+package client
 
 import (
 	"context"
@@ -8,15 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/truora/minidyn/interpreter"
+	"github.com/truora/minidyn/types"
 )
 
 const tableName = "pokemons"
@@ -31,34 +32,37 @@ type pokemon struct {
 	Local      []string `json:"local"`
 }
 
-func ensurePokemonTable(client dynamodbiface.DynamoDBAPI) error {
-	err := AddTable(client, tableName, "id", "")
+func ensurePokemonTable(client FakeClient) error {
+	err := AddTable(context.Background(), client, tableName, "id", "")
 
-	var aerr awserr.Error
-	ok := errors.As(err, &aerr)
+	var oe smithy.APIError
+	var errResourceInUseException *dynamodbtypes.ResourceInUseException
 
-	if !ok || aerr.Code() != dynamodb.ErrCodeResourceInUseException {
+	if !errors.As(err, &oe) || !errors.As(err, &errResourceInUseException) {
 		return err
 	}
 
 	return nil
 }
 
-func ensurePokemonTypeIndex(client dynamodbiface.DynamoDBAPI) error {
-	err := AddIndex(client, tableName, "by-type", "type", "id")
+func ensurePokemonTypeIndex(client FakeClient) error {
+	err := AddIndex(context.Background(), client, tableName, "by-type", "type", "id")
 
-	var aerr awserr.Error
-	ok := errors.As(err, &aerr)
+	var oe smithy.APIError
 
-	if !ok || aerr.Code() != "ValidationException" {
+	if !errors.As(err, &oe) || oe.ErrorCode() != "ValidationException" {
 		return err
 	}
 
 	return nil
 }
 
-func createPokemon(client dynamodbiface.DynamoDBAPI, creature pokemon) error {
-	item, err := dynamodbattribute.MarshalMap(creature)
+func createPokemon(client FakeClient, creature pokemon) error {
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(creature, opt)
 	if err != nil {
 		return err
 	}
@@ -68,15 +72,15 @@ func createPokemon(client dynamodbiface.DynamoDBAPI, creature pokemon) error {
 		TableName: aws.String(tableName),
 	}
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 
 	return err
 }
 
-func getPokemon(client dynamodbiface.DynamoDBAPI, id string) (map[string]*dynamodb.AttributeValue, error) {
-	key := map[string]*dynamodb.AttributeValue{
-		"id": {
-			S: aws.String(id),
+func getPokemon(client FakeClient, id string) (map[string]dynamodbtypes.AttributeValue, error) {
+	key := map[string]dynamodbtypes.AttributeValue{
+		"id": &dynamodbtypes.AttributeValueMemberS{
+			Value: id,
 		},
 	}
 
@@ -85,29 +89,29 @@ func getPokemon(client dynamodbiface.DynamoDBAPI, id string) (map[string]*dynamo
 		Key:       key,
 	}
 
-	out, err := client.GetItemWithContext(context.Background(), getInput)
+	out, err := client.GetItem(context.Background(), getInput)
 
 	return out.Item, err
 }
 
-func getPokemonsByType(client dynamodbiface.DynamoDBAPI, typ string) ([]map[string]*dynamodb.AttributeValue, error) {
+func getPokemonsByType(client FakeClient, typ string) ([]map[string]dynamodbtypes.AttributeValue, error) {
 	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":type": {
-				S: aws.String(typ),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":type": &dynamodbtypes.AttributeValueMemberS{
+				Value: typ,
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
 		},
 		KeyConditionExpression: aws.String("#type = :type"),
 		TableName:              aws.String(tableName),
 		IndexName:              aws.String("by-type"),
 	}
 
-	items := []map[string]*dynamodb.AttributeValue{}
+	items := []map[string]dynamodbtypes.AttributeValue{}
 
-	out, err := client.QueryWithContext(context.Background(), input)
+	out, err := client.Query(context.Background(), input)
 	if err == nil {
 		items = out.Items
 	}
@@ -115,7 +119,7 @@ func getPokemonsByType(client dynamodbiface.DynamoDBAPI, typ string) ([]map[stri
 	return items, err
 }
 
-func setupClient(table string) dynamodbiface.DynamoDBAPI {
+func setupClient(table string) FakeClient {
 	dynamodbEndpoint := os.Getenv("LOCAL_DYNAMODB_ENDPOINT")
 	if dynamodbEndpoint != "" {
 		return setupDynamoDBLocal(dynamodbEndpoint)
@@ -126,11 +130,13 @@ func setupClient(table string) dynamodbiface.DynamoDBAPI {
 	return client
 }
 
-func setupDynamoDBLocal(endpoint string) dynamodbiface.DynamoDBAPI {
-	config := &aws.Config{}
-	// this allow us to test with dynamodb-local
-	config.Endpoint = aws.String(endpoint)
-	config.MaxRetries = aws.Int(1)
+func setupDynamoDBLocal(endpoint string) FakeClient {
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		panic("configuration error, " + err.Error())
+	}
+
+	cfg.RetryMaxAttempts = 1
 
 	defer func() {
 		if err := recover(); err != nil {
@@ -138,57 +144,55 @@ func setupDynamoDBLocal(endpoint string) dynamodbiface.DynamoDBAPI {
 		}
 	}()
 
-	client := dynamodb.New(session.Must(session.NewSession(config)))
-
-	return client
+	return dynamodb.NewFromConfig(cfg)
 }
 
 func setupNativeInterpreter(native *interpreter.Native, table string) {
-	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]*dynamodb.AttributeValue, updates map[string]*dynamodb.AttributeValue) {
+	native.AddUpdater(table, "SET second_type = :ntype", func(item map[string]*types.Item, updates map[string]*types.Item) {
 		item["second_type"] = updates[":ntype"]
 	})
 
-	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]*dynamodb.AttributeValue, updates map[string]*dynamodb.AttributeValue) {
+	native.AddUpdater(table, "SET #type = :ntype", func(item map[string]*types.Item, updates map[string]*types.Item) {
 		item["type"] = updates[":ntype"]
 	})
 }
 
-func getData(client dynamodbiface.DynamoDBAPI, tn, p, r string) (map[string]*dynamodb.AttributeValue, error) {
+func getData(client FakeClient, tn, p, r string) (map[string]dynamodbtypes.AttributeValue, error) {
 	getInput := &dynamodb.GetItemInput{
 		TableName: aws.String(tn),
-		Key: map[string]*dynamodb.AttributeValue{
-			"partition": {
-				S: aws.String(p),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"partition": &dynamodbtypes.AttributeValueMemberS{
+				Value: p,
 			},
-			"range": {
-				S: aws.String(r),
+			"range": &dynamodbtypes.AttributeValueMemberS{
+				Value: r,
 			},
 		},
 	}
 
-	out, err := client.GetItemWithContext(context.Background(), getInput)
+	out, err := client.GetItem(context.Background(), getInput)
 
 	return out.Item, err
 }
 
-func getDataInIndex(client dynamodbiface.DynamoDBAPI, index, tn, p, r string) ([]map[string]*dynamodb.AttributeValue, error) {
+func getDataInIndex(client FakeClient, index, tn, p, r string) ([]map[string]dynamodbtypes.AttributeValue, error) {
 	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":data": {
-				S: aws.String(p),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":data": &dynamodbtypes.AttributeValueMemberS{
+				Value: p,
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#data": aws.String("data"),
+		ExpressionAttributeNames: map[string]string{
+			"#data": "data",
 		},
 		KeyConditionExpression: aws.String("#data = :data"),
 		TableName:              aws.String(tn),
 		IndexName:              aws.String(index),
 	}
 
-	items := []map[string]*dynamodb.AttributeValue{}
+	items := []map[string]dynamodbtypes.AttributeValue{}
 
-	out, err := client.QueryWithContext(context.Background(), input)
+	out, err := client.Query(context.Background(), input)
 	if err == nil {
 		items = out.Items
 	}
@@ -205,12 +209,13 @@ func TestSetInterpreter(t *testing.T) {
 		c.Error(err)
 	})
 
-	_ = AddTable(client, "tests", "hk", "rk")
+	err := AddTable(context.Background(), client, "tests", "hk", "rk")
+	c.NoError(err)
 
 	native := interpreter.NewNativeInterpreter()
 	client.SetInterpreter(native)
 
-	_, err := client.getTable("tests")
+	_, err = client.getTable("tests")
 	c.NoError(err)
 }
 
@@ -228,42 +233,42 @@ func TestCreateTable(t *testing.T) {
 	client := setupClient(tableName)
 
 	input := &dynamodb.CreateTableInput{
-		AttributeDefinitions: []*dynamodb.AttributeDefinition{
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
 			{
 				AttributeName: aws.String("partition"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 		},
-		KeySchema: []*dynamodb.KeySchemaElement{
+		KeySchema: []dynamodbtypes.KeySchemaElement{
 			{
 				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				KeyType:       dynamodbtypes.KeyTypeHash,
 			},
 			{
 				AttributeName: aws.String("range"),
-				KeyType:       aws.String("RANGE"),
+				KeyType:       dynamodbtypes.KeyTypeRange,
 			},
 		},
 		TableName: aws.String(tableName),
 	}
 
-	_, err := client.CreateTableWithContext(context.Background(), input)
+	_, err := client.CreateTable(context.Background(), input)
 	c.Contains(err.Error(), "Range Key not specified in Attribute Definitions")
 
-	input.AttributeDefinitions = append(input.AttributeDefinitions, &dynamodb.AttributeDefinition{
+	input.AttributeDefinitions = append(input.AttributeDefinitions, dynamodbtypes.AttributeDefinition{
 		AttributeName: aws.String("range"),
-		AttributeType: aws.String("S"),
+		AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 	})
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
+	_, err = client.CreateTable(context.Background(), input)
 	c.Contains(err.Error(), "No provisioned throughput specified for the table")
 
-	input.BillingMode = aws.String("PAY_PER_REQUEST")
+	input.BillingMode = dynamodbtypes.BillingModePayPerRequest
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
+	_, err = client.CreateTable(context.Background(), input)
 	c.NoError(err)
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
+	_, err = client.CreateTable(context.Background(), input)
 	c.Contains(err.Error(), "Cannot create preexisting table")
 }
 
@@ -272,68 +277,68 @@ func TestCreateTableWithGSI(t *testing.T) {
 	client := setupClient(tableName)
 
 	input := &dynamodb.CreateTableInput{
-		AttributeDefinitions: []*dynamodb.AttributeDefinition{
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
 			{
 				AttributeName: aws.String("partition"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 			{
 				AttributeName: aws.String("range"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 		},
-		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+		ProvisionedThroughput: &dynamodbtypes.ProvisionedThroughput{
 			ReadCapacityUnits:  aws.Int64(1),
 			WriteCapacityUnits: aws.Int64(1),
 		},
-		KeySchema: []*dynamodb.KeySchemaElement{
+		KeySchema: []dynamodbtypes.KeySchemaElement{
 			{
 				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				KeyType:       dynamodbtypes.KeyTypeHash,
 			},
 			{
 				AttributeName: aws.String("range"),
-				KeyType:       aws.String("RANGE"),
+				KeyType:       dynamodbtypes.KeyTypeRange,
 			},
 		},
-		GlobalSecondaryIndexes: []*dynamodb.GlobalSecondaryIndex{},
+		GlobalSecondaryIndexes: []dynamodbtypes.GlobalSecondaryIndex{},
 		TableName:              aws.String(tableName + "-gsi"),
 	}
 
-	_, err := client.CreateTableWithContext(context.Background(), input)
+	_, err := client.CreateTable(context.Background(), input)
 	c.Contains(err.Error(), "GSI list is empty/invalid")
 
-	input.GlobalSecondaryIndexes = append(input.GlobalSecondaryIndexes, &dynamodb.GlobalSecondaryIndex{
+	input.GlobalSecondaryIndexes = append(input.GlobalSecondaryIndexes, dynamodbtypes.GlobalSecondaryIndex{
 		IndexName: aws.String("invert"),
-		KeySchema: []*dynamodb.KeySchemaElement{
+		KeySchema: []dynamodbtypes.KeySchemaElement{
 			{
 				AttributeName: aws.String("range"),
-				KeyType:       aws.String("HASH"),
+				KeyType:       dynamodbtypes.KeyTypeHash,
 			},
 			{
 				AttributeName: aws.String("no_defined"),
-				KeyType:       aws.String("RANGE"),
+				KeyType:       dynamodbtypes.KeyTypeRange,
 			},
 		},
-		Projection: &dynamodb.Projection{
-			ProjectionType: aws.String("ALL"),
+		Projection: &dynamodbtypes.Projection{
+			ProjectionType: dynamodbtypes.ProjectionTypeAll,
 		},
 	})
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
+	_, err = client.CreateTable(context.Background(), input)
 	c.Contains(err.Error(), "No provisioned throughput specified for the global secondary index")
 
-	input.GlobalSecondaryIndexes[0].ProvisionedThroughput = &dynamodb.ProvisionedThroughput{
+	input.GlobalSecondaryIndexes[0].ProvisionedThroughput = &dynamodbtypes.ProvisionedThroughput{
 		ReadCapacityUnits:  aws.Int64(1),
 		WriteCapacityUnits: aws.Int64(1),
 	}
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
-	c.Contains(err.Error(), "Global Secondary Index range key not specified in Attribute")
+	_, err = client.CreateTable(context.Background(), input)
+	c.Contains(err.Error(), "Global Secondary Index Range Key not specified in Attribute Definitions")
 
 	input.GlobalSecondaryIndexes[0].KeySchema[1].AttributeName = aws.String("partition")
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
+	_, err = client.CreateTable(context.Background(), input)
 	c.NoError(err)
 }
 
@@ -342,64 +347,64 @@ func TestCreateTableWithLSI(t *testing.T) {
 	client := setupClient(tableName)
 
 	input := &dynamodb.CreateTableInput{
-		AttributeDefinitions: []*dynamodb.AttributeDefinition{
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
 			{
 				AttributeName: aws.String("partition"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 			{
 				AttributeName: aws.String("range"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 			{
 				AttributeName: aws.String("data"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 		},
-		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+		ProvisionedThroughput: &dynamodbtypes.ProvisionedThroughput{
 			ReadCapacityUnits:  aws.Int64(1),
 			WriteCapacityUnits: aws.Int64(1),
 		},
-		KeySchema: []*dynamodb.KeySchemaElement{
+		KeySchema: []dynamodbtypes.KeySchemaElement{
 			{
 				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				KeyType:       dynamodbtypes.KeyTypeHash,
 			},
 			{
 				AttributeName: aws.String("range"),
-				KeyType:       aws.String("RANGE"),
+				KeyType:       dynamodbtypes.KeyTypeRange,
 			},
 		},
-		LocalSecondaryIndexes: []*dynamodb.LocalSecondaryIndex{},
+		LocalSecondaryIndexes: []dynamodbtypes.LocalSecondaryIndex{},
 		TableName:             aws.String(tableName + "-lsi"),
 	}
 
-	_, err := client.CreateTableWithContext(context.Background(), input)
+	_, err := client.CreateTable(context.Background(), input)
 	c.Contains(err.Error(), "LSI list is empty/invalid")
 
-	input.LocalSecondaryIndexes = append(input.LocalSecondaryIndexes, &dynamodb.LocalSecondaryIndex{
+	input.LocalSecondaryIndexes = append(input.LocalSecondaryIndexes, dynamodbtypes.LocalSecondaryIndex{
 		IndexName: aws.String("data"),
-		KeySchema: []*dynamodb.KeySchemaElement{
+		KeySchema: []dynamodbtypes.KeySchemaElement{
 			{
 				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				KeyType:       dynamodbtypes.KeyTypeHash,
 			},
 			{
 				AttributeName: aws.String("no_defined"),
-				KeyType:       aws.String("RANGE"),
+				KeyType:       dynamodbtypes.KeyTypeRange,
 			},
 		},
-		Projection: &dynamodb.Projection{
-			ProjectionType: aws.String("ALL"),
+		Projection: &dynamodbtypes.Projection{
+			ProjectionType: dynamodbtypes.ProjectionTypeAll,
 		},
 	})
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
-	c.Contains(err.Error(), "Local Secondary Index range key not specified in Attribute")
+	_, err = client.CreateTable(context.Background(), input)
+	c.Contains(err.Error(), "Local Secondary Index Range Key not specified in Attribute Definitions")
 
 	input.LocalSecondaryIndexes[0].KeySchema[1].AttributeName = aws.String("data")
 
-	_, err = client.CreateTableWithContext(context.Background(), input)
+	_, err = client.CreateTable(context.Background(), input)
 	c.NoError(err)
 }
 
@@ -411,7 +416,7 @@ func TestDeleteTable(t *testing.T) {
 		TableName: aws.String("table-404"),
 	}
 
-	_, err := client.DeleteTableWithContext(context.Background(), input)
+	_, err := client.DeleteTable(context.Background(), input)
 	c.Equal("ResourceNotFoundException: Cannot do operations on a non-existent table", err.Error())
 
 	err = ensurePokemonTable(client)
@@ -420,12 +425,12 @@ func TestDeleteTable(t *testing.T) {
 	input = &dynamodb.DeleteTableInput{
 		TableName: aws.String(tableName),
 	}
-	out, err := client.DeleteTableWithContext(context.Background(), input)
+	out, err := client.DeleteTable(context.Background(), input)
 	c.NoError(err)
 
 	c.NotEmpty(out)
 
-	_, err = client.DeleteTableWithContext(context.Background(), input)
+	_, err = client.DeleteTable(context.Background(), input)
 	c.Equal("ResourceNotFoundException: Cannot do operations on a non-existent table", err.Error())
 }
 
@@ -434,61 +439,61 @@ func TestUpdateTable(t *testing.T) {
 	client := setupClient(tableName)
 
 	input := &dynamodb.UpdateTableInput{
-		BillingMode:                 aws.String("PROVISIONED"),
-		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{},
+		BillingMode:                 dynamodbtypes.BillingModeProvisioned,
+		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{},
 		TableName:                   aws.String("404"),
 	}
 
-	_, err := client.UpdateTableWithContext(context.Background(), input)
+	_, err := client.UpdateTable(context.Background(), input)
 	c.Equal("ResourceNotFoundException: Cannot do operations on a non-existent table", err.Error())
 
 	err = ensurePokemonTable(client)
 	c.NoError(err)
 
 	input = &dynamodb.UpdateTableInput{
-		AttributeDefinitions: []*dynamodb.AttributeDefinition{
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
 			{
 				AttributeName: aws.String("id"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 			{
 				AttributeName: aws.String("type"),
-				AttributeType: aws.String("S"),
+				AttributeType: dynamodbtypes.ScalarAttributeTypeS,
 			},
 		},
-		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
-				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
+		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{
+			{
+				Create: &dynamodbtypes.CreateGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
-					KeySchema: []*dynamodb.KeySchemaElement{
+					KeySchema: []dynamodbtypes.KeySchemaElement{
 						{
 							AttributeName: aws.String("type"),
-							KeyType:       aws.String("HASH"),
+							KeyType:       dynamodbtypes.KeyTypeHash,
 						},
 						{
 							AttributeName: aws.String("id"),
-							KeyType:       aws.String("RANGE"),
+							KeyType:       dynamodbtypes.KeyTypeRange,
 						},
 					},
-					Projection: &dynamodb.Projection{
-						ProjectionType: aws.String("ALL"),
+					Projection: &dynamodbtypes.Projection{
+						ProjectionType: dynamodbtypes.ProjectionTypeAll,
 					},
 				},
 			},
 		},
 		TableName: aws.String(tableName),
 	}
-	output, err := client.UpdateTableWithContext(context.Background(), input)
+	output, err := client.UpdateTable(context.Background(), input)
 	c.NoError(err)
 
 	c.Len(output.TableDescription.GlobalSecondaryIndexes, 1)
 
 	input = &dynamodb.UpdateTableInput{
-		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
-				Update: &dynamodb.UpdateGlobalSecondaryIndexAction{
+		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{
+			{
+				Update: &dynamodbtypes.UpdateGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
-					ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+					ProvisionedThroughput: &dynamodbtypes.ProvisionedThroughput{
 						ReadCapacityUnits:  aws.Int64(1),
 						WriteCapacityUnits: aws.Int64(1),
 					},
@@ -497,23 +502,23 @@ func TestUpdateTable(t *testing.T) {
 		},
 		TableName: aws.String(tableName),
 	}
-	_, err = client.UpdateTableWithContext(context.Background(), input)
+	_, err = client.UpdateTable(context.Background(), input)
 	c.NoError(err)
 
 	input = &dynamodb.UpdateTableInput{
-		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
-				Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
+		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{
+			{
+				Delete: &dynamodbtypes.DeleteGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
 				},
 			},
 		},
 		TableName: aws.String(tableName),
 	}
-	_, err = client.UpdateTableWithContext(context.Background(), input)
+	_, err = client.UpdateTable(context.Background(), input)
 	c.NoError(err)
 
-	_, err = client.UpdateTableWithContext(context.Background(), input)
+	_, err = client.UpdateTable(context.Background(), input)
 	c.Equal("ResourceNotFoundException: Requested resource not found", err.Error())
 }
 
@@ -524,11 +529,15 @@ func TestPutAndGetItem(t *testing.T) {
 	err := ensurePokemonTable(client)
 	c.NoError(err)
 
-	item, err := dynamodbattribute.MarshalMap(pokemon{
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(pokemon{
 		ID:   "001",
 		Type: "grass",
 		Name: "Bulbasaur",
-	})
+	}, opt)
 	c.NoError(err)
 
 	input := &dynamodb.PutItemInput{
@@ -536,30 +545,30 @@ func TestPutAndGetItem(t *testing.T) {
 		TableName: aws.String(tableName),
 	}
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 	c.NoError(err)
 
 	getInput := &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("001"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "001",
 			},
 		},
 	}
-	out, err := client.GetItemWithContext(context.Background(), getInput)
+	out, err := client.GetItem(context.Background(), getInput)
 	c.NoError(err)
-	c.Equal("001", *out.Item["id"].S)
-	c.Equal("Bulbasaur", *out.Item["name"].S)
-	c.Equal("grass", *out.Item["type"].S)
+	c.Equal("001", out.Item["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal("Bulbasaur", out.Item["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal("grass", out.Item["type"].(*dynamodbtypes.AttributeValueMemberS).Value)
 
-	_, err = client.GetItemWithContext(context.Background(), &dynamodb.GetItemInput{
+	_, err = client.GetItem(context.Background(), &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
-		Key:       map[string]*dynamodb.AttributeValue{},
+		Key:       map[string]dynamodbtypes.AttributeValue{},
 	})
 
 	c.Error(err)
-	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "number of conditions on the keys is invalid")
 }
 
 func TestPutWithGSI(t *testing.T) {
@@ -572,30 +581,30 @@ func TestPutWithGSI(t *testing.T) {
 	err = ensurePokemonTypeIndex(client)
 	c.NoError(err)
 
-	item, err := dynamodbattribute.MarshalMap(pokemon{
-		ID:   "001",
-		Name: "Bulbasaur",
-	})
-	c.NoError(err)
+	item := map[string]dynamodbtypes.AttributeValue{
+		"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+		"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+		"type": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
+	}
 
 	input := &dynamodb.PutItemInput{
 		Item:      item,
 		TableName: aws.String(tableName),
 	}
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 	c.Error(err)
 	c.Contains(err.Error(), "ValidationException")
 	c.Contains(err.Error(), "value type")
 
 	delete(item, "type")
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 	c.NoError(err)
 
-	_ = AddIndex(client, tableName, "sort-by-second-type", "id", "second_type")
+	_ = AddIndex(context.Background(), client, tableName, "sort-by-second-type", "id", "second_type")
 
-	item, err = dynamodbattribute.MarshalMap(pokemon{
+	item, err = attributevalue.MarshalMap(pokemon{
 		ID:   "002",
 		Name: "Ivysaur",
 		Type: "grass",
@@ -604,10 +613,8 @@ func TestPutWithGSI(t *testing.T) {
 
 	input.Item = item
 
-	_, err = client.PutItemWithContext(context.Background(), input)
-	c.Error(err)
-	c.Contains(err.Error(), "ValidationException")
-	c.Contains(err.Error(), "value type")
+	_, err = client.PutItem(context.Background(), input)
+	c.NoError(err)
 }
 
 func TestGetItemWithUnusedAttributes(t *testing.T) {
@@ -620,17 +627,17 @@ func TestGetItemWithUnusedAttributes(t *testing.T) {
 
 	input := &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("001"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "001",
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#name": aws.String("name"),
+		ExpressionAttributeNames: map[string]string{
+			"#name": "name",
 		},
 	}
 
-	_, err = client.GetItemWithContext(context.Background(), input)
+	_, err = client.GetItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 }
@@ -645,18 +652,18 @@ func TestGetItemWithInvalidExpressionAttributeNames(t *testing.T) {
 
 	input := &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("001"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "001",
 			},
 		},
 		ProjectionExpression: aws.String("#name-1"),
-		ExpressionAttributeNames: map[string]*string{
-			"#name-1": aws.String("name"),
+		ExpressionAttributeNames: map[string]string{
+			"#name-1": "name",
 		},
 	}
 
-	_, err = client.GetItemWithContext(context.Background(), input)
+	_, err = client.GetItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 }
@@ -668,62 +675,63 @@ func TestPutItemWithConditions(t *testing.T) {
 	err := ensurePokemonTable(client)
 	c.NoError(err)
 
-	item, err := dynamodbattribute.MarshalMap(pokemon{
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(pokemon{
 		ID:   "001",
 		Type: "grass",
 		Name: "Bulbasaur",
-	})
+	}, opt)
 	c.NoError(err)
 
 	input := &dynamodb.PutItemInput{
 		Item:                item,
 		TableName:           aws.String(tableName),
 		ConditionExpression: aws.String("attribute_not_exists(#type)"),
-		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
 		},
 	}
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 	c.NoError(err)
 
-	_, err = client.PutItemWithContext(context.Background(), input)
-	c.Error(err)
-
-	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":not_used": {NULL: aws.Bool(true)},
+	input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+		":not_used": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
 	}
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeValuesMsg)
 
 	input.ConditionExpression = aws.String("attribute_not_exists(#invalid-name)")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("hello"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#invalid-name": "hello",
 	}
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
 	input.ConditionExpression = aws.String("#valid_name = :invalid-value")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#valid_name": aws.String("hello"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#valid_name": "hello",
 	}
 
-	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+	input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+		":invalid-value": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
 	}
 
-	_, err = client.PutItemWithContext(context.Background(), input)
+	_, err = client.PutItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 }
 
-func TestUpdateItemWithContext(t *testing.T) {
+func TestUpdateItem(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)
 
@@ -737,40 +745,40 @@ func TestUpdateItemWithContext(t *testing.T) {
 	})
 	c.NoError(err)
 
-	expr := map[string]*dynamodb.AttributeValue{
-		":ntype": {
-			S: aws.String(string("poison")),
+	expr := map[string]dynamodbtypes.AttributeValue{
+		":ntype": &dynamodbtypes.AttributeValueMemberS{
+			Value: "poison",
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("001"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "001",
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
+		ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
 		UpdateExpression:          aws.String("SET second_type = :ntype"),
 		ExpressionAttributeValues: expr,
 	}
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.NoError(err)
 
 	item, err := getPokemon(client, "001")
 	c.NoError(err)
-	c.Equal("poison", aws.StringValue(item["second_type"].S))
+	c.Equal("poison", item["second_type"].(*dynamodbtypes.AttributeValueMemberS).Value)
 
-	input.Key["id"] = &dynamodb.AttributeValue{
-		S: aws.String("404"),
+	input.Key["id"] = &dynamodbtypes.AttributeValueMemberS{
+		Value: "404",
 	}
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.NoError(err)
 
 	item, err = getPokemon(client, "404")
 	c.NoError(err)
-	c.Equal("poison", aws.StringValue(item["second_type"].S))
+	c.Equal("poison", item["second_type"].(*dynamodbtypes.AttributeValueMemberS).Value)
 
 	minidynClient, ok := client.(*Client)
 	if !ok {
@@ -780,19 +788,19 @@ func TestUpdateItemWithContext(t *testing.T) {
 	setupNativeInterpreter(minidynClient.GetNativeInterpreter(), tableName)
 	minidynClient.ActivateNativeInterpreter()
 
-	input.Key = map[string]*dynamodb.AttributeValue{
-		"id": {
-			S: aws.String("001"),
+	input.Key = map[string]dynamodbtypes.AttributeValue{
+		"id": &dynamodbtypes.AttributeValueMemberS{
+			Value: "001",
 		},
 	}
-	expr[":ntype"].S = aws.String(string("water"))
+	expr[":ntype"].(*dynamodbtypes.AttributeValueMemberS).Value = string("water")
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.NoError(err)
 
 	item, err = getPokemon(client, "001")
 	c.NoError(err)
-	c.Equal("water", aws.StringValue(item["second_type"].S))
+	c.Equal("water", item["second_type"].(*dynamodbtypes.AttributeValueMemberS).Value)
 }
 
 func TestUpdateItemWithConditionalExpression(t *testing.T) {
@@ -817,72 +825,74 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	c.NoError(err)
 
 	uexpr := "SET second_type = :ntype"
-	expr := map[string]*dynamodb.AttributeValue{
-		":ntyp": {
-			S: aws.String(string("poison")),
+	expr := map[string]dynamodbtypes.AttributeValue{
+		":ntyp": &dynamodbtypes.AttributeValueMemberS{
+			Value: string("poison"),
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("404"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "404",
 			},
 		},
 		ConditionExpression:       aws.String("attribute_exists(id)"),
-		ReturnValues:              aws.String("UPDATED_NEW"),
+		ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
 		UpdateExpression:          aws.String(uexpr),
 		ExpressionAttributeValues: expr,
-		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
 		},
 	}
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 
 	input.ConditionExpression = aws.String("attribute_exists(#invalid-name)")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("type"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#invalid-name": "type",
 	}
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
 	input.ConditionExpression = aws.String("#t = :invalid-value")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#t": "type",
 	}
 
-	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+	input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+		":invalid-value": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
 	}
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 
 	input = &dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("404"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "404",
 			},
 		},
 		ConditionExpression:       aws.String("attribute_exists(#id)"),
-		ReturnValues:              aws.String("UPDATED_NEW"),
+		ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
 		UpdateExpression:          aws.String(uexpr),
 		ExpressionAttributeValues: expr,
-		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
 		},
 	}
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
-	c.Contains(err.Error(), dynamodb.ErrCodeConditionalCheckFailedException)
+	var errConditionalCheckFailedException *types.ConditionalCheckFailedException
+
+	_, err = client.UpdateItem(context.Background(), input)
+	c.True(errors.As(err, &errConditionalCheckFailedException))
 }
 
 func TestUpdateItemWithGSI(t *testing.T) {
@@ -903,27 +913,27 @@ func TestUpdateItemWithGSI(t *testing.T) {
 	c.Len(items, 1)
 
 	uexpr := "SET #type = :ntype"
-	expr := map[string]*dynamodb.AttributeValue{
-		":ntype": {
-			S: aws.String(string("poison")),
+	expr := map[string]dynamodbtypes.AttributeValue{
+		":ntype": &dynamodbtypes.AttributeValueMemberS{
+			Value: string("poison"),
 		},
 	}
-	names := map[string]*string{"#type": aws.String("type")}
+	names := map[string]string{"#type": "type"}
 
 	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("001"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "001",
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
+		ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
 		UpdateExpression:          aws.String(uexpr),
 		ExpressionAttributeValues: expr,
 		ExpressionAttributeNames:  names,
 	}
 
-	_, err = client.UpdateItem(input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.NoError(err)
 
 	items, err = getPokemonsByType(client, "grass")
@@ -949,30 +959,30 @@ func TestUpdateItemError(t *testing.T) {
 	err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
 	c.NoError(err)
 
-	expr := map[string]*dynamodb.AttributeValue{
-		":second_type": {
-			S: aws.String(string("poison")),
+	expr := map[string]dynamodbtypes.AttributeValue{
+		":second_type": &dynamodbtypes.AttributeValueMemberS{
+			Value: string("poison"),
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"foo": {
-				S: aws.String("a"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"foo": &dynamodbtypes.AttributeValueMemberS{
+				Value: "a",
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
+		ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
 		UpdateExpression:          aws.String("SET second_type = :second_type"),
 		ExpressionAttributeValues: expr,
 	}
 
-	_, err = client.UpdateItem(input)
-	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
+	_, err = client.UpdateItem(context.Background(), input)
+	c.Contains(err.Error(), "number of conditions on the keys is invalid")
 
 	ActiveForceFailure(client)
 	defer DeactiveForceFailure(client)
 
-	output, err := client.UpdateItemWithContext(context.Background(), input)
+	output, err := client.UpdateItem(context.Background(), input)
 	c.EqualError(err, "forced failure response")
 	c.Nil(output)
 }
@@ -981,85 +991,86 @@ func TestUpdateExpressions(t *testing.T) {
 	c := require.New(t)
 	db := []pokemon{
 		{
-			ID:    "001",
-			Type:  "grass",
-			Name:  "Bulbasaur",
-			Moves: []string{"Growl", "Tackle", "Vine Whip", "Growth"},
-			Local: []string{"001 (Red/Blue/Yellow)", "226 (Gold/Silver/Crystal)", "001 (FireRed/LeafGreen)", "001 (Let's Go Pikachu/Let's Go Eevee)"},
+			ID:         "001",
+			Type:       "grass",
+			Name:       "Bulbasaur",
+			SecondType: "type",
+			Moves:      []string{"Growl", "Tackle", "Vine Whip", "Growth"},
+			Local:      []string{"001 (Red/Blue/Yellow)", "226 (Gold/Silver/Crystal)", "001 (FireRed/LeafGreen)", "001 (Let's Go Pikachu/Let's Go Eevee)"},
 		},
 	}
 
 	tests := map[string]struct {
 		input  *dynamodb.UpdateItemInput
-		verify func(tc *testing.T, client dynamodbiface.DynamoDBAPI)
+		verify func(tc *testing.T, client FakeClient)
 	}{
 		"add": {
 			input: &dynamodb.UpdateItemInput{
 				TableName: aws.String(tableName),
-				Key: map[string]*dynamodb.AttributeValue{
-					"id": {
-						S: aws.String("001"),
+				Key: map[string]dynamodbtypes.AttributeValue{
+					"id": &dynamodbtypes.AttributeValueMemberS{
+						Value: "001",
 					},
 				},
-				ReturnValues:              aws.String("UPDATED_NEW"),
+				ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
 				UpdateExpression:          aws.String("ADD lvl :one"),
-				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{":one": &dynamodb.AttributeValue{N: aws.String("1")}},
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"}},
 			},
-			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
+			verify: func(tc *testing.T, client FakeClient) {
 				a := assert.New(tc)
 
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				a.Equal("1", *item["lvl"].N)
+				a.Equal("1", item["lvl"].(*dynamodbtypes.AttributeValueMemberN).Value)
 			},
 		},
 		"remove": {
 			input: &dynamodb.UpdateItemInput{
 				TableName: aws.String(tableName),
-				Key: map[string]*dynamodb.AttributeValue{
-					"id": {
-						S: aws.String("001"),
+				Key: map[string]dynamodbtypes.AttributeValue{
+					"id": &dynamodbtypes.AttributeValueMemberS{
+						Value: "001",
 					},
 				},
-				ReturnValues:     aws.String("UPDATED_NEW"),
+				ReturnValues:     dynamodbtypes.ReturnValueUpdatedNew,
 				UpdateExpression: aws.String("REMOVE #l[0],#l[1],#l[2],#l[3]"),
-				ExpressionAttributeNames: map[string]*string{
-					"#l": aws.String("local"),
+				ExpressionAttributeNames: map[string]string{
+					"#l": "local",
 				},
 			},
-			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
+			verify: func(tc *testing.T, client FakeClient) {
 				a := assert.New(tc)
 
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				a.Empty(item["local"].L)
+				a.True(item["local"].(*dynamodbtypes.AttributeValueMemberNULL).Value)
 			},
 		},
 		"delete": {
 			input: &dynamodb.UpdateItemInput{
 				TableName: aws.String(tableName),
-				Key: map[string]*dynamodb.AttributeValue{
-					"id": {
-						S: aws.String("001"),
+				Key: map[string]dynamodbtypes.AttributeValue{
+					"id": &dynamodbtypes.AttributeValueMemberS{
+						Value: "001",
 					},
 				},
-				ReturnValues:     aws.String("UPDATED_NEW"),
+				ReturnValues:     dynamodbtypes.ReturnValueUpdatedNew,
 				UpdateExpression: aws.String("DELETE moves :move"),
-				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-					":move": {
-						SS: []*string{aws.String("Growl")},
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+					":move": &dynamodbtypes.AttributeValueMemberSS{
+						Value: []string{"Growl"},
 					},
 				},
 			},
-			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
+			verify: func(tc *testing.T, client FakeClient) {
 				a := assert.New(tc)
 
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				a.Len(item["moves"].SS, 3)
+				a.Len(item["moves"].(*dynamodbtypes.AttributeValueMemberSS).Value, 3)
 			},
 		},
 	}
@@ -1077,7 +1088,7 @@ func TestUpdateExpressions(t *testing.T) {
 				c.NoError(err)
 			}
 
-			_, err = client.UpdateItemWithContext(context.Background(), tt.input)
+			_, err = client.UpdateItem(context.Background(), tt.input)
 			a.NoError(err)
 
 			tt.verify(tc, client)
@@ -1085,7 +1096,7 @@ func TestUpdateExpressions(t *testing.T) {
 	}
 }
 
-func TestQueryWithContext(t *testing.T) {
+func TestQuery(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)
 
@@ -1114,68 +1125,68 @@ func TestQueryWithContext(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":id": {
-				S: aws.String("004"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "004",
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
 		},
 		KeyConditionExpression: aws.String("#id = :id"),
 		TableName:              aws.String(tableName),
 	}
 
-	out, err := client.QueryWithContext(context.Background(), input)
+	out, err := client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
 	c.Empty(out.LastEvaluatedKey)
 
 	input.FilterExpression = aws.String("#type = :type")
 
-	input.ExpressionAttributeNames["#type"] = aws.String("type")
-	input.ExpressionAttributeValues[":type"] = &dynamodb.AttributeValue{
-		S: aws.String("fire"),
+	input.ExpressionAttributeNames["#type"] = "type"
+	input.ExpressionAttributeValues[":type"] = &dynamodbtypes.AttributeValueMemberS{
+		Value: "fire",
 	}
 
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
 
-	input.ExpressionAttributeValues[":type"] = &dynamodb.AttributeValue{
-		S: aws.String("grass"),
+	input.ExpressionAttributeValues[":type"] = &dynamodbtypes.AttributeValueMemberS{
+		Value: "grass",
 	}
 
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Empty(out.Items)
 
-	input.ExpressionAttributeNames["#not_used"] = aws.String("hello")
+	input.ExpressionAttributeNames["#not_used"] = "hello"
 
-	_, err = client.QueryWithContext(context.Background(), input)
+	_, err = client.Query(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 
 	input.KeyConditionExpression = aws.String("#invalid-name = :id")
-	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("id"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#invalid-name": "id",
 	}
 
-	_, err = client.QueryWithContext(context.Background(), input)
+	_, err = client.Query(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
 	input.KeyConditionExpression = aws.String("#t = :invalid-value")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#t": "type",
 	}
 
-	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+	input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+		":invalid-value": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
 	}
 
-	_, err = client.QueryWithContext(context.Background(), input)
+	_, err = client.Query(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 
@@ -1188,25 +1199,25 @@ func TestQueryWithContext(t *testing.T) {
 	minidynClient.ActivateNativeInterpreter()
 
 	input = &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":id": {
-				S: aws.String("004"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "004",
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
 		},
 		KeyConditionExpression: aws.String("#id = :id"),
 		TableName:              aws.String(tableName),
 	}
 
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
 	c.Empty(out.LastEvaluatedKey)
 }
 
-func TestQueryWithContextPagination(t *testing.T) {
+func TestQueryPagination(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)
 
@@ -1238,39 +1249,39 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":type": {
-				S: aws.String("grass"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":type": &dynamodbtypes.AttributeValueMemberS{
+				Value: "grass",
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
 		},
 		KeyConditionExpression: aws.String("#type = :type"),
 		TableName:              aws.String(tableName),
 		IndexName:              aws.String("by-type"),
-		Limit:                  aws.Int64(1),
+		Limit:                  aws.Int32(1),
 	}
 
-	out, err := client.QueryWithContext(context.Background(), input)
+	out, err := client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("001", aws.StringValue(out.Items[0]["id"].S))
+	c.Equal("001", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("002", aws.StringValue(out.Items[0]["id"].S))
+	c.Equal("002", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("003", aws.StringValue(out.Items[0]["id"].S))
+	c.Equal("003", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Empty(out.Items)
 	c.Empty(out.LastEvaluatedKey)
@@ -1283,39 +1294,39 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.NoError(err)
 
 	input.ExclusiveStartKey = nil
-	input.Limit = aws.Int64(4)
+	input.Limit = aws.Int32(4)
 
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 3)
 	c.Empty(out.LastEvaluatedKey)
 
 	input.ScanIndexForward = aws.Bool(false)
 
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
-	c.Equal("003", aws.StringValue(out.Items[0]["id"].S))
+	c.Equal("003", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
 
 	// Query with FilterExpression
 	input.ScanIndexForward = nil
 	input.ExclusiveStartKey = nil
 	input.FilterExpression = aws.String("begins_with(#name, :letter)")
-	input.Limit = aws.Int64(2)
-	input.ExpressionAttributeValues[":letter"] = &dynamodb.AttributeValue{
-		S: aws.String("V"),
+	input.Limit = aws.Int32(2)
+	input.ExpressionAttributeValues[":letter"] = &dynamodbtypes.AttributeValueMemberS{
+		Value: "V",
 	}
-	input.ExpressionAttributeNames["#name"] = aws.String("name")
+	input.ExpressionAttributeNames["#name"] = "name"
 
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Empty(out.Items)
 	c.NotEmpty(out.LastEvaluatedKey)
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
-	out, err = client.QueryWithContext(context.Background(), input)
+	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("003", aws.StringValue(out.Items[0]["id"].S))
+	c.Equal("003", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
 }
 
 func TestQuerySyntaxError(t *testing.T) {
@@ -1333,13 +1344,13 @@ func TestQuerySyntaxError(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":partition": {
-				S: aws.String("a"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":partition": &dynamodbtypes.AttributeValueMemberS{
+				Value: "a",
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#partition": aws.String("partition"),
+		ExpressionAttributeNames: map[string]string{
+			"#partition": "partition",
 		},
 		// Syntax Error
 		KeyConditionExpression: aws.String("#partition != :partition"),
@@ -1347,11 +1358,11 @@ func TestQuerySyntaxError(t *testing.T) {
 	}
 
 	c.Panics(func() {
-		_, _ = client.QueryWithContext(context.Background(), input)
+		_, _ = client.Query(context.Background(), input)
 	})
 }
 
-func TestScanWithContext(t *testing.T) {
+func TestScan(t *testing.T) {
 	c := require.New(t)
 
 	client := setupClient(tableName)
@@ -1384,57 +1395,57 @@ func TestScanWithContext(t *testing.T) {
 		TableName: aws.String(tableName),
 	}
 
-	out, err := client.ScanWithContext(context.Background(), input)
+	out, err := client.Scan(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 3)
 
-	input.Limit = aws.Int64(1)
-	out, err = client.ScanWithContext(context.Background(), input)
+	input.Limit = aws.Int32(1)
+	out, err = client.Scan(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
 	c.NotEmpty(out.LastEvaluatedKey)
 
 	input.FilterExpression = aws.String("#invalid-name = Raichu")
-	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("Name"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#invalid-name": "Name",
 	}
 
-	_, err = client.ScanWithContext(context.Background(), input)
+	_, err = client.Scan(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
 	input.FilterExpression = aws.String("#t = :invalid-value")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#t": "type",
 	}
 
-	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+	input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+		":invalid-value": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
 	}
 
-	_, err = client.ScanWithContext(context.Background(), input)
+	_, err = client.Scan(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 
 	input.Limit = nil
 	input.FilterExpression = aws.String("#name = :name")
-	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":name": {
-			S: aws.String("Venusaur"),
+	input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+		":name": &dynamodbtypes.AttributeValueMemberS{
+			Value: "Venusaur",
 		},
 	}
-	input.ExpressionAttributeNames = map[string]*string{
-		"#name": aws.String("name"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#name": "name",
 	}
 
-	out, err = client.ScanWithContext(context.Background(), input)
+	out, err = client.Scan(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
 
-	input.ExpressionAttributeNames["#not_used"] = aws.String("hello")
+	input.ExpressionAttributeNames["#not_used"] = "hello"
 
-	_, err = client.ScanWithContext(context.Background(), input)
+	_, err = client.Scan(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 
@@ -1443,7 +1454,7 @@ func TestScanWithContext(t *testing.T) {
 	if fclient, isFake := client.(*Client); isFake {
 		ActiveForceFailure(fclient)
 
-		out, err = client.ScanWithContext(context.Background(), input)
+		out, err = client.Scan(context.Background(), input)
 		c.Equal(ErrForcedFailure, err)
 		c.Empty(out)
 
@@ -1451,7 +1462,7 @@ func TestScanWithContext(t *testing.T) {
 	}
 }
 
-func TestDeleteItemWithContext(t *testing.T) {
+func TestDeleteItem(t *testing.T) {
 	c := require.New(t)
 
 	client := setupClient(tableName)
@@ -1483,8 +1494,8 @@ func TestDeleteItemWithContext(t *testing.T) {
 	})
 	c.NoError(err)
 
-	key := map[string]*dynamodb.AttributeValue{
-		"id": {S: aws.String("003")},
+	key := map[string]dynamodbtypes.AttributeValue{
+		"id": &dynamodbtypes.AttributeValueMemberS{Value: "003"},
 	}
 
 	input := &dynamodb.DeleteItemInput{
@@ -1496,7 +1507,7 @@ func TestDeleteItemWithContext(t *testing.T) {
 	c.NoError(err)
 	c.Len(items, 3)
 
-	_, err = client.DeleteItemWithContext(context.Background(), input)
+	_, err = client.DeleteItem(context.Background(), input)
 	c.NoError(err)
 
 	item, err := getPokemon(client, "003")
@@ -1508,7 +1519,7 @@ func TestDeleteItemWithContext(t *testing.T) {
 	c.NoError(err)
 	c.Len(items, 2)
 
-	_, err = client.DeleteItemWithContext(context.Background(), input)
+	_, err = client.DeleteItem(context.Background(), input)
 	c.NoError(err)
 
 	if _, ok := client.(*Client); ok {
@@ -1516,14 +1527,12 @@ func TestDeleteItemWithContext(t *testing.T) {
 
 		defer func() { EmulateFailure(client, FailureConditionNone) }()
 
-		output, forcedError := client.DeleteItemWithContext(context.Background(), input)
+		output, forcedError := client.DeleteItem(context.Background(), input)
 		c.Nil(output)
 
-		var aerr awserr.Error
-		ok := errors.As(forcedError, &aerr)
+		var errInternalServerError *dynamodbtypes.InternalServerError
 
-		c.True(ok)
-		c.Equal(dynamodb.ErrCodeInternalServerError, aerr.Code())
+		c.True(errors.As(forcedError, &errInternalServerError))
 	}
 }
 
@@ -1543,53 +1552,55 @@ func TestDeleteItemWithConditions(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.DeleteItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {S: aws.String("001")},
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
 		},
 		TableName:           aws.String(tableName),
 		ConditionExpression: aws.String("attribute_exists(id)"),
 	}
 
-	_, err = client.DeleteItemWithContext(context.Background(), input)
+	_, err = client.DeleteItem(context.Background(), input)
 	c.NoError(err)
 
-	_, err = client.DeleteItemWithContext(context.Background(), input)
-	c.Contains(err.Error(), dynamodb.ErrCodeConditionalCheckFailedException)
+	var errConditionalCheckFailedException *dynamodbtypes.ConditionalCheckFailedException
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#not_used": aws.String("hello"),
+	_, err = client.DeleteItem(context.Background(), input)
+	c.True(errors.As(err, &errConditionalCheckFailedException))
+
+	input.ExpressionAttributeNames = map[string]string{
+		"#not_used": "hello",
 	}
 
-	_, err = client.DeleteItemWithContext(context.Background(), input)
+	_, err = client.DeleteItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 
 	input.ConditionExpression = aws.String("#invalid-name = Squirtle")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("hello"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#invalid-name": "hello",
 	}
 
-	_, err = client.DeleteItemWithContext(context.Background(), input)
+	_, err = client.DeleteItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
 	input.ConditionExpression = aws.String("#t = :invalid-value")
 
-	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+	input.ExpressionAttributeNames = map[string]string{
+		"#t": "type",
 	}
 
-	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+	input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+		":invalid-value": &dynamodbtypes.AttributeValueMemberNULL{Value: true},
 	}
 
-	_, err = client.DeleteItemWithContext(context.Background(), input)
+	_, err = client.DeleteItem(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 }
 
-func TestDeleteItemWithContextWithReturnValues(t *testing.T) {
+func TestDeleteItemWithReturnValues(t *testing.T) {
 	c := require.New(t)
 
 	client := setupClient(tableName)
@@ -1605,17 +1616,17 @@ func TestDeleteItemWithContextWithReturnValues(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.DeleteItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {S: aws.String("001")},
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
 		},
 		TableName:    aws.String(tableName),
-		ReturnValues: aws.String("ALL_OLD"),
+		ReturnValues: dynamodbtypes.ReturnValueAllOld,
 	}
 
-	output, err := client.DeleteItemWithContext(context.Background(), input)
+	output, err := client.DeleteItem(context.Background(), input)
 	c.NoError(err)
 
-	c.Equal("Bulbasaur", *output.Attributes["name"].S)
+	c.Equal("Bulbasaur", output.Attributes["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
 }
 
 func TestDescribeTable(t *testing.T) {
@@ -1630,13 +1641,13 @@ func TestDescribeTable(t *testing.T) {
 		TableName: aws.String(tableName),
 	}
 
-	output, err := client.DescribeTableWithContext(aws.BackgroundContext(), describeTableInput)
+	output, err := client.DescribeTable(context.Background(), describeTableInput)
 	c.NoError(err)
 	c.NotNil(output)
 	c.Len(output.Table.KeySchema, 1)
-	c.Equal(aws.StringValue(output.Table.TableName), tableName)
-	c.Equal(aws.StringValue(output.Table.KeySchema[0].KeyType), "HASH")
-	c.Equal(aws.StringValue(output.Table.KeySchema[0].AttributeName), "id")
+	c.Equal(aws.ToString(output.Table.TableName), tableName)
+	c.Equal(output.Table.KeySchema[0].KeyType, dynamodbtypes.KeyTypeHash)
+	c.Equal(aws.ToString(output.Table.KeySchema[0].AttributeName), "id")
 }
 
 func TestDescribeTableFail(t *testing.T) {
@@ -1651,13 +1662,13 @@ func TestDescribeTableFail(t *testing.T) {
 		TableName: aws.String("non_existing"),
 	}
 
-	output, err := client.DescribeTableWithContext(aws.BackgroundContext(), describeTableInput)
+	output, err := client.DescribeTable(context.Background(), describeTableInput)
 	c.Error(err)
 	c.Equal(expected, err.Error())
 	c.Empty(output)
 }
 
-func TestBatchWriteItemWithContext(t *testing.T) {
+func TestBatchWriteItem(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)
 
@@ -1670,29 +1681,33 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 		Name: "Bulbasaur",
 	}
 
-	item, err := dynamodbattribute.MarshalMap(m)
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(m, opt)
 	c.NoError(err)
 
-	requests := []*dynamodb.WriteRequest{
-		&dynamodb.WriteRequest{
-			PutRequest: &dynamodb.PutRequest{
+	requests := []dynamodbtypes.WriteRequest{
+		{
+			PutRequest: &dynamodbtypes.PutRequest{
 				Item: item,
 			},
 		},
 	}
 
 	input := &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]*dynamodb.WriteRequest{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
 			tableName: requests,
 		},
 	}
 
-	itemCollectionMetrics := map[string][]*dynamodb.ItemCollectionMetrics{
+	itemCollectionMetrics := map[string][]dynamodbtypes.ItemCollectionMetrics{
 		"table": {
 			{
-				ItemCollectionKey: map[string]*dynamodb.AttributeValue{
-					"report_id": {
-						S: aws.String("1234"),
+				ItemCollectionKey: map[string]dynamodbtypes.AttributeValue{
+					"report_id": &dynamodbtypes.AttributeValueMemberS{
+						Value: "1234",
 					},
 				},
 			},
@@ -1701,19 +1716,19 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 
 	SetItemCollectionMetrics(client, itemCollectionMetrics)
 
-	output, err := client.BatchWriteItemWithContext(context.Background(), input)
+	output, err := client.BatchWriteItem(context.Background(), input)
 	c.NoError(err)
 
 	c.Equal(itemCollectionMetrics, output.ItemCollectionMetrics)
 
 	c.NotEmpty(getPokemon(client, "001"))
 
-	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]*dynamodb.WriteRequest{
-			tableName: []*dynamodb.WriteRequest{
-				&dynamodb.WriteRequest{
-					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
-						"id": &dynamodb.AttributeValue{S: aws.String("001")},
+	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
+			tableName: {
+				{
+					DeleteRequest: &dynamodbtypes.DeleteRequest{Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
 					}},
 				},
 			},
@@ -1725,18 +1740,18 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 
 	delete(item, "id")
 
-	_, err = client.BatchWriteItemWithContext(context.Background(), input)
-	c.Contains(err.Error(), "ValidationException: The number of conditions on the keys is invalid")
+	_, err = client.BatchWriteItem(context.Background(), input)
+	c.Contains(err.Error(), "number of conditions on the keys is invalid")
 
-	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]*dynamodb.WriteRequest{
-			tableName: []*dynamodb.WriteRequest{
-				&dynamodb.WriteRequest{
-					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
-						"id":   &dynamodb.AttributeValue{S: aws.String("001")},
-						"type": &dynamodb.AttributeValue{S: aws.String("grass")},
+	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
+			tableName: {
+				{
+					DeleteRequest: &dynamodbtypes.DeleteRequest{Key: map[string]dynamodbtypes.AttributeValue{
+						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
 					}},
-					PutRequest: &dynamodb.PutRequest{Item: item},
+					PutRequest: &dynamodbtypes.PutRequest{Item: item},
 				},
 			},
 		},
@@ -1744,26 +1759,24 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 
 	c.Contains(err.Error(), "ValidationException: Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes")
 
-	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]*dynamodb.WriteRequest{
-			tableName: []*dynamodb.WriteRequest{
-				&dynamodb.WriteRequest{},
-			},
+	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
+			tableName: {{}},
 		},
 	})
 	c.Contains(err.Error(), "ValidationException: Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes")
 
-	item, err = dynamodbattribute.MarshalMap(m)
+	item, err = attributevalue.MarshalMap(m)
 	c.NoError(err)
 
 	for i := 0; i < batchRequestsLimit; i++ {
-		requests = append(requests, &dynamodb.WriteRequest{
-			PutRequest: &dynamodb.PutRequest{Item: item},
+		requests = append(requests, dynamodbtypes.WriteRequest{
+			PutRequest: &dynamodbtypes.PutRequest{Item: item},
 		})
 	}
 
-	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]*dynamodb.WriteRequest{
+	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
 			tableName: requests,
 		},
 	})
@@ -1783,12 +1796,16 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 		Name: "Bulbasaur",
 	}
 
-	item, err := dynamodbattribute.MarshalMap(m)
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(m, opt)
 	c.NoError(err)
 
-	requests := []*dynamodb.WriteRequest{
-		&dynamodb.WriteRequest{
-			PutRequest: &dynamodb.PutRequest{
+	requests := []dynamodbtypes.WriteRequest{
+		{
+			PutRequest: &dynamodbtypes.PutRequest{
 				Item: item,
 			},
 		},
@@ -1798,43 +1815,43 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	defer EmulateFailure(client, FailureConditionNone)
 
 	input := &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]*dynamodb.WriteRequest{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
 			tableName: requests,
 		},
 	}
 
-	output, err := client.BatchWriteItemWithContext(context.Background(), input)
+	output, err := client.BatchWriteItem(context.Background(), input)
 	c.NoError(err)
 
 	c.NotEmpty(output.UnprocessedItems)
 }
 
-func TestTransactWriteItemsWithContext(t *testing.T) {
+func TestTransactWriteItems(t *testing.T) {
 	c := require.New(t)
 	client := NewClient()
 
 	err := ensurePokemonTable(client)
 	c.NoError(err)
 
-	transactItems := []*dynamodb.TransactWriteItem{
+	transactItems := []dynamodbtypes.TransactWriteItem{
 		{
-			Update: &dynamodb.Update{
-				Key: map[string]*dynamodb.AttributeValue{
-					"id":     {S: aws.String("001")},
-					":ntype": {S: aws.String("poison")},
+			Update: &dynamodbtypes.Update{
+				Key: map[string]dynamodbtypes.AttributeValue{
+					"id":     &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					":ntype": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
 				},
 				TableName:        aws.String(tableName),
 				UpdateExpression: aws.String("SET second_type = :ntype"),
-				ExpressionAttributeNames: map[string]*string{
-					"#id": aws.String("id"),
+				ExpressionAttributeNames: map[string]string{
+					"#id": "id",
 				},
-				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-					":update": {S: aws.String(time.Now().Format(time.RFC3339))},
-					":incr": {
-						N: aws.String("1"),
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+					":update": &dynamodbtypes.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
+					":incr": &dynamodbtypes.AttributeValueMemberN{
+						Value: "1",
 					},
-					":initial": {
-						N: aws.String("0"),
+					":initial": &dynamodbtypes.AttributeValueMemberN{
+						Value: "0",
 					},
 				},
 			},
@@ -1845,14 +1862,14 @@ func TestTransactWriteItemsWithContext(t *testing.T) {
 		TransactItems: transactItems,
 	}
 
-	output, err := client.TransactWriteItemsWithContext(context.Background(), writeItemsInput)
+	output, err := client.TransactWriteItems(context.Background(), writeItemsInput)
 	c.NoError(err)
 	c.NotNil(output)
 
 	ActiveForceFailure(client)
 	defer DeactiveForceFailure(client)
 
-	_, err = client.TransactWriteItemsWithContext(context.Background(), writeItemsInput)
+	_, err = client.TransactWriteItems(context.Background(), writeItemsInput)
 	c.Equal(ErrForcedFailure, err)
 }
 
@@ -1865,7 +1882,7 @@ func TestCheckTableName(t *testing.T) {
 	expected := "ResourceNotFoundException: Cannot do operations on a non-existent table"
 	c.Equal(expected, err.Error())
 
-	err = AddTable(fclient, "new-table", "partition", "range")
+	err = AddTable(context.Background(), fclient, "new-table", "partition", "range")
 	c.NoError(err)
 
 	_, err = fclient.getTable("notATable")
@@ -1898,7 +1915,10 @@ func TestForceFailure(t *testing.T) {
 	c.NoError(err)
 	c.NoError(err)
 
-	actualClient := dynamodb.New(session.Must(session.NewSession(&aws.Config{})))
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	c.NoError(err)
+
+	actualClient := dynamodb.NewFromConfig(cfg)
 
 	c.Panics(func() {
 		ActiveForceFailure(actualClient)
@@ -1921,31 +1941,31 @@ func TestUpdateItemAndQueryAfterUpsert(t *testing.T) {
 	err = ensurePokemonTypeIndex(client)
 	c.NoError(err)
 
-	expr := map[string]*dynamodb.AttributeValue{
-		":type": {
-			S: aws.String(string("water")),
+	expr := map[string]dynamodbtypes.AttributeValue{
+		":type": &dynamodbtypes.AttributeValueMemberS{
+			Value: string("water"),
 		},
-		":name": {
-			S: aws.String(string("piplup")),
+		":name": &dynamodbtypes.AttributeValueMemberS{
+			Value: string("piplup"),
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"id": {
-				S: aws.String("001"),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "001",
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
+		ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
 		UpdateExpression:          aws.String("SET #type = :type, #name = :name"),
 		ExpressionAttributeValues: expr,
-		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
-			"#name": aws.String("name"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
+			"#name": "name",
 		},
 	}
 
-	_, err = client.UpdateItemWithContext(context.Background(), input)
+	_, err = client.UpdateItem(context.Background(), input)
 	c.NoError(err)
 
 	items, err := getPokemonsByType(client, "water")
@@ -1986,59 +2006,23 @@ func BenchmarkQuery(b *testing.B) {
 	c.NoError(err)
 
 	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":type": {
-				S: aws.String("grass"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":type": &dynamodbtypes.AttributeValueMemberS{
+				Value: "grass",
 			},
 		},
-		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
 		},
 		KeyConditionExpression: aws.String("#type = :type"),
 		TableName:              aws.String(tableName),
 		IndexName:              aws.String("by-type"),
-		Limit:                  aws.Int64(1),
+		Limit:                  aws.Int32(1),
 	}
 
 	for n := 0; n < b.N; n++ {
-		out, err := client.QueryWithContext(context.Background(), input)
+		out, err := client.Query(context.Background(), input)
 		c.NoError(err)
 		c.Len(out.Items, 1)
-	}
-}
-
-func BenchmarkQueryWithContext(b *testing.B) {
-	c := require.New(b)
-	client := NewClient()
-
-	err := ensurePokemonTable(client)
-	c.NoError(err)
-
-	err = createPokemon(client, pokemon{
-		ID:   "001",
-		Type: "grass",
-		Name: "Bulbasaur",
-	})
-	c.NoError(err)
-
-	input := &dynamodb.QueryInput{
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":id": {
-				S: aws.String("001"),
-			},
-		},
-		KeyConditionExpression:   aws.String("#id = :id"),
-		ExpressionAttributeNames: map[string]*string{"#id": aws.String("id")},
-		TableName:                aws.String(tableName),
-		Limit:                    aws.Int64(1),
-	}
-
-	ctx := context.Background()
-
-	for i := 0; i < b.N; i++ {
-		_, err := client.QueryWithContext(ctx, input)
-		if err != nil {
-			b.Error(err)
-		}
 	}
 }

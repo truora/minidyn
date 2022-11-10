@@ -1,12 +1,11 @@
-package minidyn
+package core
 
 import (
 	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
 type keySchema struct {
@@ -15,7 +14,7 @@ type keySchema struct {
 	Secondary bool
 }
 
-func (ks keySchema) getKey(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
+func (ks keySchema) GetKey(attrs map[string]string, item map[string]*types.Item) (string, error) {
 	key, err := ks.getKeyValue(attrs, item)
 	if ks.Secondary && errors.Is(err, errMissingField) {
 		// secondary indexes are sparse
@@ -25,7 +24,7 @@ func (ks keySchema) getKey(attrs map[string]string, item map[string]*dynamodb.At
 	return key, err
 }
 
-func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*dynamodb.AttributeValue) (string, error) {
+func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*types.Item) (string, error) {
 	key := []string{}
 
 	val, err := getItemValue(item, ks.HashKey, attrs[ks.HashKey])
@@ -51,19 +50,19 @@ func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*dynamo
 	return strings.Join(key, "."), nil
 }
 
-func (ks *keySchema) describe() []*dynamodb.KeySchemaElement {
-	desc := []*dynamodb.KeySchemaElement{}
+func (ks *keySchema) describe() []types.KeySchemaElement {
+	desc := []types.KeySchemaElement{}
 
-	keySchemaElement := &dynamodb.KeySchemaElement{
-		AttributeName: aws.String(ks.HashKey),
-		KeyType:       aws.String("HASH"),
+	keySchemaElement := types.KeySchemaElement{
+		AttributeName: ks.HashKey,
+		KeyType:       "HASH",
 	}
 	desc = append(desc, keySchemaElement)
 
 	if ks.RangeKey != "" {
-		keySchemaElement := &dynamodb.KeySchemaElement{
-			AttributeName: aws.String(ks.RangeKey),
-			KeyType:       aws.String("RANGE"),
+		keySchemaElement := types.KeySchemaElement{
+			AttributeName: ks.RangeKey,
+			KeyType:       "RANGE",
 		}
 		desc = append(desc, keySchemaElement)
 	}
@@ -71,8 +70,8 @@ func (ks *keySchema) describe() []*dynamodb.KeySchemaElement {
 	return desc
 }
 
-func (ks *keySchema) getKeyItem(item map[string]*dynamodb.AttributeValue) map[string]*dynamodb.AttributeValue {
-	keyItem := map[string]*dynamodb.AttributeValue{}
+func (ks *keySchema) getKeyItem(item map[string]*types.Item) map[string]*types.Item {
+	keyItem := map[string]*types.Item{}
 
 	if v, ok := item[ks.HashKey]; ok {
 		keyItem[ks.HashKey] = v

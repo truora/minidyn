@@ -3,8 +3,7 @@ package language
 import (
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/truora/minidyn/types"
 )
 
 func TestString(t *testing.T) {
@@ -19,9 +18,9 @@ func TestString(t *testing.T) {
 }
 
 func TestApply(t *testing.T) {
-	item := map[string]*dynamodb.AttributeValue{
+	item := map[string]*types.Item{
 		"a": {
-			S: aws.String("a"),
+			S: types.ToString("a"),
 		},
 	}
 

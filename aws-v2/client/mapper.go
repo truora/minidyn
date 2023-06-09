@@ -409,7 +409,7 @@ func mapTypesToDynamoTableDescription(input *types.TableDescription) *dynamodbty
 
 	return &dynamodbtypes.TableDescription{
 		TableName:              toString(input.TableName),
-		ItemCount:              input.ItemCount,
+		ItemCount:              aws.Int64(input.ItemCount),
 		KeySchema:              mapTypesToDynamoKeySchemaElements(input.KeySchema),
 		GlobalSecondaryIndexes: mapTypesToDynamoTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes),
 		LocalSecondaryIndexes:  mapTypesToDynamoLocalSecondaryIndexes(input.LocalSecondaryIndexes),
@@ -462,9 +462,9 @@ func mapTypesToDynamoGlobalSecondaryIndex(input types.GlobalSecondaryIndexDescri
 		Projection:     mapTypesToDynamoProjection(input.Projection),
 		Backfilling:    input.Backfilling,
 		IndexArn:       input.IndexArn,
-		IndexSizeBytes: aws.ToInt64(input.IndexSizeBytes),
+		IndexSizeBytes: input.IndexSizeBytes,
 		IndexStatus:    dynamodbtypes.IndexStatus(aws.ToString(input.IndexStatus)),
-		ItemCount:      input.ItemCount,
+		ItemCount:      aws.Int64(input.ItemCount),
 	}
 }
 

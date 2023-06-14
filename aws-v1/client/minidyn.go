@@ -106,7 +106,7 @@ func AddIndex(client dynamodbiface.DynamoDBAPI, tableName, indexName, partitionK
 		AttributeDefinitions: attributes,
 		TableName:            aws.String(tableName),
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
+			{
 				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
 					IndexName: aws.String(indexName),
 					KeySchema: keySchema,

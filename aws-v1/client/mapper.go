@@ -274,7 +274,7 @@ func mapUpdateItemInputToTypes(input *dynamodb.UpdateItemInput) *types.UpdateIte
 }
 
 func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[string]*types.Item {
-	if len(attrs) == 0 {
+	if attrs == nil {
 		return nil
 	}
 
@@ -332,6 +332,10 @@ func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []*types.Ite
 }
 
 func mapAttributeValueToDynamodb(attrs map[string]*types.Item) map[string]*dynamodb.AttributeValue {
+	if len(attrs) == 0 {
+		return nil
+	}
+
 	mapItems := make(map[string]*dynamodb.AttributeValue, len(attrs))
 
 	for key, attr := range attrs {
@@ -363,6 +367,10 @@ func mapItemSliceToDynamodb(items []map[string]*types.Item) []map[string]*dynamo
 }
 
 func mapAttributeValueListToDynamodb(attrs []*types.Item) []*dynamodb.AttributeValue {
+	if attrs == nil {
+		return nil
+	}
+
 	mapItems := make([]*dynamodb.AttributeValue, len(attrs))
 
 	for i, attr := range attrs {

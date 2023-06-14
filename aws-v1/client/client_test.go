@@ -1133,6 +1133,14 @@ func TestQueryWithContext(t *testing.T) {
 	c.Len(out.Items, 1)
 	c.Empty(out.LastEvaluatedKey)
 
+	var pokemonQueried = pokemon{}
+
+	err = dynamodbattribute.UnmarshalMap(out.Items[0], &pokemonQueried)
+	c.NoError(err)
+	c.Equal(pokemonQueried.ID, "004")
+	c.Equal(pokemonQueried.Type, "fire")
+	c.Equal(pokemonQueried.Name, "Charmander")
+
 	input.FilterExpression = aws.String("#type = :type")
 
 	input.ExpressionAttributeNames["#type"] = aws.String("type")

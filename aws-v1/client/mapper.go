@@ -303,7 +303,7 @@ func mapAttributeValueToTypes(attrs map[string]*dynamodb.AttributeValue) map[str
 }
 
 func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []*types.Item {
-	if len(attrs) == 0 {
+	if attrs == nil {
 		return nil
 	}
 
@@ -332,7 +332,7 @@ func mapAttributeValueListToTypes(attrs []*dynamodb.AttributeValue) []*types.Ite
 }
 
 func mapAttributeValueToDynamodb(attrs map[string]*types.Item) map[string]*dynamodb.AttributeValue {
-	if len(attrs) == 0 {
+	if attrs == nil {
 		return nil
 	}
 

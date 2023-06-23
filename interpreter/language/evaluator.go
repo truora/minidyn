@@ -725,7 +725,7 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 		return newError("the function is not allowed in an update expression; function: " + funcObj.Name)
 	}
 
-	args := evalExpressions(node.Arguments, env)
+	args := evalUpdateExpressions(node.Arguments, env)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
 	}
@@ -997,6 +997,21 @@ func evalExpressions(exps []Expression, env *Environment) []Object {
 
 	for _, e := range exps {
 		evaluated := Eval(e, env)
+		if isError(evaluated) {
+			return []Object{evaluated}
+		}
+
+		result = append(result, evaluated)
+	}
+
+	return result
+}
+
+func evalUpdateExpressions(exps []Expression, env *Environment) []Object {
+	var result []Object
+
+	for _, e := range exps {
+		evaluated := EvalUpdate(e, env)
 		if isError(evaluated) {
 			return []Object{evaluated}
 		}

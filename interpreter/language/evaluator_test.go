@@ -403,6 +403,12 @@ func TestEvalSetUpdate(t *testing.T) {
 			false,
 		},
 		{
+			"SET :all = list_append(if_not_exists(:all, :list), :tools)",
+			":all",
+			&List{Value: []Object{&Number{Value: 0}, &String{Value: "Chisel"}, &String{Value: "Hammer"}, &String{Value: "Nails"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}},
+			false,
+		},
+		{
 			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},

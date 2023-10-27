@@ -1,6 +1,7 @@
 package client
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -652,4 +653,21 @@ func toString(str string) *string {
 	}
 
 	return aws.String(str)
+}
+
+func mapKnownError(err error) error {
+	var intErr types.Error
+
+	if !errors.As(err, &intErr) {
+		return err
+	}
+
+	switch intErr.Code() {
+	case "ConditionalCheckFailedException":
+		return &dynamodbtypes.ConditionalCheckFailedException{Message: aws.String(intErr.Message())}
+	case "ResourceNotFoundException":
+		return &dynamodbtypes.ResourceNotFoundException{Message: aws.String(intErr.Message())}
+	}
+
+	return err
 }

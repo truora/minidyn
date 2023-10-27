@@ -889,7 +889,7 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 		},
 	}
 
-	var errConditionalCheckFailedException *types.ConditionalCheckFailedException
+	var errConditionalCheckFailedException *dynamodbtypes.ConditionalCheckFailedException
 
 	_, err = client.UpdateItem(context.Background(), input)
 	c.True(errors.As(err, &errConditionalCheckFailedException))

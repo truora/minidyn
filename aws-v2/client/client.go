@@ -133,15 +133,15 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 	newTable.LangInterpreter = *fd.langInterpreter
 
 	if err := newTable.CreatePrimaryIndex(mapDynamoToTypesCreateTableInput(input)); err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	if err := newTable.AddGlobalIndexes(mapDynamoToTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes)); err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	if err := newTable.AddLocalIndexes(mapDynamoToTypesLocalSecondaryIndexes(input.LocalSecondaryIndexes)); err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	fd.tables[tableName] = newTable
@@ -157,7 +157,7 @@ func (fd *Client) DeleteTable(ctx context.Context, input *dynamodb.DeleteTableIn
 
 	table, err := fd.getTable(tableName)
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	desc := mapTypesToDynamoTableDescription(table.Description(tableName))
@@ -186,7 +186,7 @@ func (fd *Client) UpdateTable(ctx context.Context, input *dynamodb.UpdateTableIn
 		if err := table.ApplyIndexChange(mapDynamoTotypesGlobalSecondaryIndexUpdate(change)); err != nil {
 			return &dynamodb.UpdateTableOutput{
 				TableDescription: mapTypesToDynamoTableDescription(table.Description(tableName)),
-			}, err
+			}, mapKnownError(err)
 		}
 	}
 
@@ -201,7 +201,7 @@ func (fd *Client) DescribeTable(ctx context.Context, input *dynamodb.DescribeTab
 
 	table, err := fd.getTable(tableName)
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	output := &dynamodb.DescribeTableOutput{
@@ -222,19 +222,19 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	item, err := table.Put(mapDynamoToTypesPutItemInput(input))
 
 	return &dynamodb.PutItemOutput{
 		Attributes: mapTypesToDynamoMapItem(item),
-	}, err
+	}, mapKnownError(err)
 }
 
 // DeleteItem mock response for dynamodb
@@ -248,12 +248,12 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	// support conditional writes
@@ -272,7 +272,7 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 
 	item, err := table.Delete(mapDynamoToTypesDeleteItemInput(input))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	if string(input.ReturnValues) == "ALL_OLD" {
@@ -295,12 +295,12 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.UpdateExpression), aws.ToString(input.ConditionExpression))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	item, err := table.Update(mapDynamoToTypesUpdateItemInput(input))
@@ -309,7 +309,7 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 			return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 		}
 
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	output := &dynamodb.UpdateItemOutput{
@@ -330,12 +330,12 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.ToString(input.ProjectionExpression))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	key, err := table.KeySchema.GetKey(table.AttributesDef, mapDynamoToTypesMapItem(input.Key))
@@ -363,12 +363,12 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	indexName := aws.ToString(input.IndexName)
@@ -401,12 +401,12 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
-		return nil, err
+		return nil, mapKnownError(err)
 	}
 
 	indexName := aws.ToString(input.IndexName)

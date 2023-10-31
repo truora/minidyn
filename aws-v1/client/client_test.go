@@ -1292,6 +1292,14 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.Empty(out.Items)
 	c.Empty(out.LastEvaluatedKey)
 
+	input.Limit = nil
+	input.ExclusiveStartKey = nil
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 3)
+	c.Empty(out.LastEvaluatedKey)
+
 	input.Limit = aws.Int64(4)
 	input.ExclusiveStartKey = nil
 
@@ -1299,6 +1307,23 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.NoError(err)
 	c.Len(out.Items, 3)
 	c.Empty(out.LastEvaluatedKey)
+
+	input.Limit = aws.Int64(2)
+	input.ExclusiveStartKey = nil
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 2)
+	c.NotEmpty(out.LastEvaluatedKey)
+	input.ExclusiveStartKey = out.LastEvaluatedKey
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 1)
+	c.Empty(out.LastEvaluatedKey)
+
+	input.Limit = aws.Int64(4)
+	input.ExclusiveStartKey = nil
 
 	err = createPokemon(client, pokemon{
 		ID:   "004",

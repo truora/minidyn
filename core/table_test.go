@@ -652,7 +652,7 @@ func TestGetLastKey(t *testing.T) {
 		Table:      newTable,
 	}
 
-	result := newTable.getLastKey(item, 1, 1, 2, newIndex)
+	result := newTable.getLastKey(item, 1, 1, 1, 2, newIndex)
 	c.Equal(item["id"], result["id"])
 }
 

@@ -148,6 +148,8 @@ func ClearTable(client dynamodbiface.DynamoDBAPI, tableName string) error {
 }
 
 func generateAddTableInput(tableName, hashKey, rangeKey string) *dynamodb.CreateTableInput {
+	var cunit int64 = 10
+
 	input := &dynamodb.CreateTableInput{
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{
@@ -163,6 +165,10 @@ func generateAddTableInput(tableName, hashKey, rangeKey string) *dynamodb.Create
 			},
 		},
 		TableName: aws.String(tableName),
+		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+			ReadCapacityUnits:  &cunit,
+			WriteCapacityUnits: &cunit,
+		},
 	}
 
 	if rangeKey != "" {

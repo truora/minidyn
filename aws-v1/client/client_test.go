@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
@@ -128,7 +129,13 @@ func setupClient(table string) dynamodbiface.DynamoDBAPI {
 }
 
 func setupDynamoDBLocal(endpoint string) dynamodbiface.DynamoDBAPI {
-	config := &aws.Config{}
+	creds := credentials.NewStaticCredentials("dummy", "dummy", "dummy")
+
+	config := &aws.Config{
+		Credentials: creds,
+		Region:      aws.String("us-east-1"),
+	}
+
 	// this allow us to test with dynamodb-local
 	config.Endpoint = aws.String(endpoint)
 	config.MaxRetries = aws.Int(1)
@@ -1285,15 +1292,20 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.Empty(out.Items)
 	c.Empty(out.LastEvaluatedKey)
 
+	input.Limit = aws.Int64(4)
+	input.ExclusiveStartKey = nil
+
+	out, err = client.QueryWithContext(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 3)
+	c.Empty(out.LastEvaluatedKey)
+
 	err = createPokemon(client, pokemon{
 		ID:   "004",
 		Type: "fire",
 		Name: "Charmander",
 	})
 	c.NoError(err)
-
-	input.ExclusiveStartKey = nil
-	input.Limit = aws.Int64(4)
 
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)

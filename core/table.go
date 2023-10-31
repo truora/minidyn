@@ -293,16 +293,12 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 	return copyItem(storedItem), lastMatchExpressionType, true
 }
 
-func shouldReturnNextKey(item map[string]*types.Item, scanned, limit, keysSize int64) bool {
+func shouldReturnNextKey(item map[string]*types.Item, count, scanned, limit, keysSize int64) bool {
 	if len(item) == 0 || limit == 0 {
 		return false
 	}
 
-	if limit >= keysSize {
-		return false
-	}
-
-	return scanned <= keysSize
+	return scanned <= keysSize && limit <= count
 }
 
 func shouldCountItem(expressionType interpreter.ExpressionType, matched bool) bool {
@@ -345,7 +341,6 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 		k := GetKeyAt(sortedKeys, sortedKeysSize, int64(pos), forward)
 
 		pk, ok := prepareSearch(&input, index, k, startKey)
-
 		if !ok {
 			scanned++
 			continue
@@ -370,11 +365,11 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 		}
 	}
 
-	return items, t.getLastKey(last, limit, scanned, sortedKeysSize, index)
+	return items, t.getLastKey(last, limit, count, scanned, sortedKeysSize, index)
 }
 
-func (t *Table) getLastKey(item map[string]*types.Item, limit, scanned, keysSize int64, index *index) map[string]*types.Item {
-	if !shouldReturnNextKey(item, scanned, limit, keysSize) {
+func (t *Table) getLastKey(item map[string]*types.Item, limit, count, scanned, keysSize int64, index *index) map[string]*types.Item {
+	if !shouldReturnNextKey(item, count, scanned, limit, keysSize) {
 		return map[string]*types.Item{}
 	}
 

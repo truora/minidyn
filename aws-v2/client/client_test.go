@@ -1293,6 +1293,7 @@ func TestQueryPagination(t *testing.T) {
 	c.NoError(err)
 	c.Len(out.Items, 1)
 	c.Equal("003", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.NotEmpty(out.LastEvaluatedKey)
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
 	out, err = client.Query(context.Background(), input)
@@ -1307,6 +1308,31 @@ func TestQueryPagination(t *testing.T) {
 	c.NoError(err)
 	c.Len(out.Items, 3)
 	c.Empty(out.LastEvaluatedKey)
+
+	input.Limit = aws.Int32(2)
+	input.ExclusiveStartKey = nil
+
+	out, err = client.Query(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 2)
+	c.NotEmpty(out.LastEvaluatedKey)
+	input.ExclusiveStartKey = out.LastEvaluatedKey
+
+	out, err = client.Query(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 1)
+	c.Empty(out.LastEvaluatedKey)
+
+	input.Limit = nil
+	input.ExclusiveStartKey = nil
+
+	out, err = client.Query(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 3)
+	c.Empty(out.LastEvaluatedKey)
+
+	input.Limit = aws.Int32(4)
+	input.ExclusiveStartKey = nil
 
 	err = createPokemon(client, pokemon{
 		ID:   "004",

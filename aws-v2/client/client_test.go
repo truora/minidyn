@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -131,12 +132,25 @@ func setupClient(table string) FakeClient {
 }
 
 func setupDynamoDBLocal(endpoint string) FakeClient {
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("localhost"),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: endpoint}, nil
+			})),
+		config.WithCredentialsProvider(credentials.StaticCredentialsProvider{
+			Value: aws.Credentials{
+				AccessKeyID: "dummy", SecretAccessKey: "dummy", SessionToken: "dummy",
+				Source: "Hard-coded credentials; values are irrelevant for local DynamoDB",
+			},
+		}),
+		config.WithRetryer(func() aws.Retryer {
+			return aws.NopRetryer{}
+		}),
+	)
 	if err != nil {
 		panic("configuration error, " + err.Error())
 	}
-
-	cfg.RetryMaxAttempts = 1
 
 	defer func() {
 		if err := recover(); err != nil {
@@ -1286,15 +1300,20 @@ func TestQueryPagination(t *testing.T) {
 	c.Empty(out.Items)
 	c.Empty(out.LastEvaluatedKey)
 
+	input.Limit = aws.Int32(4)
+	input.ExclusiveStartKey = nil
+
+	out, err = client.Query(context.Background(), input)
+	c.NoError(err)
+	c.Len(out.Items, 3)
+	c.Empty(out.LastEvaluatedKey)
+
 	err = createPokemon(client, pokemon{
 		ID:   "004",
 		Type: "fire",
 		Name: "Charmander",
 	})
 	c.NoError(err)
-
-	input.ExclusiveStartKey = nil
-	input.Limit = aws.Int32(4)
 
 	out, err = client.Query(context.Background(), input)
 	c.NoError(err)

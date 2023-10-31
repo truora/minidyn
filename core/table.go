@@ -293,17 +293,16 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 	return copyItem(storedItem), lastMatchExpressionType, true
 }
 
-func shouldReturnNextKey(item map[string]*types.Item, startKey string, count, limit, keysSize int64) bool {
-	if len(item) == 0 {
+func shouldReturnNextKey(item map[string]*types.Item, scanned, limit, keysSize int64) bool {
+	if len(item) == 0 || limit == 0 {
 		return false
 	}
 
-	// Make sure that if we are in the first page without pages, don't return a next key
-	if startKey == "" && limit != count && count < keysSize {
+	if limit >= keysSize {
 		return false
 	}
 
-	return limit != 0 && limit <= keysSize
+	return scanned <= keysSize
 }
 
 func shouldCountItem(expressionType interpreter.ExpressionType, matched bool) bool {
@@ -334,22 +333,31 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 	input.started = startKey == ""
 	last := map[string]*types.Item{}
 	sortedKeysSize := int64(len(sortedKeys))
+
 	forward := input.ScanIndexForward
 
-	var count int64
+	var (
+		count   int64
+		scanned int64
+	)
 
 	for pos := range sortedKeys {
 		k := GetKeyAt(sortedKeys, sortedKeysSize, int64(pos), forward)
 
 		pk, ok := prepareSearch(&input, index, k, startKey)
+
 		if !ok {
+			scanned++
 			continue
 		}
 
 		item, expressionType, matched := t.getMatchedItemAndCount(&input, pk, startKey)
+
 		if matched {
 			items = append(items, item)
 		}
+
+		scanned++
 
 		if shouldCountItem(expressionType, matched) {
 			count++
@@ -362,11 +370,11 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 		}
 	}
 
-	return items, t.getLastKey(last, startKey, limit, count, sortedKeysSize, index)
+	return items, t.getLastKey(last, limit, scanned, sortedKeysSize, index)
 }
 
-func (t *Table) getLastKey(item map[string]*types.Item, startKey string, limit, count, keysSize int64, index *index) map[string]*types.Item {
-	if !shouldReturnNextKey(item, startKey, count, limit, keysSize) {
+func (t *Table) getLastKey(item map[string]*types.Item, limit, scanned, keysSize int64, index *index) map[string]*types.Item {
+	if !shouldReturnNextKey(item, scanned, limit, keysSize) {
 		return map[string]*types.Item{}
 	}
 

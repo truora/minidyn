@@ -580,6 +580,7 @@ func validateBatchWriteItemInput(input *dynamodb.BatchWriteItemInput) error {
 			if err != nil {
 				return err
 			}
+
 			count++
 		}
 	}

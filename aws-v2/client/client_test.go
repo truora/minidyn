@@ -907,6 +907,31 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 
 	_, err = client.UpdateItem(context.Background(), input)
 	c.True(errors.As(err, &errConditionalCheckFailedException))
+
+	input = &dynamodb.UpdateItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{
+				Value: "001",
+			},
+		},
+		ConditionExpression:       aws.String("attribute_not_exists(#id)"),
+		ReturnValues:              dynamodbtypes.ReturnValueUpdatedNew,
+		UpdateExpression:          aws.String(uexpr),
+		ExpressionAttributeValues: expr,
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
+		},
+		ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+	}
+
+	errConditionalCheckFailedException = &dynamodbtypes.ConditionalCheckFailedException{}
+
+	_, err = client.UpdateItem(context.Background(), input)
+	c.True(errors.As(err, &errConditionalCheckFailedException))
+	c.NotEmpty(errConditionalCheckFailedException.Item)
+	c.Equal("001", errConditionalCheckFailedException.Item["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal("Bulbasaur", errConditionalCheckFailedException.Item["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
 }
 
 func TestUpdateItemWithGSI(t *testing.T) {

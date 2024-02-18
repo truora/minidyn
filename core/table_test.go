@@ -1,8 +1,10 @@
 package core
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/stretchr/testify/require"
 	"github.com/truora/minidyn/interpreter"
 	"github.com/truora/minidyn/types"
@@ -563,9 +565,17 @@ func TestUpdate(t *testing.T) {
 	c.Contains(err.Error(), "invalid update expression")
 
 	updateInput.ConditionExpression = types.ToString("attribute_not_exists(#id)")
+	updateInput.ReturnValuesOnConditionCheckFailure = aws.String("ALL_OLD")
 
 	_, err = newTable.Update(updateInput)
-	c.Contains(err.Error(), "conditional request failed")
+
+	var checkErr *types.ConditionalCheckFailedException
+	c.True(errors.As(err, &checkErr))
+	c.Contains(checkErr.Error(), "conditional request failed")
+	c.Len(checkErr.Item, 3)
+	c.Equal("001", types.StringValue(checkErr.Item["id"].S))
+	c.Equal("grass", types.StringValue(checkErr.Item["type"].S))
+	c.Equal("Bulbasaur", types.StringValue(checkErr.Item["name"].S))
 
 	updateInput.ConditionExpression = types.ToString("attribute_exists(id)")
 	updateInput.UpdateExpression = "SET id = :id"

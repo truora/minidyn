@@ -182,6 +182,7 @@ type ConditionalCheckFailedException struct {
 	_            struct{}                  `type:"structure"`
 	RespMetadata protocol.ResponseMetadata `json:"-" xml:"-"`
 	MessageText  string                    `locationName:"message" type:"string"`
+	Item         map[string]*Item          `type:"map"`
 }
 
 // String returns the string representation
@@ -243,19 +244,20 @@ type PutItemInput struct {
 
 // UpdateItemInput represents the input of an UpdateItem operation.
 type UpdateItemInput struct {
-	_                           struct{}                           `type:"structure"`
-	AttributeUpdates            map[string]*AttributeValueUpdate   `type:"map"`
-	ConditionExpression         *string                            `type:"string"`
-	ConditionalOperator         *string                            `type:"string" enum:"ConditionalOperator"`
-	Expected                    map[string]*ExpectedAttributeValue `type:"map"`
-	ExpressionAttributeNames    map[string]string                  `type:"map"`
-	ExpressionAttributeValues   map[string]*Item                   `type:"map"`
-	Key                         map[string]*Item                   `type:"map" required:"true"`
-	ReturnConsumedCapacity      *string                            `type:"string" enum:"ReturnConsumedCapacity"`
-	ReturnItemCollectionMetrics *string                            `type:"string" enum:"ReturnItemCollectionMetrics"`
-	ReturnValues                *string                            `type:"string" enum:"ReturnValue"`
-	TableName                   *string                            `min:"3" type:"string" required:"true"`
-	UpdateExpression            string                             `type:"string"`
+	_                                   struct{}                           `type:"structure"`
+	AttributeUpdates                    map[string]*AttributeValueUpdate   `type:"map"`
+	ConditionExpression                 *string                            `type:"string"`
+	ConditionalOperator                 *string                            `type:"string" enum:"ConditionalOperator"`
+	Expected                            map[string]*ExpectedAttributeValue `type:"map"`
+	ExpressionAttributeNames            map[string]string                  `type:"map"`
+	ExpressionAttributeValues           map[string]*Item                   `type:"map"`
+	Key                                 map[string]*Item                   `type:"map" required:"true"`
+	ReturnConsumedCapacity              *string                            `type:"string" enum:"ReturnConsumedCapacity"`
+	ReturnItemCollectionMetrics         *string                            `type:"string" enum:"ReturnItemCollectionMetrics"`
+	ReturnValues                        *string                            `type:"string" enum:"ReturnValue"`
+	TableName                           *string                            `min:"3" type:"string" required:"true"`
+	UpdateExpression                    string                             `type:"string"`
+	ReturnValuesOnConditionCheckFailure *string                            `type:"string"`
 }
 
 // DeleteItemInput represents the input of a DeleteItem operation.

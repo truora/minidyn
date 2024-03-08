@@ -44,7 +44,7 @@ func TestAttributeNotExists(t *testing.T) {
 		t.Fatal("value should be false")
 	}
 
-	exists = attributeNotExists(NULL)
+	exists = attributeNotExists(UNDEFINED)
 	if exists.Type() == ObjectTypeBoolean && exists.Inspect() != "true" {
 		t.Fatal("value should be true")
 	}
@@ -197,13 +197,13 @@ func TestObjectSize(t *testing.T) {
 
 func TestIfNotExists(t *testing.T) {
 	str := String{Value: "hello"}
-	val := ifNotExists(NULL, &str)
+	val := ifNotExists(UNDEFINED, &str)
 
 	if str.Inspect() != val.Inspect() {
 		t.Fatalf("expected=%s, actual=%s", str, val.Inspect())
 	}
 
-	val = ifNotExists(&str, NULL)
+	val = ifNotExists(&str, UNDEFINED)
 
 	if str.Inspect() != val.Inspect() {
 		t.Fatalf("expected=%s, actual=%s", str, val.Inspect())

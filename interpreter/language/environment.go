@@ -51,7 +51,7 @@ func (e *Environment) Get(name string) Object {
 
 	size := len(names)
 	if size == 0 {
-		return NULL
+		return UNDEFINED
 	}
 
 	return e.getFromIndexes(names, size)
@@ -75,7 +75,7 @@ func (e *Environment) getFromIndexes(names []string, size int) Object {
 
 	obj, ok = e.store[names[0]]
 	if !ok {
-		return NULL
+		return UNDEFINED
 	}
 
 	for i, n := range names[1:] {

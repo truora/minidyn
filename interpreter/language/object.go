@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	// NULL definel the global null value
-	NULL = &Null{}
+	// UNDEFINED definel the global null value
+	UNDEFINED = &Null{IsUndefined: true}
 	// TRUE definel the global true value
 	TRUE = &Boolean{Value: true}
 	// FALSE definel the global false value
@@ -130,7 +130,7 @@ func (i *Number) Add(obj Object) Object {
 
 	i.Value += n.Value
 
-	return NULL
+	return UNDEFINED
 }
 
 // Boolean is the representation of boolean
@@ -197,7 +197,9 @@ func (b *Binary) CanContain(objType ObjectType) bool {
 }
 
 // Null is the representation of nil values
-type Null struct{}
+type Null struct {
+	IsUndefined bool
+}
 
 // Type returns the object type
 func (n *Null) Type() ObjectType { return ObjectTypeNull }
@@ -328,7 +330,7 @@ func (m *Map) ToDynamoDB() types.Item {
 func (m *Map) Get(field string) Object {
 	obj, ok := m.Value[field]
 	if !ok {
-		return NULL
+		return UNDEFINED
 	}
 
 	return obj
@@ -373,12 +375,12 @@ func (l *List) Remove(pos int64) Object {
 		l.Value[pos] = nil
 		l.dirty = true
 
-		return NULL
+		return UNDEFINED
 	}
 
 	// types does nothing when the index greater than the list size
 
-	return NULL
+	return UNDEFINED
 }
 
 // Compact removes nil elements from the list
@@ -418,7 +420,7 @@ func (l *List) ToDynamoDB() types.Item {
 func (l *List) Get(position int64) Object {
 	obj := l.Value[position]
 	if obj == nil {
-		return NULL
+		return UNDEFINED
 	}
 
 	return obj
@@ -446,12 +448,12 @@ func (l *List) Add(obj Object) Object {
 		list := obj.(*List)
 		l.Value = append(l.Value, list.Value...)
 
-		return NULL
+		return UNDEFINED
 	}
 
 	l.Value = append(l.Value, obj)
 
-	return NULL
+	return UNDEFINED
 }
 
 // StringSet is the representation of map
@@ -537,14 +539,14 @@ func (ss *StringSet) Add(obj Object) Object {
 				ss.Value[str] = true
 			}
 
-			return NULL
+			return UNDEFINED
 		}
 	case ObjectTypeString:
 		str, ok := obj.(*String)
 		if ok {
 			ss.Value[str.Value] = true
 
-			return NULL
+			return UNDEFINED
 		}
 	}
 
@@ -561,14 +563,14 @@ func (ss *StringSet) Delete(obj Object) Object {
 				delete(ss.Value, str)
 			}
 
-			return NULL
+			return UNDEFINED
 		}
 	case ObjectTypeString:
 		str, ok := obj.(*String)
 		if ok {
 			delete(ss.Value, str.Value)
 
-			return NULL
+			return UNDEFINED
 		}
 	}
 
@@ -668,14 +670,14 @@ func (bs *BinarySet) Delete(obj Object) Object {
 		if ok {
 			bs.Value = removeBinaries(bs.Value, bsInput.Value)
 
-			return NULL
+			return UNDEFINED
 		}
 	case ObjectTypeBinary:
 		bin, ok := obj.(*Binary)
 		if ok {
 			bs.Value = removeBinaries(bs.Value, [][]byte{bin.Value})
 
-			return NULL
+			return UNDEFINED
 		}
 	}
 
@@ -701,14 +703,14 @@ func (bs *BinarySet) Add(obj Object) Object {
 			bs.addBinarySetValues(bsInput.Value)
 		}
 
-		return NULL
+		return UNDEFINED
 	case ObjectTypeBinary:
 		bin, ok := obj.(*Binary)
 		if ok && !bs.Contains(bin) {
 			bs.Value = append(bs.Value, bin.Value)
 		}
 
-		return NULL
+		return UNDEFINED
 	}
 
 	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
@@ -799,14 +801,14 @@ func (ns *NumberSet) Add(obj Object) Object {
 				ns.Value[n] = true
 			}
 
-			return NULL
+			return UNDEFINED
 		}
 	case ObjectTypeNumber:
 		n, ok := obj.(*Number)
 		if ok {
 			ns.Value[n.Value] = true
 
-			return NULL
+			return UNDEFINED
 		}
 	}
 
@@ -823,14 +825,14 @@ func (ns *NumberSet) Delete(obj Object) Object {
 				delete(ns.Value, n)
 			}
 
-			return NULL
+			return UNDEFINED
 		}
 	case ObjectTypeNumber:
 		n, ok := obj.(*Number)
 		if ok {
 			delete(ns.Value, n.Value)
 
-			return NULL
+			return UNDEFINED
 		}
 	}
 

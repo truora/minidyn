@@ -146,6 +146,7 @@ func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error
 				Projection:            change.Create.Projection,
 				ProvisionedThroughput: change.Create.ProvisionedThroughput,
 			}
+
 			return t.addGlobalIndex(gsi)
 		}
 	case change.Delete != nil:
@@ -539,7 +540,13 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 		_, matched := t.matchKey(query, item)
 		if !matched {
-			return nil, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
+			checkErr := &types.ConditionalCheckFailedException{
+				MessageText: ErrConditionalRequestFailed.Error(),
+			}
+
+			handleConditionalCheckError(input, checkErr, item)
+
+			return nil, checkErr
 		}
 	}
 
@@ -658,4 +665,10 @@ func (t *Table) IndexesDescription() ([]types.GlobalSecondaryIndexDescription, [
 	}
 
 	return gsi, lsi
+}
+
+func handleConditionalCheckError(input *types.UpdateItemInput, checkErr *types.ConditionalCheckFailedException, item map[string]*types.Item) {
+	if input.ReturnValuesOnConditionCheckFailure != nil && *input.ReturnValuesOnConditionCheckFailure == "ALL_OLD" {
+		checkErr.Item = item
+	}
 }

@@ -360,17 +360,18 @@ func mapDynamoToTypesExpectedAttributeValueMap(input map[string]dynamodbtypes.Ex
 
 func mapDynamoToTypesUpdateItemInput(input *dynamodb.UpdateItemInput) *types.UpdateItemInput {
 	return &types.UpdateItemInput{
-		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         toString(string(input.ConditionalOperator)),
-		Expected:                    mapDynamoToTypesExpectedAttributeValueMap(input.Expected),
-		ExpressionAttributeNames:    input.ExpressionAttributeNames,
-		ExpressionAttributeValues:   mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
-		Key:                         mapDynamoToTypesMapItem(input.Key),
-		ReturnConsumedCapacity:      toString(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: toString(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                toString(string(input.ReturnValues)),
-		TableName:                   input.TableName,
-		UpdateExpression:            *input.UpdateExpression,
+		ConditionExpression:                 input.ConditionExpression,
+		ConditionalOperator:                 toString(string(input.ConditionalOperator)),
+		Expected:                            mapDynamoToTypesExpectedAttributeValueMap(input.Expected),
+		ExpressionAttributeNames:            input.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Key:                                 mapDynamoToTypesMapItem(input.Key),
+		ReturnConsumedCapacity:              toString(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics:         toString(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                        toString(string(input.ReturnValues)),
+		TableName:                           input.TableName,
+		UpdateExpression:                    *input.UpdateExpression,
+		ReturnValuesOnConditionCheckFailure: toString(string(input.ReturnValuesOnConditionCheckFailure)),
 	}
 }
 
@@ -664,7 +665,16 @@ func mapKnownError(err error) error {
 
 	switch intErr.Code() {
 	case "ConditionalCheckFailedException":
-		return &dynamodbtypes.ConditionalCheckFailedException{Message: aws.String(intErr.Message())}
+		checkErr := &dynamodbtypes.ConditionalCheckFailedException{
+			Message: aws.String(intErr.Message()),
+		}
+
+		var conditionalErr *types.ConditionalCheckFailedException
+		if errors.As(err, &conditionalErr) {
+			checkErr.Item = mapTypesToDynamoMapItem(conditionalErr.Item)
+		}
+
+		return checkErr
 	case "ResourceNotFoundException":
 		return &dynamodbtypes.ResourceNotFoundException{Message: aws.String(intErr.Message())}
 	}

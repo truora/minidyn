@@ -88,7 +88,16 @@ func isString(obj Object) bool {
 }
 
 func isUndefined(obj Object) bool {
-	return obj == nil || obj == NULL
+	if obj == nil {
+		return true
+	}
+
+	nullObj, ok := obj.(*Null)
+	if !ok {
+		return false
+	}
+
+	return nullObj.IsUndefined
 }
 
 func isComparable(obj Object) bool {
@@ -408,12 +417,12 @@ func setListValue(list *List, value Object, index int64) Object {
 	if int64(len(list.Value)) > index {
 		list.Value[index] = value
 
-		return NULL
+		return UNDEFINED
 	}
 
 	list.Value = append(list.Value, value)
 
-	return NULL
+	return UNDEFINED
 }
 
 func (i indexAccessor) Set(container, val Object) Object {
@@ -430,7 +439,7 @@ func (i indexAccessor) Set(container, val Object) Object {
 			c.Value[pos] = val
 		}
 
-		return NULL
+		return UNDEFINED
 	}
 
 	return newError("index assignation for %q type is not supported", container.Type())
@@ -459,7 +468,7 @@ func (i indexAccessor) Remove(container Object) Object {
 			delete(c.Value, pos)
 		}
 
-		return NULL
+		return UNDEFINED
 	}
 
 	return newError("index removal for %q type is not supported", container.Type())
@@ -524,14 +533,14 @@ func evalIndexValue(node *Identifier, indexNode *IndexExpression, env *Environme
 			return indexAccessor{}, errObj
 		}
 
-		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token}, NULL
+		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token}, UNDEFINED
 	case ObjectTypeMap:
 		pos, errObj := evalMapIndexValue(node, env)
 		if isError(errObj) {
 			return indexAccessor{}, errObj
 		}
 
-		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token}, NULL
+		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token}, UNDEFINED
 	}
 
 	return indexAccessor{}, newError("index operator not supported: got %q", node.String())
@@ -768,7 +777,7 @@ func evalUpdateExpression(node *UpdateExpression, env *Environment) Object {
 
 	env.Compact()
 
-	return NULL
+	return UNDEFINED
 }
 
 func evalActionSet(node *ActionExpression, env *Environment) Object {
@@ -787,7 +796,7 @@ func evalActionSet(node *ActionExpression, env *Environment) Object {
 
 		env.Set(id.Value, val)
 
-		return NULL
+		return UNDEFINED
 	}
 
 	indexField, ok := node.Left.(*IndexExpression)
@@ -797,7 +806,7 @@ func evalActionSet(node *ActionExpression, env *Environment) Object {
 			return errObj
 		}
 
-		return NULL
+		return UNDEFINED
 	}
 
 	return newError("invalid assignation to: %s", node.String())
@@ -817,7 +826,7 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
-		if obj == NULL {
+		if obj == UNDEFINED {
 			env.Set(id.Value, val)
 			return obj
 		}
@@ -830,7 +839,7 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 		return addObj.Add(val)
 	}
 
-	return NULL
+	return UNDEFINED
 }
 
 func evalActionDelete(node *ActionExpression, env *Environment) Object {
@@ -847,7 +856,7 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
-		if obj == NULL {
+		if obj == UNDEFINED {
 			env.Set(id.Value, val)
 			return obj
 		}
@@ -860,7 +869,7 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 		return addObj.Delete(val)
 	}
 
-	return NULL
+	return UNDEFINED
 }
 
 func evalActionRemove(node *ActionExpression, env *Environment) Object {
@@ -874,7 +883,7 @@ func evalActionRemove(node *ActionExpression, env *Environment) Object {
 
 		env.Remove(id.Value)
 
-		return NULL
+		return UNDEFINED
 	}
 
 	indexField, ok := node.Left.(*IndexExpression)
@@ -901,7 +910,7 @@ func evalActionRemove(node *ActionExpression, env *Environment) Object {
 
 		env.MarkToCompact(obj)
 
-		return NULL
+		return UNDEFINED
 	}
 
 	return newError("invalid remove to: %s", node.String())
@@ -965,7 +974,7 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 		obj = pos.Get(obj)
 	}
 
-	return NULL
+	return UNDEFINED
 }
 
 func evalArithmeticTerms(node *InfixExpression, env *Environment) (*Number, *Number, Object) {
@@ -989,7 +998,7 @@ func evalArithmeticTerms(node *InfixExpression, env *Environment) (*Number, *Num
 		return nil, nil, newError("invalid operation: %s %s %s", leftTerm.Type(), node.Operator, rightTerm.Type())
 	}
 
-	return leftNumber, rightNumber, NULL
+	return leftNumber, rightNumber, UNDEFINED
 }
 
 func evalExpressions(exps []Expression, env *Environment) []Object {

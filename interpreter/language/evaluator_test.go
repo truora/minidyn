@@ -427,7 +427,7 @@ func TestEvalSetUpdate(t *testing.T) {
 			false,
 		},
 		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, true},
-		{"SET :x = :val REMOVE :val", ":val", NULL, true},
+		{"SET :x = :val REMOVE :val", ":val", UNDEFINED, true},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -491,8 +491,8 @@ func TestEvalRemoveUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"REMOVE :binSet", ":binSet", NULL, boolFalse},
-		{"REMOVE :binSet,:a", ":a", NULL, boolFalse},
+		{"REMOVE :binSet", ":binSet", UNDEFINED, boolFalse},
+		{"REMOVE :binSet,:a", ":a", UNDEFINED, boolFalse},
 		{"REMOVE :tools[1], :tools[2]", ":tools", &List{Value: []Object{&String{Value: "Chisel"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}}, boolFalse},
 		{"REMOVE :nestedMap.lvl1.lvl2", ":nestedMap", &Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{}}}}, boolFalse},
 	}
@@ -865,7 +865,7 @@ func TestEvalErrors(t *testing.T) {
 				arg1 := args[1].(*Environment)
 				return evalActionDelete(arg, arg1)
 			},
-			expected: NULL,
+			expected: UNDEFINED,
 		},
 	}
 

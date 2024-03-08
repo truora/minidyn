@@ -19,7 +19,7 @@ func TestNumberAdd(t *testing.T) {
 	n := Number{Value: 1.0}
 
 	obj := n.Add(&Number{Value: 1.0})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -145,7 +145,7 @@ func TestListAdd(t *testing.T) {
 	l := List{Value: []Object{&String{Value: "Cookies"}}}
 
 	obj := l.Add(&String{Value: "Orange"})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -154,7 +154,7 @@ func TestListAdd(t *testing.T) {
 	}
 
 	obj = l.Add(&List{Value: []Object{&String{Value: "Cookies"}}})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -167,7 +167,7 @@ func TestListRemove(t *testing.T) {
 	l := List{Value: []Object{&String{Value: "Cookies"}, &String{Value: "Orange"}}}
 
 	obj := l.Remove(1)
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -176,7 +176,7 @@ func TestListRemove(t *testing.T) {
 	}
 
 	obj = l.Remove(0)
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -238,7 +238,7 @@ func TestStringSetAdd(t *testing.T) {
 	ss := StringSet{Value: map[string]bool{"Cookies": true}}
 
 	obj := ss.Add(&String{Value: "Orange"})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -247,7 +247,7 @@ func TestStringSetAdd(t *testing.T) {
 	}
 
 	obj = ss.Add(&StringSet{Value: map[string]bool{"Milk": true}})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -260,7 +260,7 @@ func TestStringSetDelete(t *testing.T) {
 	ss := StringSet{Value: map[string]bool{"Cookies": true, "Orange": true, "Milk": true}}
 
 	obj := ss.Delete(&String{Value: "Orange"})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -269,7 +269,7 @@ func TestStringSetDelete(t *testing.T) {
 	}
 
 	obj = ss.Delete(&StringSet{Value: map[string]bool{"Milk": true, "Cookies": true}})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -329,7 +329,7 @@ func TestBinaryAdd(t *testing.T) {
 	}
 
 	obj := bs.Add(&Binary{Value: []byte("Coffee")})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -345,7 +345,7 @@ func TestBinaryAdd(t *testing.T) {
 	}
 
 	obj = bs.Add(more)
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -364,7 +364,7 @@ func TestBinarySetRemove(t *testing.T) {
 	}
 
 	obj := bs.Delete(&Binary{Value: []byte("Coffee")})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -380,7 +380,7 @@ func TestBinarySetRemove(t *testing.T) {
 	}
 
 	obj = bs.Delete(rest)
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -436,7 +436,7 @@ func TestNumberSetAdd(t *testing.T) {
 	ns := NumberSet{Value: map[float64]bool{1: true}}
 
 	obj := ns.Add(&Number{Value: 2})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -445,7 +445,7 @@ func TestNumberSetAdd(t *testing.T) {
 	}
 
 	obj = ns.Add(&NumberSet{Value: map[float64]bool{3: true}})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -458,7 +458,7 @@ func TestNumberSetDelete(t *testing.T) {
 	ns := NumberSet{Value: map[float64]bool{1: true, 2: true, 3: true}}
 
 	obj := ns.Delete(&Number{Value: 2})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -467,7 +467,7 @@ func TestNumberSetDelete(t *testing.T) {
 	}
 
 	obj = ns.Delete(&NumberSet{Value: map[float64]bool{1: true, 3: true}})
-	if obj != NULL {
+	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
@@ -566,7 +566,7 @@ func TestGetList(t *testing.T) {
 	list := List{Value: []Object{nil}}
 	res := list.Get(0)
 
-	if res != NULL {
+	if res != UNDEFINED {
 		t.Errorf("expected item to be NULL got=%s", res)
 	}
 }

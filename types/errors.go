@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/hex"
 	"fmt"
 )
 
@@ -157,7 +156,7 @@ type requestError struct {
 	awsError
 	statusCode int
 	requestID  string
-	bytes      []byte
+	bytes      []byte // nolint:unused
 }
 
 // newRequestError returns a wrapped error with additional information for
@@ -202,29 +201,6 @@ func (r requestError) OrigErrs() []error {
 	}
 
 	return []error{r.OrigErr()}
-}
-
-type unmarshalError struct {
-	awsError
-	bytes []byte
-}
-
-// Error returns the string representation of the error.
-// Satisfies the error interface.
-func (e unmarshalError) Error() string {
-	extra := hex.Dump(e.bytes)
-	return SprintError(e.Code(), e.Message(), extra, e.OrigErr())
-}
-
-// String returns the string representation of the error.
-// Alias for Error to satisfy the stringer interface.
-func (e unmarshalError) String() string {
-	return e.Error()
-}
-
-// Bytes returns the bytes that failed to unmarshal.
-func (e unmarshalError) Bytes() []byte {
-	return e.bytes
 }
 
 // An error list that satisfies the golang interface

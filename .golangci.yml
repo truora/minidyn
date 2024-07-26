@@ -60,10 +60,10 @@ linters-settings:
     min-complexity: 9
   gocognit:
     min-complexity: 10
-  govet:
-    check-shadowing: true
   errcheck:
     asserts: true
+  govet:
+    shadow: true
   wsl:
     allow-assign-and-call: true
     allow-cuddle-declarations: true
@@ -84,7 +84,7 @@ linters:
     - ineffassign
     - staticcheck
     - nakedret
-    - deadcode
+    - unused
     - wsl
 
 issues:

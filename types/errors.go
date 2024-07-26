@@ -157,7 +157,7 @@ type requestError struct {
 	awsError
 	statusCode int
 	requestID  string
-	bytes      []byte
+	bytes      []byte // nolint:unused
 }
 
 // newRequestError returns a wrapped error with additional information for
@@ -180,7 +180,7 @@ func (r requestError) Error() string {
 
 // String returns the string representation of the error.
 // Alias for Error to satisfy the stringer interface.
-func (r requestError) String() string {
+func (r requestError) String() string { // nolint:unused
 	return r.Error()
 }
 
@@ -204,26 +204,26 @@ func (r requestError) OrigErrs() []error {
 	return []error{r.OrigErr()}
 }
 
-type unmarshalError struct {
+type unmarshalError struct { // nolint:unused
 	awsError
 	bytes []byte
 }
 
 // Error returns the string representation of the error.
 // Satisfies the error interface.
-func (e unmarshalError) Error() string {
+func (e unmarshalError) Error() string { // nolint:unused
 	extra := hex.Dump(e.bytes)
 	return SprintError(e.Code(), e.Message(), extra, e.OrigErr())
 }
 
 // String returns the string representation of the error.
 // Alias for Error to satisfy the stringer interface.
-func (e unmarshalError) String() string {
+func (e unmarshalError) String() string { // nolint:unused
 	return e.Error()
 }
 
 // Bytes returns the bytes that failed to unmarshal.
-func (e unmarshalError) Bytes() []byte {
+func (e unmarshalError) Bytes() []byte { // nolint:unused
 	return e.bytes
 }
 

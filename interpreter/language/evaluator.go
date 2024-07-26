@@ -570,13 +570,13 @@ func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
 		return "", obj
 	}
 
+	name := node.Token.Literal
+	if alias, ok := env.Aliases[name]; ok {
+		return alias, nil
+	}
+
 	str, ok := obj.(*String)
 	if !ok {
-		name := node.Token.Literal
-		if alias, ok := env.Aliases[name]; ok {
-			name = alias
-		}
-
 		return name, nil
 	}
 

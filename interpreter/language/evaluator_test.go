@@ -293,7 +293,9 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 				},
 			},
 		},
-
+		"random_field_name": {
+			S: types.ToString("Some random value"),
+		},
 		":strSet": {
 			SS: []*string{types.ToString("a"), types.ToString("a"), types.ToString("b")},
 		},
@@ -326,9 +328,10 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 	}
 
 	env.Aliases = map[string]string{
-		"#pos":         ":nestedMap.lvl1.lvl2",
-		"#secondLevel": "lvl1.lvl2",
-		"#invalid":     ":one.:one",
+		"#pos":             ":nestedMap.lvl1.lvl2",
+		"#secondLevel":     "lvl1.lvl2",
+		"#invalid":         ":one.:one",
+		"#nested_map_attr": "random_field_name",
 	}
 
 	return env
@@ -424,6 +427,12 @@ func TestEvalSetUpdate(t *testing.T) {
 			"SET :nestedMap.#secondLevel = #pos + :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, "lvl1.lvl2": &Number{Value: 1}}},
+			false,
+		},
+		{
+			"SET :nestedMap.lvl1.#nested_map_attr = :one",
+			":nestedMap",
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"random_field_name": &Number{Value: 1}, "lvl2": &Number{Value: 0}}}}},
 			false,
 		},
 		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, true},

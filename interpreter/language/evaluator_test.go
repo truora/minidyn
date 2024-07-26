@@ -394,12 +394,6 @@ func TestEvalSetUpdate(t *testing.T) {
 			false,
 		},
 		{
-			"SET :hash.:mapField = :one",
-			":hash",
-			&Map{Value: map[string]Object{"a": &Boolean{Value: true}, "key": &Number{Value: 1}}},
-			false,
-		},
-		{
 			"SET :two = if_not_exists(:hash.not_found, :one) + :one",
 			":two",
 			&Number{Value: 2},
@@ -431,6 +425,12 @@ func TestEvalSetUpdate(t *testing.T) {
 		},
 		{
 			"SET :nestedMap.lvl1.#nested_map_attr = :one",
+			":nestedMap",
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"random_field_name": &Number{Value: 1}, "lvl2": &Number{Value: 0}}}}},
+			false,
+		},
+		{
+			"SET :nestedMap.lvl1.random_field_name = :one",
 			":nestedMap",
 			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"random_field_name": &Number{Value: 1}, "lvl2": &Number{Value: 0}}}}},
 			false,

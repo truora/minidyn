@@ -575,12 +575,7 @@ func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
 		return alias, nil
 	}
 
-	str, ok := obj.(*String)
-	if !ok {
-		return name, nil
-	}
-
-	return str.Value, nil
+	return name, nil
 }
 
 func evalBetween(node *BetweenExpression, env *Environment) Object {

@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/hex"
 	"fmt"
 )
 
@@ -180,7 +179,7 @@ func (r requestError) Error() string {
 
 // String returns the string representation of the error.
 // Alias for Error to satisfy the stringer interface.
-func (r requestError) String() string { // nolint:unused
+func (r requestError) String() string {
 	return r.Error()
 }
 
@@ -202,29 +201,6 @@ func (r requestError) OrigErrs() []error {
 	}
 
 	return []error{r.OrigErr()}
-}
-
-type unmarshalError struct { // nolint:unused
-	awsError
-	bytes []byte
-}
-
-// Error returns the string representation of the error.
-// Satisfies the error interface.
-func (e unmarshalError) Error() string { // nolint:unused
-	extra := hex.Dump(e.bytes)
-	return SprintError(e.Code(), e.Message(), extra, e.OrigErr())
-}
-
-// String returns the string representation of the error.
-// Alias for Error to satisfy the stringer interface.
-func (e unmarshalError) String() string { // nolint:unused
-	return e.Error()
-}
-
-// Bytes returns the bytes that failed to unmarshal.
-func (e unmarshalError) Bytes() []byte { // nolint:unused
-	return e.bytes
 }
 
 // An error list that satisfies the golang interface

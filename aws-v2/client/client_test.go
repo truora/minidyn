@@ -618,10 +618,12 @@ func TestPutWithGSI(t *testing.T) {
 
 	_ = AddIndex(context.Background(), client, tableName, "sort-by-second-type", "id", "second_type")
 
-	item, err = attributevalue.MarshalMap(pokemon{
+	item, err = attributevalue.MarshalMapWithOptions(pokemon{
 		ID:   "002",
 		Name: "Ivysaur",
 		Type: "grass",
+	}, func(eo *attributevalue.EncoderOptions) {
+		eo.TagKey = "json"
 	})
 	c.NoError(err)
 

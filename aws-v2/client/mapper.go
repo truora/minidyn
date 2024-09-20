@@ -2,7 +2,6 @@ package client
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -229,7 +228,7 @@ func mapDynamoToTypesMapItem(input map[string]dynamodbtypes.AttributeValue) map[
 	output := map[string]*types.Item{}
 
 	for key, item := range input {
-		output[strings.ToLower(key)] = mapDynamoToTypesItem(item)
+		output[key] = mapDynamoToTypesItem(item)
 	}
 
 	return output

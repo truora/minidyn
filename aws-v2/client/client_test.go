@@ -585,6 +585,80 @@ func TestPutAndGetItem(t *testing.T) {
 	c.Contains(err.Error(), "number of conditions on the keys is invalid")
 }
 
+func TestPutAndGetBatchItem(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	opt := func(opt *attributevalue.EncoderOptions) {
+		opt.TagKey = "json"
+	}
+
+	item, err := attributevalue.MarshalMapWithOptions(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	}, opt)
+	c.NoError(err)
+
+	input := &dynamodb.PutItemInput{
+		Item:      item,
+		TableName: aws.String(tableName),
+	}
+
+	_, err = client.PutItem(context.Background(), input)
+	c.NoError(err)
+
+	item, err = attributevalue.MarshalMapWithOptions(pokemon{
+		ID:   "002",
+		Type: "fire",
+		Name: "Sharmander",
+	}, opt)
+	c.NoError(err)
+
+	input = &dynamodb.PutItemInput{
+		Item:      item,
+		TableName: aws.String(tableName),
+	}
+
+	_, err = client.PutItem(context.Background(), input)
+	c.NoError(err)
+
+	getInput := &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+			tableName: {
+				Keys: []map[string]dynamodbtypes.AttributeValue{
+					{
+						"id": &dynamodbtypes.AttributeValueMemberS{
+							Value: "001",
+						},
+					},
+					{
+						"id": &dynamodbtypes.AttributeValueMemberS{
+							Value: "002",
+						},
+					},
+					{
+						"t1": &dynamodbtypes.AttributeValueMemberS{
+							Value: "003",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out, err := client.BatchGetItem(context.Background(), getInput)
+	c.NoError(err)
+	c.Len(out.Responses[tableName], 2)
+	c.Equal("001", out.Responses[tableName][0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal("002", out.Responses[tableName][1]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Len(out.UnprocessedKeys[tableName].Keys, 1)
+	c.Equal("003", out.UnprocessedKeys[tableName].Keys[0]["t1"].(*dynamodbtypes.AttributeValueMemberS).Value)
+}
+
 func TestPutWithGSI(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)

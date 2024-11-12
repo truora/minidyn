@@ -493,7 +493,7 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 				ProjectionExpression:     reqs.ProjectionExpression,
 			}
 
-			item, err := executeBatchGetRequest(fd, getInput)
+			item, err := executeGetRequest(ctx, fd, getInput)
 			if err != nil {
 				unprocessedKeys = append(unprocessedKeys, req)
 
@@ -574,23 +574,17 @@ func executeBatchWriteRequest(ctx context.Context, fd *Client, table *string, re
 	return nil
 }
 
-func executeBatchGetRequest(fd *Client, getInput *dynamodb.GetItemInput) (map[string]types.AttributeValue, error) {
-	err := validateExpressionAttributes(getInput.ExpressionAttributeNames, nil, aws.ToString(getInput.ProjectionExpression))
+func executeGetRequest(ctx context.Context, fd *Client, getInput *dynamodb.GetItemInput) (map[string]types.AttributeValue, error) {
+	response, err := fd.GetItem(ctx, getInput)
 	if err != nil {
-		return nil, mapKnownError(err)
+		return nil, err
 	}
 
-	table, err := fd.getTable(aws.ToString(getInput.TableName))
-	if err != nil {
-		return nil, mapKnownError(err)
+	if len(response.Item) == 0 {
+		return nil, ErrResourceNotFoundException
 	}
 
-	key, err := table.KeySchema.GetKey(table.AttributesDef, mapDynamoToTypesMapItem(getInput.Key))
-	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
-	}
-
-	return copyItem(mapTypesToDynamoMapItem(table.Data[key])), nil
+	return response.Item, nil
 }
 
 func handleBatchWriteRequestError(table string, req types.WriteRequest, unprocessed map[string][]types.WriteRequest, err error) error {

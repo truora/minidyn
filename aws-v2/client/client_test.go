@@ -645,6 +645,11 @@ func TestPutAndGetBatchItem(t *testing.T) {
 							Value: "003",
 						},
 					},
+					{
+						"id": &dynamodbtypes.AttributeValueMemberS{
+							Value: "004",
+						},
+					},
 				},
 			},
 		},
@@ -655,8 +660,9 @@ func TestPutAndGetBatchItem(t *testing.T) {
 	c.Len(out.Responses[tableName], 2)
 	c.Equal("001", out.Responses[tableName][0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
 	c.Equal("002", out.Responses[tableName][1]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
-	c.Len(out.UnprocessedKeys[tableName].Keys, 1)
+	c.Len(out.UnprocessedKeys[tableName].Keys, 2)
 	c.Equal("003", out.UnprocessedKeys[tableName].Keys[0]["t1"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal("004", out.UnprocessedKeys[tableName].Keys[1]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
 }
 
 func TestPutWithGSI(t *testing.T) {

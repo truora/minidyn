@@ -46,6 +46,7 @@ type FakeClient interface {
 	Query(ctx context.Context, input *dynamodb.QueryInput, opt ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
 	BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error)
+	BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error)
 	TransactWriteItems(ctx context.Context, input *dynamodb.TransactWriteItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
 }
 
@@ -473,6 +474,51 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 	}, nil
 }
 
+// BatchGetItem mock response for dynamodb
+func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+	responses := make(map[string][]map[string]types.AttributeValue, len(input.RequestItems))
+	unprocessed := make(map[string]types.KeysAndAttributes, len(input.RequestItems))
+
+	for tableName, reqs := range input.RequestItems {
+		unprocessedKeys := make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
+		responses[tableName] = make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
+
+		for _, req := range reqs.Keys {
+			getInput := &dynamodb.GetItemInput{
+				TableName:                aws.String(tableName),
+				Key:                      req,
+				ConsistentRead:           reqs.ConsistentRead,
+				AttributesToGet:          reqs.AttributesToGet,
+				ExpressionAttributeNames: reqs.ExpressionAttributeNames,
+				ProjectionExpression:     reqs.ProjectionExpression,
+			}
+
+			item, err := executeBatchGetRequest(fd, getInput)
+			if err != nil {
+				unprocessedKeys = append(unprocessedKeys, req)
+
+				continue
+			}
+
+			responses[tableName] = append(responses[tableName], item)
+		}
+
+		if len(unprocessedKeys) > 0 {
+			unprocessed[tableName] = reqs
+
+			tableUnprocessedKeys := unprocessed[tableName]
+			tableUnprocessedKeys.Keys = unprocessedKeys
+
+			unprocessed[tableName] = tableUnprocessedKeys
+		}
+	}
+
+	return &dynamodb.BatchGetItemOutput{
+		Responses:       responses,
+		UnprocessedKeys: unprocessed,
+	}, nil
+}
+
 func validateWriteRequest(req types.WriteRequest) error {
 	if req.DeleteRequest != nil && req.PutRequest != nil {
 		return &smithy.GenericAPIError{Code: "ValidationException", Message: "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes"}
@@ -526,6 +572,25 @@ func executeBatchWriteRequest(ctx context.Context, fd *Client, table *string, re
 	}
 
 	return nil
+}
+
+func executeBatchGetRequest(fd *Client, getInput *dynamodb.GetItemInput) (map[string]types.AttributeValue, error) {
+	err := validateExpressionAttributes(getInput.ExpressionAttributeNames, nil, aws.ToString(getInput.ProjectionExpression))
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	table, err := fd.getTable(aws.ToString(getInput.TableName))
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	key, err := table.KeySchema.GetKey(table.AttributesDef, mapDynamoToTypesMapItem(getInput.Key))
+	if err != nil {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+	}
+
+	return copyItem(mapTypesToDynamoMapItem(table.Data[key])), nil
 }
 
 func handleBatchWriteRequestError(table string, req types.WriteRequest, unprocessed map[string][]types.WriteRequest, err error) error {

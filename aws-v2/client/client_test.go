@@ -655,7 +655,15 @@ func TestPutAndGetBatchItem(t *testing.T) {
 		},
 	}
 
+	ActiveForceFailure(client)
+
 	out, err := client.BatchGetItem(context.Background(), getInput)
+	c.Nil(out)
+	c.EqualError(err, ErrForcedFailure.Error())
+
+	DeactiveForceFailure(client)
+
+	out, err = client.BatchGetItem(context.Background(), getInput)
 	c.NoError(err)
 	c.Len(out.Responses[tableName], 2)
 	c.Equal("001", out.Responses[tableName][0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)

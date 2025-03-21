@@ -476,6 +476,10 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 
 // BatchGetItem mock response for dynamodb
 func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+	if fd.forceFailureErr != nil {
+		return nil, fd.forceFailureErr
+	}
+
 	responses := make(map[string][]map[string]types.AttributeValue, len(input.RequestItems))
 	unprocessed := make(map[string]types.KeysAndAttributes, len(input.RequestItems))
 

@@ -451,6 +451,10 @@ func SetItemCollectionMetrics(client FakeClient, itemCollectionMetrics map[strin
 
 // BatchWriteItem mock response for dynamodb
 func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error) {
+	if fd.forceFailureErr != nil {
+		return nil, fd.forceFailureErr
+	}
+
 	if err := validateBatchWriteItemInput(input); err != nil {
 		return &dynamodb.BatchWriteItemOutput{}, err
 	}

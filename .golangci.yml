@@ -1,76 +1,11 @@
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+version: "2"
 run:
   timeout: 40s
   tests: true
 
-linters-settings:
-  revive:
-    ignore-generated-header: false
-    severity: warning
-    confidence: 0.3
-    error-code: 1
-    warning-code: 1
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unreachable-code
-      - name: get-return
-      - name: early-return
-      - name: identical-branches
-      - name: defer
-        arguments:
-          -
-            - loop
-            - method-call
-            - return
-      - name: string-of-int
-      - name: waitgroup-by-value
-      - name: range-val-address
-      - name: argument-limit
-        arguments:
-          - 10
-      - name: atomic
-      - name: bool-literal-in-expr
-      - name: deep-exit
-      - name: function-result-limit
-        arguments:
-          - 5
-      - name: modifies-value-receiver
-      - name: modifies-parameter
-      - name: unnecessary-stmt
-  gocyclo:
-    min-complexity: 9
-  gocognit:
-    min-complexity: 10
-  errcheck:
-    asserts: true
-  govet:
-    shadow: true
-  wsl:
-    allow-assign-and-call: true
-    allow-cuddle-declarations: true
-    force-err-cuddling: true
-
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - gocritic
@@ -86,18 +21,78 @@ linters:
     - nakedret
     - unused
     - wsl
-
-issues:
-  exclude-rules:
-    # Exclude some linters from running on tests files.
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - gosec
-        - gocognit
-
-    # Exclude some gosec messages
-    - linters:
-        - gosec
-      text: "G104"
-  exclude-use-default: false
+  settings:
+    revive:
+      severity: warning
+      confidence: 0.3
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: get-return
+        - name: early-return
+        - name: identical-branches
+        - name: defer
+          arguments:
+            -
+              - loop
+              - method-call
+              - return
+        - name: string-of-int
+        - name: waitgroup-by-value
+        - name: range-val-address
+        - name: argument-limit
+          arguments:
+            - 10
+        - name: atomic
+        - name: bool-literal-in-expr
+        - name: deep-exit
+        - name: function-result-limit
+          arguments:
+            - 5
+        - name: modifies-value-receiver
+        - name: modifies-parameter
+        - name: unnecessary-stmt
+    gocyclo:
+      min-complexity: 9
+    gocognit:
+      min-complexity: 10
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable:
+        - shadow
+    wsl:
+      allow-assign-and-call: true
+      allow-cuddle-declarations: true
+      force-err-cuddling: true
+    gosec:
+      excludes:
+        - G104
+    
+  exclusions:
+    rules:
+      - path: (.+)_test\.go
+        linters:
+          - gocyclo
+          - gosec
+          - gocognit

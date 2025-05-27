@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"sync"
@@ -380,7 +381,10 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 
 	items, lastKey := table.SearchData(mapDynamoToTypesQueryInput(input, indexName))
 
-	count := int64(len(items))
+	count := len(items)
+	if count > math.MaxInt32 {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: "Result count exceeds maximum allowed value"}
+	}
 
 	output := &dynamodb.QueryOutput{
 		Items:            mapTypesToDynamoSliceMapItem(items),
@@ -423,7 +427,10 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		Scan:                      true,
 	})
 
-	count := int64(len(items))
+	count := len(items)
+	if count > math.MaxInt32 {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: "Result count exceeds maximum allowed value"}
+	}
 
 	output := &dynamodb.ScanOutput{
 		Items:            mapTypesToDynamoSliceMapItem(items),
@@ -608,7 +615,7 @@ func handleBatchWriteRequestError(table string, req types.WriteRequest, unproces
 	var errInternalServer *types.InternalServerError
 	var errProvisionedThroughputExceededException *types.ProvisionedThroughputExceededException
 
-	if !(errors.As(err, &errInternalServer) || errors.As(err, &errProvisionedThroughputExceededException)) {
+	if !errors.As(err, &errInternalServer) && !errors.As(err, &errProvisionedThroughputExceededException) {
 		return err
 	}
 
@@ -627,7 +634,7 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 		return nil, ErrForcedFailure
 	}
 
-	//TODO: Implement transact write
+	// TODO: Implement transact write
 
 	return &dynamodb.TransactWriteItemsOutput{}, nil
 }

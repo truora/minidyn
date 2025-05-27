@@ -286,7 +286,7 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 
 	lastMatchExpressionType, matched := t.matchKey(*input, storedItem)
 
-	if ok && !(input.started && matched) {
+	if !ok || !input.started || !matched {
 		return copyItem(storedItem), lastMatchExpressionType, false
 	}
 

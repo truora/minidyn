@@ -8,9 +8,7 @@ import (
 	"strings"
 )
 
-var (
-	syntaxErrorTemplate = "syntax error; token: %s" // TODO: See how to add ", near: %s" to the error
-)
+var syntaxErrorTemplate = "syntax error; token: %s" // TODO: See how to add ", near: %s" to the error
 
 // Eval runs the expression in the environment
 func Eval(n Node, env *Environment) Object {
@@ -256,8 +254,18 @@ func evalComparableInfixExpression(operator string, left, right Object) Object {
 }
 
 func evalNumberInfixExpression(operator string, left, right Object) Object {
-	leftVal := left.(*Number).Value
-	rightVal := right.(*Number).Value
+	leftNum, ok := left.(*Number)
+	if !ok {
+		return newError("left operand is not a number: %s", left.Type())
+	}
+
+	rightNum, ok := right.(*Number)
+	if !ok {
+		return newError("right operand is not a number: %s", right.Type())
+	}
+
+	leftVal := leftNum.Value
+	rightVal := rightNum.Value
 
 	switch operator {
 	case "<":
@@ -278,8 +286,18 @@ func evalNumberInfixExpression(operator string, left, right Object) Object {
 }
 
 func evalStringInfixExpression(operator string, left, right Object) Object {
-	leftVal := left.(*String).Value
-	rightVal := right.(*String).Value
+	leftStr, ok := left.(*String)
+	if !ok {
+		return newError("left operand is not a string: %s", left.Type())
+	}
+
+	rightStr, ok := right.(*String)
+	if !ok {
+		return newError("right operand is not a string: %s", right.Type())
+	}
+
+	leftVal := leftStr.Value
+	rightVal := rightStr.Value
 
 	switch operator {
 	case "<":
@@ -300,8 +318,18 @@ func evalStringInfixExpression(operator string, left, right Object) Object {
 }
 
 func evalBinaryInfixExpression(operator string, left, right Object) Object {
-	leftVal := left.(*Binary).Value
-	rightVal := right.(*Binary).Value
+	leftBin, ok := left.(*Binary)
+	if !ok {
+		return newError("left operand is not binary: %s", left.Type())
+	}
+
+	rightBin, ok := right.(*Binary)
+	if !ok {
+		return newError("right operand is not binary: %s", right.Type())
+	}
+
+	leftVal := leftBin.Value
+	rightVal := rightBin.Value
 
 	switch operator {
 	case "<":
@@ -326,9 +354,20 @@ func evalBooleanInfixExpression(operator string, left, right Object) Object {
 		return FALSE
 	}
 
-	leftVal := left.(*Boolean).Value
-	rightVal := right.(*Boolean).Value
+	leftBool, ok := left.(*Boolean)
+	if !ok {
+		return newError("left operand is not boolean: %s", left.Type())
+	}
 
+	rightBool, ok := right.(*Boolean)
+	if !ok {
+		return newError("right operand is not boolean: %s", right.Type())
+	}
+
+	return evalBooleanOperator(operator, leftBool.Value, rightBool.Value, left, right)
+}
+
+func evalBooleanOperator(operator string, leftVal, rightVal bool, left, right Object) Object {
 	switch operator {
 	case "AND":
 		return nativeBoolToBooleanObject(leftVal && rightVal)
@@ -355,7 +394,7 @@ func evalIdentifier(node *Identifier, env *Environment, toplevel bool) Object {
 	attributeName := strings.ToUpper(node.Token.Literal)
 
 	if toplevel && IsReservedWord(attributeName) {
-		return newError(fmt.Sprintf("reserved word %s found in expression", attributeName))
+		return newError("reserved word %s found in expression", attributeName)
 	}
 
 	val := env.Get(node.Value)
@@ -372,7 +411,7 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 		return errObj
 	}
 
-	var obj = o
+	obj := o
 
 	for i := len(positions) - 1; i >= 0; i-- {
 		pos := positions[i]
@@ -699,11 +738,11 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 
 	funcObj, ok := fn.(*Function)
 	if !ok {
-		return newError("invalid function call; expression: " + node.String())
+		return newError("invalid function call; expression: %s", node.String())
 	}
 
 	if funcObj.ForUpdate {
-		return newError("the function is not allowed in an condition expression; function: " + funcObj.Name)
+		return newError("the function is not allowed in a condition expression; function: %s", funcObj.Name)
 	}
 
 	args := evalExpressions(node.Arguments, env)
@@ -711,7 +750,12 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 		return args[0]
 	}
 
-	return fn.(*Function).Value(args...)
+	function, ok := fn.(*Function)
+	if !ok {
+		return newError("invalid function call; expression: %s", node.String())
+	}
+
+	return function.Value(args...)
 }
 
 func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
@@ -722,11 +766,11 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 
 	funcObj, ok := fn.(*Function)
 	if !ok {
-		return newError("invalid function call; expression: " + node.String())
+		return newError("invalid function call; expression: %s", node.String())
 	}
 
 	if !funcObj.ForUpdate {
-		return newError("the function is not allowed in an update expression; function: " + funcObj.Name)
+		return newError("the function is not allowed in an update expression; function: %s", funcObj.Name)
 	}
 
 	args := evalUpdateExpressions(node.Arguments, env)
@@ -734,7 +778,12 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 		return args[0]
 	}
 
-	return fn.(*Function).Value(args...)
+	function, ok := fn.(*Function)
+	if !ok {
+		return newError("invalid function call; expression: %s", node.String())
+	}
+
+	return function.Value(args...)
 }
 
 func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
@@ -747,7 +796,7 @@ func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
 
 	fn, ok := functions[name]
 	if !ok {
-		return newError("invalid function name; function: " + name)
+		return newError("invalid function name; function: %s", name)
 	}
 
 	return fn
@@ -755,7 +804,7 @@ func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
 
 func evalUpdateExpression(node *UpdateExpression, env *Environment) Object {
 	if len(node.Expressions) == 0 {
-		return newError(node.TokenLiteral() + " expression must have at least one action")
+		return newError("%s expression must have at least one action", node.TokenLiteral())
 	}
 
 	for _, act := range node.Expressions {
@@ -953,7 +1002,7 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 		return errObj
 	}
 
-	var obj = o
+	obj := o
 
 	for idx := len(positions) - 1; idx >= 0; idx-- {
 		pos := positions[idx]

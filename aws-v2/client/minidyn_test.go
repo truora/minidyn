@@ -29,7 +29,7 @@ func TestClearTable(t *testing.T) {
 
 	item, err := getPokemon(client, "001")
 	c.NoError(err)
-	c.Equal("Bulbasaur", item["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, item["name"])
 
 	items, err := getPokemonsByType(client, "grass")
 	c.NoError(err)
@@ -95,7 +95,7 @@ func BenchmarkClearTable(b *testing.B) {
 
 	item, err := getData(client, tableName, "a", "x")
 	c.NoError(err)
-	c.Equal("a", item["partition"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "a"}, item["partition"])
 
 	items, err := getDataInIndex(client, "custom-index", tableName, "a", "")
 	c.NoError(err)

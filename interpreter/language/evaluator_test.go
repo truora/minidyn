@@ -322,7 +322,6 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 			{S: types.ToString("Hacksaw")},
 		}},
 	})
-
 	if err != nil {
 		t.Fatalf("error adding attributes %#v", err)
 	}
@@ -855,7 +854,11 @@ func TestEvalErrors(t *testing.T) {
 		{
 			inputs: []interface{}{&String{Value: "hello"}},
 			function: func(args ...interface{}) Object {
-				arg := args[0].(Object)
+				arg, ok := args[0].(Object)
+				if !ok {
+					return newError("invalid function call; expression: %s", args[0])
+				}
+
 				return evalBangOperatorExpression(arg)
 			},
 			expected: newError("unknown operator: NOT S"),
@@ -870,8 +873,16 @@ func TestEvalErrors(t *testing.T) {
 				env,
 			},
 			function: func(args ...interface{}) Object {
-				arg := args[0].(*ActionExpression)
-				arg1 := args[1].(*Environment)
+				arg, ok := args[0].(*ActionExpression)
+				if !ok {
+					return newError("invalid function call; expression: %s", args[0])
+				}
+
+				arg1, ok := args[1].(*Environment)
+				if !ok {
+					return newError("invalid function call; expression: %s", args[1])
+				}
+
 				return evalActionDelete(arg, arg1)
 			},
 			expected: UNDEFINED,

@@ -134,10 +134,6 @@ func setupClient(table string) FakeClient {
 func setupDynamoDBLocal(endpoint string) FakeClient {
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion("localhost"),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{URL: endpoint}, nil
-			})),
 		config.WithCredentialsProvider(credentials.StaticCredentialsProvider{
 			Value: aws.Credentials{
 				AccessKeyID: "dummy", SecretAccessKey: "dummy", SessionToken: "dummy",
@@ -158,7 +154,9 @@ func setupDynamoDBLocal(endpoint string) FakeClient {
 		}
 	}()
 
-	return dynamodb.NewFromConfig(cfg)
+	return dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+	})
 }
 
 func setupNativeInterpreter(native *interpreter.Native, table string) {
@@ -572,9 +570,9 @@ func TestPutAndGetItem(t *testing.T) {
 	}
 	out, err := client.GetItem(context.Background(), getInput)
 	c.NoError(err)
-	c.Equal("001", out.Item["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
-	c.Equal("Bulbasaur", out.Item["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
-	c.Equal("grass", out.Item["type"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "001"}, out.Item["id"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, out.Item["name"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "grass"}, out.Item["type"])
 
 	_, err = client.GetItem(context.Background(), &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
@@ -666,11 +664,11 @@ func TestPutAndGetBatchItem(t *testing.T) {
 	out, err = client.BatchGetItem(context.Background(), getInput)
 	c.NoError(err)
 	c.Len(out.Responses[tableName], 2)
-	c.Equal("001", out.Responses[tableName][0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
-	c.Equal("002", out.Responses[tableName][1]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "001"}, out.Responses[tableName][0]["id"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "002"}, out.Responses[tableName][1]["id"])
 	c.Len(out.UnprocessedKeys[tableName].Keys, 2)
-	c.Equal("003", out.UnprocessedKeys[tableName].Keys[0]["t1"].(*dynamodbtypes.AttributeValueMemberS).Value)
-	c.Equal("004", out.UnprocessedKeys[tableName].Keys[1]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "003"}, out.UnprocessedKeys[tableName].Keys[0]["t1"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "004"}, out.UnprocessedKeys[tableName].Keys[1]["id"])
 }
 
 func TestPutWithGSI(t *testing.T) {
@@ -871,7 +869,7 @@ func TestUpdateItem(t *testing.T) {
 
 	item, err := getPokemon(client, "001")
 	c.NoError(err)
-	c.Equal("poison", item["second_type"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, item["second_type"])
 
 	input.Key["id"] = &dynamodbtypes.AttributeValueMemberS{
 		Value: "404",
@@ -882,7 +880,7 @@ func TestUpdateItem(t *testing.T) {
 
 	item, err = getPokemon(client, "404")
 	c.NoError(err)
-	c.Equal("poison", item["second_type"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, item["second_type"])
 
 	minidynClient, ok := client.(*Client)
 	if !ok {
@@ -897,14 +895,16 @@ func TestUpdateItem(t *testing.T) {
 			Value: "001",
 		},
 	}
-	expr[":ntype"].(*dynamodbtypes.AttributeValueMemberS).Value = string("water")
+	expr[":ntype"] = &dynamodbtypes.AttributeValueMemberS{
+		Value: "water",
+	}
 
 	_, err = client.UpdateItem(context.Background(), input)
 	c.NoError(err)
 
 	item, err = getPokemon(client, "001")
 	c.NoError(err)
-	c.Equal("water", item["second_type"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "water"}, item["second_type"])
 }
 
 func TestUpdateItemWithConditionalExpression(t *testing.T) {
@@ -931,7 +931,7 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	uexpr := "SET second_type = :ntype"
 	expr := map[string]dynamodbtypes.AttributeValue{
 		":ntyp": &dynamodbtypes.AttributeValueMemberS{
-			Value: string("poison"),
+			Value: "poison",
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
@@ -1020,8 +1020,8 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	_, err = client.UpdateItem(context.Background(), input)
 	c.True(errors.As(err, &errConditionalCheckFailedException))
 	c.NotEmpty(errConditionalCheckFailedException.Item)
-	c.Equal("001", errConditionalCheckFailedException.Item["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
-	c.Equal("Bulbasaur", errConditionalCheckFailedException.Item["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "001"}, errConditionalCheckFailedException.Item["id"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, errConditionalCheckFailedException.Item["name"])
 }
 
 func TestUpdateItemWithGSI(t *testing.T) {
@@ -1044,7 +1044,7 @@ func TestUpdateItemWithGSI(t *testing.T) {
 	uexpr := "SET #type = :ntype"
 	expr := map[string]dynamodbtypes.AttributeValue{
 		":ntype": &dynamodbtypes.AttributeValueMemberS{
-			Value: string("poison"),
+			Value: "poison",
 		},
 	}
 	names := map[string]string{"#type": "type"}
@@ -1090,7 +1090,7 @@ func TestUpdateItemError(t *testing.T) {
 
 	expr := map[string]dynamodbtypes.AttributeValue{
 		":second_type": &dynamodbtypes.AttributeValueMemberS{
-			Value: string("poison"),
+			Value: "poison",
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
@@ -1151,7 +1151,7 @@ func TestUpdateExpressions(t *testing.T) {
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				a.Equal("1", item["lvl"].(*dynamodbtypes.AttributeValueMemberN).Value)
+				a.Equal(&dynamodbtypes.AttributeValueMemberN{Value: "1"}, item["lvl"])
 			},
 		},
 		"remove": {
@@ -1174,7 +1174,9 @@ func TestUpdateExpressions(t *testing.T) {
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				a.True(item["local"].(*dynamodbtypes.AttributeValueMemberNULL).Value)
+				local, ok := item["local"].(*dynamodbtypes.AttributeValueMemberNULL)
+				a.True(ok)
+				a.True(local.Value)
 			},
 		},
 		"delete": {
@@ -1199,7 +1201,10 @@ func TestUpdateExpressions(t *testing.T) {
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				a.Len(item["moves"].(*dynamodbtypes.AttributeValueMemberSS).Value, 3)
+				moves, ok := item["moves"].(*dynamodbtypes.AttributeValueMemberSS)
+				a.True(ok)
+
+				a.Len(moves.Value, 3)
 			},
 		},
 	}
@@ -1395,19 +1400,19 @@ func TestQueryPagination(t *testing.T) {
 	out, err := client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("001", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "001"}, out.Items[0]["id"])
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
 	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("002", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "002"}, out.Items[0]["id"])
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
 	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("003", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "003"}, out.Items[0]["id"])
 	c.NotEmpty(out.LastEvaluatedKey)
 
 	input.ExclusiveStartKey = out.LastEvaluatedKey
@@ -1465,7 +1470,7 @@ func TestQueryPagination(t *testing.T) {
 
 	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
-	c.Equal("003", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "003"}, out.Items[0]["id"])
 
 	// Query with FilterExpression
 	input.ScanIndexForward = nil
@@ -1486,7 +1491,7 @@ func TestQueryPagination(t *testing.T) {
 	out, err = client.Query(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
-	c.Equal("003", out.Items[0]["id"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "003"}, out.Items[0]["id"])
 }
 
 func TestQuerySyntaxError(t *testing.T) {
@@ -1786,7 +1791,7 @@ func TestDeleteItemWithReturnValues(t *testing.T) {
 	output, err := client.DeleteItem(context.Background(), input)
 	c.NoError(err)
 
-	c.Equal("Bulbasaur", output.Attributes["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, output.Attributes["name"])
 }
 
 func TestDescribeTable(t *testing.T) {

@@ -168,7 +168,7 @@ func (e *Environment) Apply(item map[string]*types.Item, aliases map[string]stri
 	}
 }
 
-// Set assigns the value of the variable in the environment
+// String returns a string representation of the environment
 func (e *Environment) String() string {
 	out := []string{}
 

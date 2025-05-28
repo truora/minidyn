@@ -384,7 +384,8 @@ func TestDeleteItem(t *testing.T) {
 	inp := &types.DeleteItemInput{
 		Key: map[string]*types.Item{
 			"id":   {S: types.ToString("002")},
-			"name": {S: types.ToString("Ivysaur")}},
+			"name": {S: types.ToString("Ivysaur")},
+		},
 		TableName: &newTable.Name,
 	}
 
@@ -398,7 +399,8 @@ func TestDeleteItem(t *testing.T) {
 
 	inp = &types.DeleteItemInput{
 		Key: map[string]*types.Item{
-			"id": {S: types.ToString("123")}},
+			"id": {S: types.ToString("123")},
+		},
 		TableName: &newTable.Name,
 	}
 
@@ -448,7 +450,8 @@ func TestDeleteIndex(t *testing.T) {
 	inp := &types.DeleteItemInput{
 		Key: map[string]*types.Item{
 			"id":   {S: types.ToString("002")},
-			"name": {S: types.ToString("Ivysaur")}},
+			"name": {S: types.ToString("Ivysaur")},
+		},
 		TableName: &newTable.Name,
 	}
 

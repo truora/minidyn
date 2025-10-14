@@ -322,3 +322,49 @@ func StringValue(str *string) string {
 
 	return *str
 }
+
+// StreamViewType defines the type of data from the table included in the stream
+type StreamViewType string
+
+const (
+	// StreamViewTypeKeysOnly only the key attributes of the modified item
+	StreamViewTypeKeysOnly StreamViewType = "KEYS_ONLY"
+	// StreamViewTypeNewImage the entire item, as it appears after it was modified
+	StreamViewTypeNewImage StreamViewType = "NEW_IMAGE"
+	// StreamViewTypeOldImage the entire item, as it appeared before it was modified
+	StreamViewTypeOldImage StreamViewType = "OLD_IMAGE"
+	// StreamViewTypeNewAndOldImages both the new and the old images of the item
+	StreamViewTypeNewAndOldImages StreamViewType = "NEW_AND_OLD_IMAGES"
+)
+
+// StreamEventType defines the type of event
+type StreamEventType string
+
+const (
+	// StreamEventInsert a new item was added to the table
+	StreamEventInsert StreamEventType = "INSERT"
+	// StreamEventModify an item was modified
+	StreamEventModify StreamEventType = "MODIFY"
+	// StreamEventRemove an item was deleted from the table
+	StreamEventRemove StreamEventType = "REMOVE"
+)
+
+// StreamRecord contains details about a change to a DynamoDB table
+type StreamRecord struct {
+	_           struct{}                 `type:"structure"`
+	EventID     string                   `type:"string"`
+	EventName   StreamEventType          `type:"string"`
+	Keys        map[string]*Item         `type:"map"`
+	NewImage    map[string]*Item         `type:"map"`
+	OldImage    map[string]*Item         `type:"map"`
+	SequenceNumber string                `type:"string"`
+	SizeBytes   int64                    `type:"long"`
+	StreamViewType StreamViewType        `type:"string"`
+}
+
+// StreamConfiguration represents the DynamoDB Streams configuration for a table
+type StreamConfiguration struct {
+	_              struct{}       `type:"structure"`
+	StreamEnabled  bool           `type:"boolean"`
+	StreamViewType StreamViewType `type:"string"`
+}

@@ -35,6 +35,10 @@ type Table struct {
 	UseNativeInterpreter bool
 	NativeInterpreter    interpreter.Native
 	LangInterpreter      interpreter.Language
+	StreamEnabled        bool
+	StreamViewType       types.StreamViewType
+	StreamRecords        []types.StreamRecord
+	streamSequence       int64
 }
 
 // NewTable creates a new Table
@@ -45,6 +49,8 @@ func NewTable(name string) *Table {
 		AttributesDef: map[string]string{},
 		SortedKeys:    []string{},
 		Data:          map[string]map[string]*types.Item{},
+		StreamRecords: []types.StreamRecord{},
+		streamSequence: 0,
 	}
 }
 
@@ -479,6 +485,10 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return item, types.NewError("ValidationException", err.Error(), nil)
 	}
 
+	// Get old item if exists for streams
+	oldItem := t.getItem(key)
+	itemExists := len(oldItem) > 0
+
 	// support conditional writes
 	if input.ConditionExpression != nil {
 		_, matched := t.matchKey(QueryInput{
@@ -487,7 +497,7 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 			Aliases:                   input.ExpressionAttributeNames,
 			Limit:                     1,
 			ConditionExpression:       input.ConditionExpression,
-		}, t.getItem(key))
+		}, oldItem)
 
 		if !matched {
 			return item, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
@@ -501,6 +511,14 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		if err != nil {
 			return nil, types.NewError("ValidationException", err.Error(), nil)
 		}
+	}
+
+	// Emit stream record
+	keyItem := t.KeySchema.getKeyItem(item)
+	if itemExists {
+		t.emitStreamRecord(types.StreamEventModify, keyItem, oldItem, item)
+	} else {
+		t.emitStreamRecord(types.StreamEventInsert, keyItem, nil, item)
 	}
 
 	return item, nil
@@ -578,6 +596,10 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		}
 	}
 
+	// Emit stream record for MODIFY
+	keyItem := t.KeySchema.getKeyItem(item)
+	t.emitStreamRecord(types.StreamEventModify, keyItem, oldItem, item)
+
 	return copyItem(item), nil
 }
 
@@ -615,6 +637,10 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 			return nil, types.NewError("ValidationException", err.Error(), nil)
 		}
 	}
+
+	// Emit stream record for REMOVE
+	keyItem := t.KeySchema.getKeyItem(item)
+	t.emitStreamRecord(types.StreamEventRemove, keyItem, item, nil)
 
 	return item, nil
 }
@@ -671,4 +697,43 @@ func handleConditionalCheckError(input *types.UpdateItemInput, checkErr *types.C
 	if input.ReturnValuesOnConditionCheckFailure != nil && *input.ReturnValuesOnConditionCheckFailure == "ALL_OLD" {
 		checkErr.Item = item
 	}
+}
+
+// emitStreamRecord generates and stores a stream record if streams are enabled
+func (t *Table) emitStreamRecord(eventType types.StreamEventType, keys map[string]*types.Item, oldImage, newImage map[string]*types.Item) {
+	if !t.StreamEnabled {
+		return
+	}
+
+	t.streamSequence++
+	record := types.StreamRecord{
+		EventID:        fmt.Sprintf("stream-%d", t.streamSequence),
+		EventName:      eventType,
+		SequenceNumber: fmt.Sprintf("%d", t.streamSequence),
+		StreamViewType: t.StreamViewType,
+		Keys:           copyItem(keys),
+	}
+
+	// Set images based on view type
+	switch t.StreamViewType {
+	case types.StreamViewTypeKeysOnly:
+		// Keys already set, nothing else needed
+	case types.StreamViewTypeNewImage:
+		if newImage != nil {
+			record.NewImage = copyItem(newImage)
+		}
+	case types.StreamViewTypeOldImage:
+		if oldImage != nil {
+			record.OldImage = copyItem(oldImage)
+		}
+	case types.StreamViewTypeNewAndOldImages:
+		if newImage != nil {
+			record.NewImage = copyItem(newImage)
+		}
+		if oldImage != nil {
+			record.OldImage = copyItem(oldImage)
+		}
+	}
+
+	t.StreamRecords = append(t.StreamRecords, record)
 }

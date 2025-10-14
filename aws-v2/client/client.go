@@ -14,6 +14,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
+	minidynTypes "github.com/truora/minidyn/types"
 )
 
 const (
@@ -719,4 +720,104 @@ func getMissingSubstrs(s string, substrs []string) []string {
 	}
 
 	return missingSubstrs
+}
+
+// StreamRecord represents a stream record for AWS SDK v2
+type StreamRecord struct {
+	EventID        string
+	EventName      string
+	Keys           map[string]types.AttributeValue
+	NewImage       map[string]types.AttributeValue
+	OldImage       map[string]types.AttributeValue
+	SequenceNumber string
+	StreamViewType string
+}
+
+func mapStringToStreamViewType(viewType string) minidynTypes.StreamViewType {
+	switch viewType {
+	case "KEYS_ONLY":
+		return minidynTypes.StreamViewTypeKeysOnly
+	case "NEW_IMAGE":
+		return minidynTypes.StreamViewTypeNewImage
+	case "OLD_IMAGE":
+		return minidynTypes.StreamViewTypeOldImage
+	case "NEW_AND_OLD_IMAGES":
+		return minidynTypes.StreamViewTypeNewAndOldImages
+	default:
+		return minidynTypes.StreamViewTypeKeysOnly
+	}
+}
+
+// EnableStreams enables DynamoDB Streams on a table
+func (fd *Client) EnableStreams(tableName string, viewType string) error {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	vt := mapStringToStreamViewType(viewType)
+	table.EnableStream(vt)
+
+	return nil
+}
+
+// DisableStreams disables DynamoDB Streams on a table
+func (fd *Client) DisableStreams(tableName string) error {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	table.DisableStream()
+
+	return nil
+}
+
+// GetStreamRecords returns all stream records for a table
+func (fd *Client) GetStreamRecords(tableName string) ([]StreamRecord, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	records := table.GetStreamRecords()
+	result := make([]StreamRecord, len(records))
+
+	for i, record := range records {
+		result[i] = StreamRecord{
+			EventID:        record.EventID,
+			EventName:      string(record.EventName),
+			Keys:           mapTypesToDynamoMapItem(record.Keys),
+			NewImage:       mapTypesToDynamoMapItem(record.NewImage),
+			OldImage:       mapTypesToDynamoMapItem(record.OldImage),
+			SequenceNumber: record.SequenceNumber,
+			StreamViewType: string(record.StreamViewType),
+		}
+	}
+
+	return result, nil
+}
+
+// ClearStreamRecords clears all stream records for a table
+func (fd *Client) ClearStreamRecords(tableName string) error {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	table.ClearStreamRecords()
+
+	return nil
 }

@@ -1856,6 +1856,82 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	c.NotEmpty(output.UnprocessedItems)
 }
 
+func TestBatchGetItemWithContext(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	item, err := dynamodbattribute.MarshalMap(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+	c.NoError(err)
+
+	input := &dynamodb.PutItemInput{
+		Item:      item,
+		TableName: aws.String(tableName),
+	}
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.NoError(err)
+
+	item, err = dynamodbattribute.MarshalMap(pokemon{
+		ID:   "002",
+		Type: "fire",
+		Name: "Charmander",
+	})
+	c.NoError(err)
+
+	input = &dynamodb.PutItemInput{
+		Item:      item,
+		TableName: aws.String(tableName),
+	}
+
+	_, err = client.PutItemWithContext(context.Background(), input)
+	c.NoError(err)
+
+	getInput := &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]*dynamodb.KeysAndAttributes{
+			tableName: {
+				Keys: []map[string]*dynamodb.AttributeValue{
+					{
+						"id": {S: aws.String("001")},
+					},
+					{
+						"id": {S: aws.String("002")},
+					},
+					{
+						"t1": {S: aws.String("003")},
+					},
+					{
+						"id": {S: aws.String("004")},
+					},
+				},
+			},
+		},
+	}
+
+	ActiveForceFailure(client)
+
+	out, err := client.BatchGetItemWithContext(context.Background(), getInput)
+	c.Nil(out)
+	c.EqualError(err, ErrForcedFailure.Error())
+
+	DeactiveForceFailure(client)
+
+	out, err = client.BatchGetItemWithContext(context.Background(), getInput)
+	c.NoError(err)
+	c.Len(out.Responses[tableName], 2)
+	c.Equal("001", aws.StringValue(out.Responses[tableName][0]["id"].S))
+	c.Equal("002", aws.StringValue(out.Responses[tableName][1]["id"].S))
+	c.Len(out.UnprocessedKeys[tableName].Keys, 2)
+	c.Equal("003", aws.StringValue(out.UnprocessedKeys[tableName].Keys[0]["t1"].S))
+	c.Equal("004", aws.StringValue(out.UnprocessedKeys[tableName].Keys[1]["id"].S))
+}
+
 func TestTransactWriteItemsWithContext(t *testing.T) {
 	c := require.New(t)
 	client := NewClient()

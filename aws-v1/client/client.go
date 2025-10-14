@@ -653,6 +653,73 @@ func (fd *Client) TransactWriteItemsWithContext(ctx aws.Context, input *dynamodb
 	return fd.TransactWriteItems(input)
 }
 
+// BatchGetItem mock response for dynamodb
+func (fd *Client) BatchGetItem(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+	if fd.forceFailureErr != nil {
+		return nil, fd.forceFailureErr
+	}
+
+	responses := make(map[string][]map[string]*dynamodb.AttributeValue, len(input.RequestItems))
+	unprocessed := make(map[string]*dynamodb.KeysAndAttributes, len(input.RequestItems))
+
+	for tableName, reqs := range input.RequestItems {
+		unprocessedKeys := make([]map[string]*dynamodb.AttributeValue, 0, len(reqs.Keys))
+		responses[tableName] = make([]map[string]*dynamodb.AttributeValue, 0, len(reqs.Keys))
+
+		for _, req := range reqs.Keys {
+			getInput := &dynamodb.GetItemInput{
+				TableName:                aws.String(tableName),
+				Key:                      req,
+				ConsistentRead:           reqs.ConsistentRead,
+				AttributesToGet:          reqs.AttributesToGet,
+				ExpressionAttributeNames: reqs.ExpressionAttributeNames,
+				ProjectionExpression:     reqs.ProjectionExpression,
+			}
+
+			item, err := executeGetRequest(fd, getInput)
+			if err != nil {
+				unprocessedKeys = append(unprocessedKeys, req)
+
+				continue
+			}
+
+			responses[tableName] = append(responses[tableName], item)
+		}
+
+		if len(unprocessedKeys) > 0 {
+			unprocessed[tableName] = reqs
+
+			tableUnprocessedKeys := unprocessed[tableName]
+			tableUnprocessedKeys.Keys = unprocessedKeys
+
+			unprocessed[tableName] = tableUnprocessedKeys
+		}
+	}
+
+	return &dynamodb.BatchGetItemOutput{
+		Responses:       responses,
+		UnprocessedKeys: unprocessed,
+	}, nil
+}
+
+// BatchGetItemWithContext mock response for dynamodb
+func (fd *Client) BatchGetItemWithContext(ctx aws.Context, input *dynamodb.BatchGetItemInput, opts ...request.Option) (*dynamodb.BatchGetItemOutput, error) {
+	return fd.BatchGetItem(input)
+}
+
+func executeGetRequest(fd *Client, getInput *dynamodb.GetItemInput) (map[string]*dynamodb.AttributeValue, error) {
+	response, err := fd.GetItem(getInput)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(response.Item) == 0 {
+		return nil, ErrResourceNotFoundException
+	}
+
+	return response.Item, nil
+}
+
 func (fd *Client) getTable(tableName string) (*core.Table, error) {
 	table, ok := fd.tables[tableName]
 	if !ok {

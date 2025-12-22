@@ -29,44 +29,42 @@ func (fn *Function) ToDynamoDB() types.Item {
 	return types.Item{}
 }
 
-var (
-	functions = map[string]*Function{
-		"attribute_exists": &Function{
-			Name:  "attribute_exists",
-			Value: attributeExists,
-		},
-		"attribute_not_exists": &Function{
-			Name:  "attribute_not_exists",
-			Value: attributeNotExists,
-		},
-		"attribute_type": &Function{
-			Name:  "attribute_type",
-			Value: attributeType,
-		},
-		"begins_with": &Function{
-			Name:  "begins_with",
-			Value: beginsWith,
-		},
-		"contains": &Function{
-			Name:  "contains",
-			Value: contains,
-		},
-		"size": &Function{
-			Name:  "size",
-			Value: objectSize,
-		},
-		"if_not_exists": &Function{
-			Name:      "if_not_exists",
-			Value:     ifNotExists,
-			ForUpdate: true,
-		},
-		"list_append": &Function{
-			Name:      "list_append",
-			Value:     listAppend,
-			ForUpdate: true,
-		},
-	}
-)
+var functions = map[string]*Function{
+	"attribute_exists": {
+		Name:  "attribute_exists",
+		Value: attributeExists,
+	},
+	"attribute_not_exists": {
+		Name:  "attribute_not_exists",
+		Value: attributeNotExists,
+	},
+	"attribute_type": {
+		Name:  "attribute_type",
+		Value: attributeType,
+	},
+	"begins_with": {
+		Name:  "begins_with",
+		Value: beginsWith,
+	},
+	"contains": {
+		Name:  "contains",
+		Value: contains,
+	},
+	"size": {
+		Name:  "size",
+		Value: objectSize,
+	},
+	"if_not_exists": {
+		Name:      "if_not_exists",
+		Value:     ifNotExists,
+		ForUpdate: true,
+	},
+	"list_append": {
+		Name:      "list_append",
+		Value:     listAppend,
+		ForUpdate: true,
+	},
+}
 
 func attributeExists(args ...Object) Object {
 	path := args[0]
@@ -176,8 +174,15 @@ func listAppend(args ...Object) Object {
 		return newError("list_append is not supported for list2=%s", value2.Type())
 	}
 
-	list1 := value1.(*List)
-	list2 := value2.(*List)
+	list1, ok := value1.(*List)
+	if !ok {
+		return newError("list_append is not supported for list1=%s", value1.Type())
+	}
+
+	list2, ok := value2.(*List)
+	if !ok {
+		return newError("list_append is not supported for list2=%s", value2.Type())
+	}
 
 	return &List{Value: append(list1.Value, list2.Value...)}
 }

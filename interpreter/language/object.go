@@ -445,7 +445,11 @@ func (l *List) CanContain(objType ObjectType) bool {
 // Add if the obj adds the value to the list
 func (l *List) Add(obj Object) Object {
 	if obj.Type() == ObjectTypeList {
-		list := obj.(*List)
+		list, ok := obj.(*List)
+		if !ok {
+			return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+		}
+
 		l.Value = append(l.Value, list.Value...)
 
 		return UNDEFINED

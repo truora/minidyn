@@ -543,7 +543,7 @@ func TestToDynamo(t *testing.T) {
 	ss := StringSet{Value: map[string]bool{"Cookies": true}}
 	dSS := ss.ToDynamoDB()
 
-	if "Cookies" != types.StringValue(dSS.SS[0]) {
+	if types.StringValue(dSS.SS[0]) != "Cookies" {
 		t.Errorf("expected item to be %s got=%s", "Cookies", types.StringValue(dSS.SS[0]))
 	}
 
@@ -557,7 +557,7 @@ func TestToDynamo(t *testing.T) {
 	nm := NumberSet{Value: map[float64]bool{1: true}}
 	dNm := nm.ToDynamoDB()
 
-	if "1" != types.StringValue(dNm.NS[0]) {
+	if types.StringValue(dNm.NS[0]) != "1" {
 		t.Errorf("expected item to be %s got=%s", "1", types.StringValue(dNm.NS[0]))
 	}
 }

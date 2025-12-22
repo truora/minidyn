@@ -624,7 +624,7 @@ func handleBatchWriteRequestError(table string, req *dynamodb.WriteRequest, unpr
 		return err
 	}
 
-	if !(aerr.Code() == dynamodb.ErrCodeInternalServerError || aerr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException) {
+	if aerr.Code() != dynamodb.ErrCodeInternalServerError && aerr.Code() != dynamodb.ErrCodeProvisionedThroughputExceededException {
 		return err
 	}
 
@@ -643,7 +643,7 @@ func (fd *Client) TransactWriteItems(input *dynamodb.TransactWriteItemsInput) (*
 		return nil, ErrForcedFailure
 	}
 
-	//TODO: Implement transact write
+	// TODO: Implement transact write
 
 	return &dynamodb.TransactWriteItemsOutput{}, nil
 }

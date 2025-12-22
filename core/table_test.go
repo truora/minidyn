@@ -519,7 +519,7 @@ func TestSearchData(t *testing.T) {
 	queryInput.started = true
 
 	result, lastItem = newTable.SearchData(queryInput)
-	c.Equal([]map[string]*types.Item{{}}, result)
+	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
 
 	queryInput.ExclusiveStartKey = item

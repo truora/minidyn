@@ -1,6 +1,7 @@
 package types
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -132,7 +133,8 @@ func (b baseError) OrigErr() error {
 	case 1:
 		return b.errs[0]
 	default:
-		if err, ok := b.errs[0].(Error); ok {
+		var err Error
+		if errors.As(b.errs[0], &err) {
 			return NewBatchError(err.Code(), err.Message(), b.errs[1:])
 		}
 
@@ -156,7 +158,7 @@ type requestError struct {
 	awsError
 	statusCode int
 	requestID  string
-	bytes      []byte // nolint:unused
+	bytes      []byte // nolint:unused // retained to match SDK interfaces
 }
 
 // newRequestError returns a wrapped error with additional information for
@@ -174,6 +176,7 @@ func newRequestError(err Error, statusCode int, requestID string) *requestError 
 func (r requestError) Error() string {
 	extra := fmt.Sprintf("status code: %d, request id: %s",
 		r.statusCode, r.requestID)
+
 	return SprintError(r.Code(), r.Message(), extra, r.OrigErr())
 }
 

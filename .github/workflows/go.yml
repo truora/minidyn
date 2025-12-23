@@ -21,7 +21,7 @@ jobs:
       uses: golangci/golangci-lint-action@v8
       with:
         problem-matchers: true
-        version: v2.1
+        version: v2.7
 
   test:
     runs-on: ubuntu-latest

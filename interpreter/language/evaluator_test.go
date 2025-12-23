@@ -636,7 +636,7 @@ func TestErrorHandling(t *testing.T) {
 		},
 		{
 			"list_append(:list,:x)",
-			"the function is not allowed in an condition expression; function: list_append",
+			"the function is not allowed in a condition expression; function: list_append",
 		},
 		{
 			"ROLE IN (:x, :str)",
@@ -729,6 +729,7 @@ func TestEvalUpdateReservedKeywords(t *testing.T) {
 	}
 }
 
+//nolint:gocognit // multiple table-driven scenarios for keyword validation
 func TestEvalReservedKeywords(t *testing.T) {
 	tests := []struct {
 		input           string

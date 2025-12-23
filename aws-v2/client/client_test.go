@@ -1986,9 +1986,8 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	}
 
 	output, err := client.BatchWriteItem(context.Background(), input)
-	c.NoError(err)
-
-	c.NotEmpty(output.UnprocessedItems)
+	c.EqualError(err, "InternalServerError: emulated error")
+	c.Nil(output)
 }
 
 func TestTransactWriteItems(t *testing.T) {

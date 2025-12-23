@@ -466,7 +466,7 @@ func TestUpdateTable(t *testing.T) {
 			},
 		},
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
+			{
 				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
 					KeySchema: []*dynamodb.KeySchemaElement{
@@ -494,7 +494,7 @@ func TestUpdateTable(t *testing.T) {
 
 	input = &dynamodb.UpdateTableInput{
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
+			{
 				Update: &dynamodb.UpdateGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
 					ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
@@ -511,7 +511,7 @@ func TestUpdateTable(t *testing.T) {
 
 	input = &dynamodb.UpdateTableInput{
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
-			&dynamodb.GlobalSecondaryIndexUpdate{
+			{
 				Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
 					IndexName: aws.String("newIndex"),
 				},
@@ -1012,7 +1012,7 @@ func TestUpdateExpressions(t *testing.T) {
 				},
 				ReturnValues:              aws.String("UPDATED_NEW"),
 				UpdateExpression:          aws.String("ADD lvl :one"),
-				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{":one": &dynamodb.AttributeValue{N: aws.String("1")}},
+				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{":one": {N: aws.String("1")}},
 			},
 			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
 				a := assert.New(tc)
@@ -1140,7 +1140,7 @@ func TestQueryWithContext(t *testing.T) {
 	c.Len(out.Items, 1)
 	c.Empty(out.LastEvaluatedKey)
 
-	var pokemonQueried = pokemon{}
+	pokemonQueried := pokemon{}
 
 	err = dynamodbattribute.UnmarshalMap(out.Items[0], &pokemonQueried)
 	c.NoError(err)
@@ -1721,7 +1721,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 	c.NoError(err)
 
 	requests := []*dynamodb.WriteRequest{
-		&dynamodb.WriteRequest{
+		{
 			PutRequest: &dynamodb.PutRequest{
 				Item: item,
 			},
@@ -1757,10 +1757,10 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]*dynamodb.WriteRequest{
-			tableName: []*dynamodb.WriteRequest{
-				&dynamodb.WriteRequest{
+			tableName: {
+				{
 					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
-						"id": &dynamodb.AttributeValue{S: aws.String("001")},
+						"id": {S: aws.String("001")},
 					}},
 				},
 			},
@@ -1777,11 +1777,11 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]*dynamodb.WriteRequest{
-			tableName: []*dynamodb.WriteRequest{
-				&dynamodb.WriteRequest{
+			tableName: {
+				{
 					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
-						"id":   &dynamodb.AttributeValue{S: aws.String("001")},
-						"type": &dynamodb.AttributeValue{S: aws.String("grass")},
+						"id":   {S: aws.String("001")},
+						"type": {S: aws.String("grass")},
 					}},
 					PutRequest: &dynamodb.PutRequest{Item: item},
 				},
@@ -1793,8 +1793,8 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]*dynamodb.WriteRequest{
-			tableName: []*dynamodb.WriteRequest{
-				&dynamodb.WriteRequest{},
+			tableName: {
+				{},
 			},
 		},
 	})
@@ -1834,7 +1834,7 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	c.NoError(err)
 
 	requests := []*dynamodb.WriteRequest{
-		&dynamodb.WriteRequest{
+		{
 			PutRequest: &dynamodb.PutRequest{
 				Item: item,
 			},

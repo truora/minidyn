@@ -11,28 +11,28 @@ type testCase struct {
 
 func TestNextToken(t *testing.T) {
 	table := map[string][]testCase{
-		`v1`: []testCase{
+		`v1`: {
 			{IDENT, "v1"},
 		},
-		`a = b AND c`: []testCase{
+		`a = b AND c`: {
 			{IDENT, "a"},
 			{EQ, "="},
 			{IDENT, "b"},
 			{AND, "AND"},
 			{IDENT, "c"},
 		},
-		`a <> b`: []testCase{
+		`a <> b`: {
 			{IDENT, "a"},
 			{NotEQ, "<>"},
 			{IDENT, "b"},
 		},
-		`attribute_exists(:a)`: []testCase{
+		`attribute_exists(:a)`: {
 			{IDENT, "attribute_exists"},
 			{LPAREN, "("},
 			{IDENT, ":a"},
 			{RPAREN, ")"},
 		},
-		`begins_with(:a, #s)`: []testCase{
+		`begins_with(:a, #s)`: {
 			{IDENT, "begins_with"},
 			{LPAREN, "("},
 			{IDENT, ":a"},
@@ -40,7 +40,7 @@ func TestNextToken(t *testing.T) {
 			{IDENT, "#s"},
 			{RPAREN, ")"},
 		},
-		`contains(:a, #s)`: []testCase{
+		`contains(:a, #s)`: {
 			{IDENT, "contains"},
 			{LPAREN, "("},
 			{IDENT, ":a"},
@@ -48,7 +48,7 @@ func TestNextToken(t *testing.T) {
 			{IDENT, "#s"},
 			{RPAREN, ")"},
 		},
-		`a <= b AND b >= c`: []testCase{
+		`a <= b AND b >= c`: {
 			{IDENT, "a"},
 			{LTE, "<="},
 			{IDENT, "b"},
@@ -57,7 +57,7 @@ func TestNextToken(t *testing.T) {
 			{GTE, ">="},
 			{IDENT, "c"},
 		},
-		`a IN (b, c)`: []testCase{
+		`a IN (b, c)`: {
 			{IDENT, "a"},
 			{IN, "IN"},
 			{LPAREN, "("},
@@ -66,28 +66,28 @@ func TestNextToken(t *testing.T) {
 			{IDENT, "c"},
 			{RPAREN, ")"},
 		},
-		`NOT a`: []testCase{
+		`NOT a`: {
 			{NOT, "NOT"},
 			{IDENT, "a"},
 		},
-		`a >`: []testCase{
+		`a >`: {
 			{IDENT, "a"},
 			{GT, ">"},
 		},
-		`b BETWEEN a AND c`: []testCase{
+		`b BETWEEN a AND c`: {
 			{IDENT, "b"},
 			{BETWEEN, "BETWEEN"},
 			{IDENT, "a"},
 			{AND, "AND"},
 			{IDENT, "c"},
 		},
-		`a[1]`: []testCase{
+		`a[1]`: {
 			{IDENT, "a"},
 			{LBRACKET, "["},
 			{IDENT, "1"},
 			{RBRACKET, "]"},
 		},
-		`a.f`: []testCase{
+		`a.f`: {
 			{IDENT, "a"},
 			{DOT, "."},
 			{IDENT, "f"},

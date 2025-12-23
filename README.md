@@ -10,6 +10,8 @@ Amazon DynamoDB testing library written in Go.
 
 ## Usage
 
+### In-memory client (existing)
+
 Create the dynamodb client:
 
 ```go
@@ -53,6 +55,36 @@ if err != nil {
 
 **NOTE** these methods only support string attributes.
 
+### HTTP server mode (new)
+
+You can now run minidyn as an HTTP server compatible with the DynamoDB JSON API. This is handy for using `httptest.NewServer` and real AWS SDK clients without swapping implementations.
+
+```go
+import (
+  "net/http/httptest"
+
+  miniserver "github.com/truora/minidyn/server"
+  "github.com/aws/aws-sdk-go-v2/aws"
+  "github.com/aws/aws-sdk-go-v2/config"
+  "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+)
+
+srv := httptest.NewServer(miniserver.NewServer())
+defer srv.Close()
+
+cfg, _ := config.LoadDefaultConfig(ctx,
+  config.WithEndpointResolverWithOptions(
+    aws.EndpointResolverWithOptionsFunc(func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
+      return aws.Endpoint{URL: srv.URL, PartitionID: "aws", SigningRegion: "us-east-1"}, nil
+    })),
+)
+ddb := dynamodb.NewFromConfig(cfg)
+
+// use ddb as usual: CreateTable, PutItem, Query, etc.
+```
+
+Supported operations in HTTP mode include CreateTable, DescribeTable, UpdateTable, DeleteTable, PutItem, GetItem, UpdateItem, DeleteItem, Query, Scan, and BatchWriteItem.
+
 ## Language interpreter
 
 This library has an interpreter implementation for the DynamoDB Expressions.
@@ -62,22 +94,22 @@ This library has an interpreter implementation for the DynamoDB Expressions.
 #### Types
 
 | Name      | Type     | Short | Supported? |
-|-----------|----------|-------|-----------|
-| Number    | scalar   | N     | y         |
-| String    | scalar   | S     | y         |
-| Binary    | scalar   | B     | y         |
-| Bool      | scalar   | BOOL  | y         |
-| Null      | scalar   | NULL  | y         |
-| List      | document | L     | y         |
-| Map       | document | M     | y         |
-| StringSet | set      | SS    | y         |
-| NumberSet | set      | NS    | y         |
-| BinarySet | set      | BS    | y         |
+| --------- | -------- | ----- | ---------- |
+| Number    | scalar   | N     | y          |
+| String    | scalar   | S     | y          |
+| Binary    | scalar   | B     | y          |
+| Bool      | scalar   | BOOL  | y          |
+| Null      | scalar   | NULL  | y          |
+| List      | document | L     | y          |
+| Map       | document | M     | y          |
+| StringSet | set      | SS    | y          |
+| NumberSet | set      | NS    | y          |
+| BinarySet | set      | BS    | y          |
 
 #### Expressions
 
-|                                              |Syntax                                                                               | Supported? |
-|----------------------------------------------|-------------------------------------------------------------------------------------|------------|
+|                                              | Syntax                                                                              | Supported? |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- | ---------- |
 | operand comparator operand                   | = <> < <= > and >=                                                                  | y          |
 | operand BETWEEN operand AND operand          | N,S,B                                                                               | y          |
 | operand IN ( operand (',' operand (, ...) )) |                                                                                     | y          |
@@ -91,12 +123,24 @@ This library has an interpreter implementation for the DynamoDB Expressions.
 #### Expressions
 
 |          | Syntax                       | Supported? |
-|----------|------------------------------|------------|
+| -------- | ---------------------------- | ---------- |
 | SET      | SET action [, action] ...    | y          |
 | REMOVE   | REMOVE action [, action] ... | y          |
 | ADD      | ADD action [, action] ...    | y          |
 | DELETE   | DELETE action [, action] ... | y          |
 | function | list_append, if_not_exists   | y          |
+
+## Developer notes
+
+### Regenerating HTTP request structs
+
+The HTTP server uses generated JSON input shapes in `server/requests.go` so we can cleanly unmarshal DynamoDB JSON without the SDK’s `AttributeValue` interfaces. If you update DynamoDB inputs or need to refresh these shapes, run:
+
+```bash
+go run ./tools/generate_requests
+```
+
+This will rewrite `server/requests.go` based on the AWS SDK v2 DynamoDB input types, replacing `AttributeValue` interfaces with the concrete JSON-friendly `AttributeValue` defined in `server/types.go`.
 
 ### What to do when the interpreter does not work properly?
 

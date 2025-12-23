@@ -486,6 +486,7 @@ func BenchmarkStringInspect(b *testing.B) {
 	}
 }
 
+//nolint:gocyclo // comprehensive conversions covered in one test
 func TestToDynamo(t *testing.T) {
 	num := Number{Value: 3}
 	dNum := num.ToDynamoDB()

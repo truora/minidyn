@@ -130,6 +130,35 @@ func (c *Client) DescribeTable(ctx context.Context, input *DescribeTableInput) (
 	return &DescribeTableOutput{Table: mapTableDescriptionToDDB(table.Description(tableName))}, nil
 }
 
+// ClearTable removes all data from a specific table, including its indexes.
+func (c *Client) ClearTable(tableName string) error {
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	table.Clear()
+
+	for _, index := range table.Indexes {
+		index.Clear()
+	}
+
+	return nil
+}
+
+// Reset removes all tables and their indexes from the in-memory client.
+func (c *Client) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for name := range c.tables {
+		delete(c.tables, name)
+	}
+}
+
 // PutItem inserts or replaces an item.
 func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutput, error) {
 	c.mu.Lock()

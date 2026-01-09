@@ -39,3 +39,23 @@ func (s *Server) EmulateFailure(condition FailureCondition) {
 
 	s.client.setFailureCondition(emulatingErrors[condition])
 }
+
+// ClearTable removes all data from a table and its indexes using the in-memory client.
+func (s *Server) ClearTable(tableName string) error {
+	if s == nil || s.client == nil {
+		return errors.New("server not initialized")
+	}
+
+	return s.client.ClearTable(tableName)
+}
+
+// Reset removes all tables and indexes from the in-memory client.
+func (s *Server) Reset() error {
+	if s == nil || s.client == nil {
+		return errors.New("server not initialized")
+	}
+
+	s.client.Reset()
+
+	return nil
+}

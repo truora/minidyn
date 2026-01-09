@@ -152,6 +152,139 @@ func TestServerQueryGSIWithSDKv2(t *testing.T) {
 	require.Len(t, qOut.Items, 2)
 }
 
+func TestServerClearTable(t *testing.T) {
+	c := require.New(t)
+	srv := NewServer()
+	ctx := context.Background()
+	tableName := "pokemons"
+
+	_, err := srv.client.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String(tableName),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("type"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{
+			{
+				IndexName: aws.String("by-type"),
+				KeySchema: []ddbtypes.KeySchemaElement{
+					{AttributeName: aws.String("type"), KeyType: ddbtypes.KeyTypeHash},
+					{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeRange},
+				},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			},
+		},
+	})
+	c.NoError(err)
+
+	_, err = srv.client.PutItem(ctx, &PutItemInput{
+		TableName: aws.String(tableName),
+		Item: map[string]*AttributeValue{
+			"id":   {S: aws.String("001")},
+			"type": {S: aws.String("grass")},
+			"name": {S: aws.String("Bulbasaur")},
+		},
+	})
+	c.NoError(err)
+
+	getOut, err := srv.client.GetItem(ctx, &GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*AttributeValue{
+			"id": {S: aws.String("001")},
+		},
+	})
+	c.NoError(err)
+	c.Equal("Bulbasaur", aws.ToString(getOut.Item["name"].S))
+
+	queryOut, err := srv.client.Query(ctx, &QueryInput{
+		TableName: aws.String(tableName),
+		IndexName: aws.String("by-type"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
+		},
+		ExpressionAttributeValues: map[string]*AttributeValue{
+			":type": {S: aws.String("grass")},
+		},
+		KeyConditionExpression: aws.String("#type = :type"),
+	})
+	c.NoError(err)
+	c.Len(queryOut.Items, 1)
+
+	err = srv.ClearTable(tableName)
+	c.NoError(err)
+
+	getOut, err = srv.client.GetItem(ctx, &GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*AttributeValue{
+			"id": {S: aws.String("001")},
+		},
+	})
+	c.NoError(err)
+	c.Empty(getOut.Item)
+
+	queryOut, err = srv.client.Query(ctx, &QueryInput{
+		TableName: aws.String(tableName),
+		IndexName: aws.String("by-type"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
+		},
+		ExpressionAttributeValues: map[string]*AttributeValue{
+			":type": {S: aws.String("grass")},
+		},
+		KeyConditionExpression: aws.String("#type = :type"),
+	})
+	c.NoError(err)
+	c.Empty(queryOut.Items)
+}
+
+func TestServerReset(t *testing.T) {
+	c := require.New(t)
+	srv := NewServer()
+	ctx := context.Background()
+
+	// create table with GSI and data
+	_, err := srv.client.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String("pokemons"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("type"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{
+			{
+				IndexName: aws.String("by-type"),
+				KeySchema: []ddbtypes.KeySchemaElement{
+					{AttributeName: aws.String("type"), KeyType: ddbtypes.KeyTypeHash},
+					{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeRange},
+				},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	c.NoError(err)
+
+	_, err = srv.client.PutItem(ctx, &PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]*AttributeValue{
+			"id":   {S: aws.String("001")},
+			"type": {S: aws.String("grass")},
+		},
+	})
+	c.NoError(err)
+	c.Equal(1, len(srv.client.tables))
+
+	err = srv.Reset()
+	c.NoError(err)
+	c.Empty(srv.client.tables)
+}
+
 func TestServerConditionalPutFailsWithSDKv2(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

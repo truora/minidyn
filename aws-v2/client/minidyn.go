@@ -25,6 +25,7 @@ var (
 	// emulatedInternalServeError represents the error for dynamodb internal server error
 	emulatedInternalServeError = types.InternalServerError{Message: aws.String("emulated error")}
 	// ErrForcedFailure when the error is forced
+	//
 	// Deprecated: use EmulateFailure instead
 	ErrForcedFailure = errors.New("forced failure response")
 

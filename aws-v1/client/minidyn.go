@@ -25,6 +25,7 @@ var (
 	// emulatedInternalServeError represents the error for dynamodb internal server error
 	emulatedInternalServeError = awserr.New(dynamodb.ErrCodeInternalServerError, "emulated error", nil)
 	// ErrForcedFailure when the error is forced
+	//
 	// Deprecated: use EmulateFailure instead
 	ErrForcedFailure = errors.New("forced failure response")
 

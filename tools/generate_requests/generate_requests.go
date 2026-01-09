@@ -42,6 +42,7 @@ type generated struct {
 
 func main() {
 	out := flag.String("out", "server/requests.go", "output file path for generated requests")
+
 	flag.Parse()
 
 	if err := run(*out); err != nil {

@@ -24,6 +24,9 @@ var (
 	// ErrForcedFailure when the error is forced (deprecated).
 	ErrForcedFailure = errors.New("forced failure response")
 
+	// ErrServerNotInitialized when the server is not initialized
+	ErrServerNotInitialized = errors.New("server not initialized")
+
 	emulatingErrors = map[FailureCondition]error{
 		FailureConditionNone:                nil,
 		FailureConditionInternalServerError: emulatedInternalServerError,
@@ -43,16 +46,27 @@ func (s *Server) EmulateFailure(condition FailureCondition) {
 // ClearTable removes all data from a table and its indexes using the in-memory client.
 func (s *Server) ClearTable(tableName string) error {
 	if s == nil || s.client == nil {
-		return errors.New("server not initialized")
+		return ErrServerNotInitialized
 	}
 
 	return s.client.ClearTable(tableName)
 }
 
+// ClearAllTables removes all data from every table and its indexes using the in-memory client.
+func (s *Server) ClearAllTables() error {
+	if s == nil || s.client == nil {
+		return ErrServerNotInitialized
+	}
+
+	s.client.ClearAllTables()
+
+	return nil
+}
+
 // Reset removes all tables and indexes from the in-memory client.
 func (s *Server) Reset() error {
 	if s == nil || s.client == nil {
-		return errors.New("server not initialized")
+		return ErrServerNotInitialized
 	}
 
 	s.client.Reset()

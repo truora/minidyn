@@ -149,6 +149,20 @@ func (c *Client) ClearTable(tableName string) error {
 	return nil
 }
 
+// ClearAllTables removes all data from every table and its indexes.
+func (c *Client) ClearAllTables() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, table := range c.tables {
+		table.Clear()
+
+		for _, index := range table.Indexes {
+			index.Clear()
+		}
+	}
+}
+
 // Reset removes all tables and their indexes from the in-memory client.
 func (c *Client) Reset() {
 	c.mu.Lock()

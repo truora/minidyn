@@ -241,6 +241,103 @@ func TestServerClearTable(t *testing.T) {
 	c.Empty(queryOut.Items)
 }
 
+func TestServerClearAllTables(t *testing.T) {
+	c := require.New(t)
+	srv := NewServer()
+	ctx := context.Background()
+
+	_, err := srv.client.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String("pokemons"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("type"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{
+			{
+				IndexName: aws.String("by-type"),
+				KeySchema: []ddbtypes.KeySchemaElement{
+					{AttributeName: aws.String("type"), KeyType: ddbtypes.KeyTypeHash},
+					{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeRange},
+				},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	c.NoError(err)
+
+	_, err = srv.client.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String("trainers"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	c.NoError(err)
+
+	_, err = srv.client.PutItem(ctx, &PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]*AttributeValue{
+			"id":   {S: aws.String("001")},
+			"type": {S: aws.String("grass")},
+			"name": {S: aws.String("Bulbasaur")},
+		},
+	})
+	c.NoError(err)
+
+	_, err = srv.client.PutItem(ctx, &PutItemInput{
+		TableName: aws.String("trainers"),
+		Item: map[string]*AttributeValue{
+			"id":   {S: aws.String("ash")},
+			"name": {S: aws.String("Ash Ketchum")},
+		},
+	})
+	c.NoError(err)
+
+	err = srv.ClearAllTables()
+	c.NoError(err)
+
+	c.Len(srv.client.tables, 2)
+
+	getOut, err := srv.client.GetItem(ctx, &GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]*AttributeValue{
+			"id": {S: aws.String("001")},
+		},
+	})
+	c.NoError(err)
+	c.Empty(getOut.Item)
+
+	queryOut, err := srv.client.Query(ctx, &QueryInput{
+		TableName: aws.String("pokemons"),
+		IndexName: aws.String("by-type"),
+		ExpressionAttributeNames: map[string]string{
+			"#type": "type",
+		},
+		ExpressionAttributeValues: map[string]*AttributeValue{
+			":type": {S: aws.String("grass")},
+		},
+		KeyConditionExpression: aws.String("#type = :type"),
+	})
+	c.NoError(err)
+	c.Empty(queryOut.Items)
+
+	getOut, err = srv.client.GetItem(ctx, &GetItemInput{
+		TableName: aws.String("trainers"),
+		Key: map[string]*AttributeValue{
+			"id": {S: aws.String("ash")},
+		},
+	})
+	c.NoError(err)
+	c.Empty(getOut.Item)
+}
+
 func TestServerReset(t *testing.T) {
 	c := require.New(t)
 	srv := NewServer()

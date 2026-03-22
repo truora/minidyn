@@ -40,7 +40,7 @@ func newTestDynamoClient(t *testing.T, url string) *dynamodb.Client {
 		config.WithRegion("us-east-1"),
 		config.WithEndpointResolverWithOptions(
 			aws.EndpointResolverWithOptionsFunc(
-				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				func(service, region string, options ...any) (aws.Endpoint, error) {
 					if service == dynamodb.ServiceID {
 						return resolver.ResolveEndpoint(region, dynamodb.EndpointResolverOptions{})
 					}
@@ -501,7 +501,7 @@ func TestServerScanWithSDKv2(t *testing.T) {
 	cli := newTestDynamoClient(t, ts.URL)
 
 	makeBasicTable(t, cli, "pokemons", "id")
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		id := aws.String(fmt.Sprintf("%d", i))
 		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
 			TableName: aws.String("pokemons"),
@@ -827,7 +827,7 @@ func TestServerScanFiltersAndErrors(t *testing.T) {
 	cli := newTestDynamoClient(t, ts.URL)
 
 	makeBasicTable(t, cli, "pokemons", "id")
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
 			TableName: aws.String("pokemons"),
 			Item: map[string]ddbtypes.AttributeValue{

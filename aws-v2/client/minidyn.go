@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"maps"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -193,9 +194,7 @@ func generateAddTableInput(tableName, hashKey, rangeKey string) *dynamodb.Create
 
 func copyItem(item map[string]types.AttributeValue) map[string]types.AttributeValue {
 	copy := map[string]types.AttributeValue{}
-	for key, val := range item {
-		copy[key] = val
-	}
+	maps.Copy(copy, item)
 
 	return copy
 }

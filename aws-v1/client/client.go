@@ -431,7 +431,7 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 	indexName := aws.StringValue(input.IndexName)
 
 	if input.ScanIndexForward == nil {
-		input.ScanIndexForward = aws.Bool(true)
+		input.ScanIndexForward = new(true)
 	}
 
 	items, lastKey := table.SearchData(core.QueryInput{
@@ -539,7 +539,7 @@ func (fd *Client) BatchWriteItem(input *dynamodb.BatchWriteItemInput) (*dynamodb
 
 	for table, reqs := range input.RequestItems {
 		for _, req := range reqs {
-			err := executeBatchWriteRequest(fd, aws.String(table), req)
+			err := executeBatchWriteRequest(fd, new(table), req)
 
 			err = handleBatchWriteRequestError(table, req, unprocessed, err)
 			if err != nil {

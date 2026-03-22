@@ -266,12 +266,12 @@ func mapDynamoToTypesItem(item dynamodbtypes.AttributeValue) *types.Item {
 
 	itemS, ok := item.(*dynamodbtypes.AttributeValueMemberS)
 	if ok {
-		return &types.Item{S: types.ToString(itemS.Value)}
+		return &types.Item{S: new(itemS.Value)}
 	}
 
 	itemN, ok := item.(*dynamodbtypes.AttributeValueMemberN)
 	if ok {
-		return &types.Item{N: types.ToString(itemN.Value)}
+		return &types.Item{N: new(itemN.Value)}
 	}
 
 	itemNS, ok := item.(*dynamodbtypes.AttributeValueMemberNS)

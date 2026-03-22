@@ -54,8 +54,8 @@ func mapKeySchemaToDynamodb(ks []types.KeySchemaElement) []*dynamodb.KeySchemaEl
 	keySchema := make([]*dynamodb.KeySchemaElement, len(ks))
 	for i, ks := range ks {
 		keySchema[i] = &dynamodb.KeySchemaElement{
-			AttributeName: aws.String(ks.AttributeName),
-			KeyType:       aws.String(ks.KeyType),
+			AttributeName: new(ks.AttributeName),
+			KeyType:       new(ks.KeyType),
 		}
 	}
 
@@ -157,8 +157,8 @@ func mapLocalSecondaryIndexDescriptionToDynamodb(input []types.LocalSecondaryInd
 
 func mapTableDescriptionToDynamodb(td *types.TableDescription) *dynamodb.TableDescription {
 	tableDescription := &dynamodb.TableDescription{
-		TableName:              aws.String(td.TableName),
-		ItemCount:              aws.Int64(td.ItemCount),
+		TableName:              new(td.TableName),
+		ItemCount:              new(td.ItemCount),
 		KeySchema:              mapKeySchemaToDynamodb(td.KeySchema),
 		GlobalSecondaryIndexes: mapGlobalSecondaryIndexDescriptionToDynamodb(td.GlobalSecondaryIndexes),
 		LocalSecondaryIndexes:  mapLocalSecondaryIndexDescriptionToDynamodb(td.LocalSecondaryIndexes),

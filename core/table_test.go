@@ -24,9 +24,9 @@ type pokemon struct {
 
 func createPokemon(creature pokemon) map[string]*types.Item {
 	item := map[string]*types.Item{
-		"id":   {S: types.ToString(creature.ID)},
-		"type": {S: types.ToString(creature.Type)},
-		"name": {S: types.ToString(creature.Name)},
+		"id":   {S: new(creature.ID)},
+		"type": {S: new(creature.Type)},
+		"name": {S: new(creature.Name)},
 	}
 
 	return item
@@ -85,7 +85,7 @@ func createGlobalSecondaryIndex() *types.GlobalSecondaryIndexUpdate {
 func createLocalSecondaryIndex() []*types.LocalSecondaryIndex {
 	return []*types.LocalSecondaryIndex{
 		{
-			IndexName: types.ToString("indexname"),
+			IndexName: new("indexname"),
 		},
 	}
 }
@@ -128,14 +128,14 @@ func TestApplyIndexChange(t *testing.T) {
 	err := newTable.ApplyIndexChange(globalSecondaryIndex)
 	c.Contains(err.Error(), "No provisioned throughput specified for the global secondary index")
 
-	newTable.BillingMode = types.ToString("PAY_PER_REQUEST")
+	newTable.BillingMode = new("PAY_PER_REQUEST")
 	err = newTable.ApplyIndexChange(globalSecondaryIndex)
 	c.Contains(err.Error(), "No Hash Key specified in schema.")
 
 	newTable, err = createPokemonTable()
 	c.NoError(err)
 
-	newTable.BillingMode = types.ToString("PAY_PER_REQUEST")
+	newTable.BillingMode = new("PAY_PER_REQUEST")
 	createTableInput := &types.CreateTableInput{
 		KeySchema: []*types.KeySchemaElement{
 			{
@@ -155,7 +155,7 @@ func TestApplyIndexChange(t *testing.T) {
 				KeyType:       "HASH",
 			},
 		},
-		IndexName: types.ToString("indexname"),
+		IndexName: new("indexname"),
 	}
 
 	err = newTable.ApplyIndexChange(globalSecondaryIndex)
@@ -164,7 +164,7 @@ func TestApplyIndexChange(t *testing.T) {
 	globalSecondaryIndex.Create = nil
 
 	globalSecondaryIndex.Delete = &types.DeleteGlobalSecondaryIndexAction{
-		IndexName: types.ToString("indexname"),
+		IndexName: new("indexname"),
 	}
 
 	err = newTable.ApplyIndexChange(globalSecondaryIndex)
@@ -177,7 +177,7 @@ func TestApplyIndexChange(t *testing.T) {
 	globalSecondaryIndex.Delete = nil
 
 	globalSecondaryIndex.Update = &types.UpdateGlobalSecondaryIndexAction{
-		IndexName: types.ToString("indexname"),
+		IndexName: new("indexname"),
 	}
 
 	err = newTable.ApplyIndexChange(globalSecondaryIndex)
@@ -217,7 +217,7 @@ func TestCreatePrimaryIndex(t *testing.T) {
 	err = newTable.CreatePrimaryIndex(createTableInput)
 	c.Contains(err.Error(), "No provisioned throughput specified for the table")
 
-	newTable.BillingMode = types.ToString("PAY_PER_REQUEST")
+	newTable.BillingMode = new("PAY_PER_REQUEST")
 	err = newTable.CreatePrimaryIndex(createTableInput)
 	c.NoError(err)
 }
@@ -311,18 +311,18 @@ func TestGetKey(t *testing.T) {
 	newTable.AttributesDef = map[string]string{"HASH": "S", "range": "S"}
 	newTable.KeySchema = keySchema{"range", "HASH", false}
 
-	k, err := newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "range": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	k, err := newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
 	c.NoError(err)
 	c.Equal("range.HASH", k)
 
-	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
 	c.EqualError(err, `invalid attribute value type; field "HASH"`)
 
-	_, err = newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	_, err = newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
 	c.EqualError(err, `invalid attribute value type; field "range"`)
 
 	newTable.KeySchema = keySchema{"", "", true}
-	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: types.ToString("range")}, "HASH": {S: types.ToString("HASH")}})
+	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
 	c.NoError(err)
 }
 
@@ -383,8 +383,8 @@ func TestDeleteItem(t *testing.T) {
 
 	inp := &types.DeleteItemInput{
 		Key: map[string]*types.Item{
-			"id":   {S: types.ToString("002")},
-			"name": {S: types.ToString("Ivysaur")},
+			"id":   {S: new("002")},
+			"name": {S: new("Ivysaur")},
 		},
 		TableName: &newTable.Name,
 	}
@@ -399,7 +399,7 @@ func TestDeleteItem(t *testing.T) {
 
 	inp = &types.DeleteItemInput{
 		Key: map[string]*types.Item{
-			"id": {S: types.ToString("123")},
+			"id": {S: new("123")},
 		},
 		TableName: &newTable.Name,
 	}
@@ -449,8 +449,8 @@ func TestDeleteIndex(t *testing.T) {
 
 	inp := &types.DeleteItemInput{
 		Key: map[string]*types.Item{
-			"id":   {S: types.ToString("002")},
-			"name": {S: types.ToString("Ivysaur")},
+			"id":   {S: new("002")},
+			"name": {S: new("Ivysaur")},
 		},
 		TableName: &newTable.Name,
 	}
@@ -491,7 +491,7 @@ func TestSearchData(t *testing.T) {
 
 	queryInput = QueryInput{
 		ExpressionAttributeValues: map[string]*types.Item{
-			":id": {S: types.ToString("001")},
+			":id": {S: new("001")},
 		},
 	}
 
@@ -559,7 +559,7 @@ func TestUpdate(t *testing.T) {
 			"#id": "id",
 		},
 		ExpressionAttributeValues: map[string]*types.Item{
-			":id": {S: types.ToString("002")},
+			":id": {S: new("002")},
 		},
 		Key: item,
 	}
@@ -567,7 +567,7 @@ func TestUpdate(t *testing.T) {
 	_, err = newTable.Update(updateInput)
 	c.Contains(err.Error(), "invalid update expression")
 
-	updateInput.ConditionExpression = types.ToString("attribute_not_exists(#id)")
+	updateInput.ConditionExpression = new("attribute_not_exists(#id)")
 	updateInput.ReturnValuesOnConditionCheckFailure = aws.String("ALL_OLD")
 
 	_, err = newTable.Update(updateInput)
@@ -580,7 +580,7 @@ func TestUpdate(t *testing.T) {
 	c.Equal("grass", types.StringValue(checkErr.Item["type"].S))
 	c.Equal("Bulbasaur", types.StringValue(checkErr.Item["name"].S))
 
-	updateInput.ConditionExpression = types.ToString("attribute_exists(id)")
+	updateInput.ConditionExpression = new("attribute_exists(id)")
 	updateInput.UpdateExpression = "SET id = :id"
 
 	result, err := newTable.Update(updateInput)
@@ -596,9 +596,9 @@ func TestPutItem(t *testing.T) {
 	newTable := NewTable(tableName)
 
 	item := map[string]*types.Item{
-		"id":        {S: types.ToString("123")},
-		"name":      {S: types.ToString("Lili")},
-		"last_name": {S: types.ToString("Cruz")},
+		"id":        {S: new("123")},
+		"name":      {S: new("Lili")},
+		"last_name": {S: new("Cruz")},
 	}
 
 	input := &types.PutItemInput{
@@ -619,7 +619,7 @@ func TestPutItem(t *testing.T) {
 	}
 
 	input.ExpressionAttributeValues = map[string]*types.Item{
-		":id": {S: types.ToString("456")},
+		":id": {S: new("456")},
 	}
 
 	_, err = newTable.Put(input)
@@ -693,7 +693,7 @@ func TestInterpreterMatch(t *testing.T) {
 		Item:       item,
 		Attributes: map[string]*types.Item{
 			":id": {
-				S: types.ToString("001"),
+				S: new("001"),
 			},
 		},
 		ExpressionType: interpreter.ExpressionTypeConditional,
@@ -727,11 +727,11 @@ func TestMatchKey(t *testing.T) {
 
 	queryInput := QueryInput{
 		ExpressionAttributeValues: map[string]*types.Item{
-			":id": {S: types.ToString("001")},
+			":id": {S: new("001")},
 		},
 		KeyConditionExpression: "#id = :id",
 		FilterExpression:       "#id = :id",
-		ConditionExpression:    types.ToString("attribute_exists(id)"),
+		ConditionExpression:    new("attribute_exists(id)"),
 	}
 
 	expresionType, ok := newTable.matchKey(queryInput, item)
@@ -747,8 +747,8 @@ func TestSetAttributeDefinition(t *testing.T) {
 
 	newAttributesDef := []*types.AttributeDefinition{
 		{
-			AttributeName: types.ToString("name"),
-			AttributeType: types.ToString("type"),
+			AttributeName: new("name"),
+			AttributeType: new("type"),
 		},
 	}
 

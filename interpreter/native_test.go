@@ -12,16 +12,16 @@ var boolTrue = true
 func TestNativeMatch(t *testing.T) {
 	item := map[string]*types.Item{
 		"a": {
-			S: types.ToString("a"),
+			S: new("a"),
 		},
 		"n": {
-			N: types.ToString("1"),
+			N: new("1"),
 		},
 		"b": {
 			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: types.ToString("hello world"),
+			S: new("hello world"),
 		},
 	}
 
@@ -32,7 +32,7 @@ func TestNativeMatch(t *testing.T) {
 		ExpressionType: ExpressionTypeConditional,
 		Attributes: map[string]*types.Item{
 			":a": {
-				S: types.ToString("a"),
+				S: new("a"),
 			},
 		},
 	}
@@ -99,16 +99,16 @@ func TestAddMatcher(t *testing.T) {
 func TestNativeUpdate(t *testing.T) {
 	item := map[string]*types.Item{
 		"a": {
-			S: types.ToString("a"),
+			S: new("a"),
 		},
 		"n": {
-			N: types.ToString("1"),
+			N: new("1"),
 		},
 		"b": {
 			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: types.ToString("hello world"),
+			S: new("hello world"),
 		},
 	}
 
@@ -118,7 +118,7 @@ func TestNativeUpdate(t *testing.T) {
 		Item:       item,
 		Attributes: map[string]*types.Item{
 			":b": {
-				S: types.ToString("foo"),
+				S: new("foo"),
 			},
 		},
 	}

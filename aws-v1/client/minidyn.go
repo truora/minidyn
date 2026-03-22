@@ -2,8 +2,8 @@ package client
 
 import (
 	"errors"
+	"maps"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
@@ -79,40 +79,40 @@ func AddTable(client dynamodbiface.DynamoDBAPI, tableName, partitionKey, rangeKe
 func AddIndex(client dynamodbiface.DynamoDBAPI, tableName, indexName, partitionKey, rangeKey string) error {
 	keySchema := []*dynamodb.KeySchemaElement{
 		{
-			AttributeName: aws.String(partitionKey),
-			KeyType:       aws.String("HASH"),
+			AttributeName: new(partitionKey),
+			KeyType:       new("HASH"),
 		},
 	}
 
 	attributes := []*dynamodb.AttributeDefinition{
 		{
-			AttributeName: aws.String(partitionKey),
-			AttributeType: aws.String("S"),
+			AttributeName: new(partitionKey),
+			AttributeType: new("S"),
 		},
 	}
 
 	if rangeKey != "" {
 		keySchema = append(keySchema, &dynamodb.KeySchemaElement{
-			AttributeName: aws.String(rangeKey),
-			KeyType:       aws.String("RANGE"),
+			AttributeName: new(rangeKey),
+			KeyType:       new("RANGE"),
 		})
 
 		attributes = append(attributes, &dynamodb.AttributeDefinition{
-			AttributeName: aws.String(rangeKey),
-			AttributeType: aws.String("S"),
+			AttributeName: new(rangeKey),
+			AttributeType: new("S"),
 		})
 	}
 
 	input := &dynamodb.UpdateTableInput{
 		AttributeDefinitions: attributes,
-		TableName:            aws.String(tableName),
+		TableName:            new(tableName),
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
 			{
 				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
-					IndexName: aws.String(indexName),
+					IndexName: new(indexName),
 					KeySchema: keySchema,
 					Projection: &dynamodb.Projection{
-						ProjectionType: aws.String("ALL"),
+						ProjectionType: new("ALL"),
 					},
 				},
 			},
@@ -154,18 +154,18 @@ func generateAddTableInput(tableName, hashKey, rangeKey string) *dynamodb.Create
 	input := &dynamodb.CreateTableInput{
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{
-				AttributeName: aws.String(hashKey),
-				AttributeType: aws.String("S"),
+				AttributeName: new(hashKey),
+				AttributeType: new("S"),
 			},
 		},
-		BillingMode: aws.String("PAY_PER_REQUEST"),
+		BillingMode: new("PAY_PER_REQUEST"),
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
-				AttributeName: aws.String(hashKey),
-				KeyType:       aws.String("HASH"),
+				AttributeName: new(hashKey),
+				KeyType:       new("HASH"),
 			},
 		},
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
 			ReadCapacityUnits:  &cunit,
 			WriteCapacityUnits: &cunit,
@@ -175,15 +175,15 @@ func generateAddTableInput(tableName, hashKey, rangeKey string) *dynamodb.Create
 	if rangeKey != "" {
 		input.AttributeDefinitions = append(input.AttributeDefinitions,
 			&dynamodb.AttributeDefinition{
-				AttributeName: aws.String(rangeKey),
-				AttributeType: aws.String("S"),
+				AttributeName: new(rangeKey),
+				AttributeType: new("S"),
 			},
 		)
 
 		input.KeySchema = append(input.KeySchema,
 			&dynamodb.KeySchemaElement{
-				AttributeName: aws.String(rangeKey),
-				KeyType:       aws.String("RANGE"),
+				AttributeName: new(rangeKey),
+				KeyType:       new("RANGE"),
 			},
 		)
 	}
@@ -193,9 +193,7 @@ func generateAddTableInput(tableName, hashKey, rangeKey string) *dynamodb.Create
 
 func copyItem(item map[string]*dynamodb.AttributeValue) map[string]*dynamodb.AttributeValue {
 	copy := map[string]*dynamodb.AttributeValue{}
-	for key, val := range item {
-		copy[key] = val
-	}
+	maps.Copy(copy, item)
 
 	return copy
 }

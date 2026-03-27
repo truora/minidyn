@@ -15,6 +15,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
+	mintypes "github.com/truora/minidyn/types"
 )
 
 const (
@@ -260,13 +261,17 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 
 	// support conditional writes
 	if input.ConditionExpression != nil {
-		items, _ := table.SearchData(core.QueryInput{
+		items, _, serr := table.SearchData(core.QueryInput{
 			Index:                     core.PrimaryIndexName,
 			ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
 			Aliases:                   input.ExpressionAttributeNames,
 			Limit:                     aws.ToInt64(aws.Int64(1)),
 			ConditionExpression:       input.ConditionExpression,
 		})
+		if serr != nil {
+			return nil, mapKnownError(serr)
+		}
+
 		if len(items) == 0 {
 			return &dynamodb.DeleteItemOutput{}, &types.ConditionalCheckFailedException{Message: aws.String(core.ErrConditionalRequestFailed.Error())}
 		}
@@ -340,7 +345,12 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 		return nil, mapKnownError(err)
 	}
 
-	key, err := table.KeySchema.GetKey(table.AttributesDef, mapDynamoToTypesMapItem(input.Key))
+	keyMap := mapDynamoToTypesMapItem(input.Key)
+	if vErr := mintypes.ValidateItemMap(keyMap); vErr != nil {
+		return nil, mapKnownError(mintypes.NewError("ValidationException", vErr.Error(), nil))
+	}
+
+	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
 	if err != nil {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
@@ -379,7 +389,10 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 		input.ScanIndexForward = aws.Bool(true)
 	}
 
-	items, lastKey := table.SearchData(mapDynamoToTypesQueryInput(input, indexName))
+	items, lastKey, err := table.SearchData(mapDynamoToTypesQueryInput(input, indexName))
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
 
 	count := len(items)
 	if count > math.MaxInt32 {
@@ -416,7 +429,7 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 
 	indexName := aws.ToString(input.IndexName)
 
-	items, lastKey := table.SearchData(core.QueryInput{
+	items, lastKey, err := table.SearchData(core.QueryInput{
 		Index:                     indexName,
 		ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
 		Aliases:                   input.ExpressionAttributeNames,
@@ -426,6 +439,9 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		ScanIndexForward:          true,
 		Scan:                      true,
 	})
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
 
 	count := len(items)
 	if count > math.MaxInt32 {

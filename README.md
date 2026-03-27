@@ -142,6 +142,31 @@ go run ./tools/generate_requests
 
 This will rewrite `server/requests.go` based on the AWS SDK v2 DynamoDB input types, replacing `AttributeValue` interfaces with the concrete JSON-friendly `AttributeValue` defined in `server/types.go`.
 
+### E2E tests (minidyn vs DynamoDB Local)
+
+The `e2e` package runs the same AWS SDK v2 calls against **minidyn** (`httptest` + `server.NewServer`) and **DynamoDB Local** in Docker ([testcontainers-go](https://github.com/testcontainers/testcontainers-go)), then compares results.
+
+**Prerequisites:** a working Docker engine (`docker info` must succeed), since DynamoDB Local is started as `amazon/dynamodb-local`.
+
+From the repository root:
+
+```bash
+go test ./e2e/... -v
+```
+
+If Docker is unavailable, those tests **skip** after `docker info` fails (so the comparison against DynamoDB Local is not run).
+
+#### Install and run `amazon/dynamodb-local` yourself
+
+To run the same [official image](https://hub.docker.com/r/amazon/dynamodb-local) outside of the Go tests (for manual checks or any AWS SDK client):
+
+```bash
+docker pull amazon/dynamodb-local:latest
+docker run --rm -p 8000:8000 amazon/dynamodb-local:latest
+```
+
+DynamoDB Local listens on port **8000**. Point your client at `http://localhost:8000` with a real region (for example `us-east-1`) and any credentials; signing still applies, but the local server does not validate them.
+
 ### What to do when the interpreter does not work properly?
 
 When it happens you can override the intepretation using like this:

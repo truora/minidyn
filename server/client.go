@@ -363,15 +363,17 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 	}, nil
 }
 
-// BatchWriteItem handles batch put/delete requests and returns unprocessed items on retriable errors.
+// BatchWriteItem runs put and delete sub-requests in order. Sub-request failures that look
+// retriable (InternalServerError, ProvisionedThroughputExceededException) are appended to
+// UnprocessedItems and processing continues, matching DynamoDB batch semantics. Any other
+// error fails the whole batch.
+//
+// With EmulateFailure(FailureConditionInternalServerError), each sub-request fails that way,
+// so those writes appear as unprocessed until you call EmulateFailure(FailureConditionNone).
 //
 //gocyclo:ignore
 //gocognit:ignore
 func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput) (*BatchWriteItemOutput, error) {
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
-	}
-
 	unprocessed := map[string][]WriteRequest{}
 
 	for tableName, reqs := range input.RequestItems {

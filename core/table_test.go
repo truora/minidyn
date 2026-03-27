@@ -787,6 +787,86 @@ func TestUpdate(t *testing.T) {
 	newTable.Clear()
 }
 
+func TestUpdateMultiClauseExpression(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+	item["lvl"] = &types.Item{N: new("1")}
+
+	input := &types.PutItemInput{
+		Item:      item,
+		TableName: &newTable.Name,
+	}
+
+	_, err = newTable.Put(input)
+	c.NoError(err)
+
+	updateInput := &types.UpdateItemInput{
+		Key: item,
+		ExpressionAttributeNames: map[string]string{
+			"#n": "name",
+		},
+		ExpressionAttributeValues: map[string]*types.Item{
+			":new": {S: new("Ivysaur")},
+			":one": {N: new("1")},
+		},
+		UpdateExpression: "SET #n = :new ADD lvl :one",
+	}
+
+	result, err := newTable.Update(updateInput)
+	c.NoError(err)
+	c.Equal("Ivysaur", types.StringValue(result["name"].S))
+	c.Equal("2", types.StringValue(result["lvl"].N))
+
+	newTable.Clear()
+}
+
+func TestUpdateDuplicateClauseKeywordError(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+
+	input := &types.PutItemInput{
+		Item:      item,
+		TableName: &newTable.Name,
+	}
+
+	_, err = newTable.Put(input)
+	c.NoError(err)
+
+	updateInput := &types.UpdateItemInput{
+		Key: item,
+		ExpressionAttributeNames: map[string]string{
+			"#n": "name",
+		},
+		ExpressionAttributeValues: map[string]*types.Item{
+			":a": {S: new("x")},
+			":b": {S: new("y")},
+		},
+		UpdateExpression: "SET #n = :a SET name = :b",
+	}
+
+	_, err = newTable.Update(updateInput)
+	c.Error(err)
+	c.ErrorContains(err, "duplicate update clause keyword")
+
+	newTable.Clear()
+}
+
 func TestPutItem(t *testing.T) {
 	c := require.New(t)
 

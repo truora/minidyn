@@ -3,7 +3,6 @@ package types
 import (
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/private/protocol"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +17,7 @@ func TestConditionalCheckFailedExceptionMethods(t *testing.T) {
 			RequestID:  "req-abc",
 		},
 		Item: map[string]*Item{
-			"id": {S: aws.String("1")},
+			"id": {S: new("1")},
 		},
 	}
 
@@ -40,7 +39,7 @@ func TestConditionalCheckFailedExceptionMethods(t *testing.T) {
 func TestToStringAndStringValue(t *testing.T) {
 	t.Parallel()
 
-	p := ToString("x")
+	p := new("x")
 	require.NotNil(t, p)
 	require.Equal(t, "x", *p)
 	require.Equal(t, "x", StringValue(p))

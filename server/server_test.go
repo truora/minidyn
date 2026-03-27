@@ -655,9 +655,9 @@ func TestServerGetItemAttributeNameValidation(t *testing.T) {
 			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
 		},
 		ExpressionAttributeNames: map[string]string{
-			"#name-1": "name",
+			"#n": "name",
 		},
-		ProjectionExpression: aws.String("#name-1"),
+		ProjectionExpression: aws.String("#n"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, "pikachu", out.Item["name"].(*ddbtypes.AttributeValueMemberS).Value)

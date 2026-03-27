@@ -15,7 +15,7 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
-	mintypes "github.com/truora/minidyn/types"
+	mtypes "github.com/truora/minidyn/types"
 )
 
 const (
@@ -346,8 +346,8 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 	}
 
 	keyMap := mapDynamoToTypesMapItem(input.Key)
-	if vErr := mintypes.ValidateItemMap(keyMap); vErr != nil {
-		return nil, mapKnownError(mintypes.NewError("ValidationException", vErr.Error(), nil))
+	if vErr := mtypes.ValidateItemMap(keyMap); vErr != nil {
+		return nil, mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
 	}
 
 	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
@@ -355,10 +355,15 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
 
-	item := copyItem(mapTypesToDynamoMapItem(table.Data[key]))
+	stored := table.Data[key]
+
+	item, err := getItemAttributesForOutput(table, stored, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
+	if err != nil {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+	}
 
 	output := &dynamodb.GetItemOutput{
-		Item: item,
+		Item: copyItem(item),
 	}
 
 	return output, nil
@@ -436,6 +441,7 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		Limit:                     int64(aws.ToInt32(input.Limit)),
 		ExclusiveStartKey:         mapDynamoToTypesMapItem(input.ExclusiveStartKey),
 		FilterExpression:          aws.ToString(input.FilterExpression),
+		ProjectionExpression:      aws.ToString(input.ProjectionExpression),
 		ScanIndexForward:          true,
 		Scan:                      true,
 	})
@@ -662,6 +668,23 @@ func (fd *Client) getTable(tableName string) (*core.Table, error) {
 	}
 
 	return table, nil
+}
+
+func getItemAttributesForOutput(table *core.Table, stored map[string]*mtypes.Item, projectionExpr string, aliases map[string]string) (map[string]types.AttributeValue, error) {
+	if projectionExpr == "" {
+		return mapTypesToDynamoMapItem(stored), nil
+	}
+
+	projected, err := table.LangInterpreter.Project(interpreter.ProjectInput{
+		Expression: projectionExpr,
+		Item:       stored,
+		Aliases:    aliases,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return mapTypesToDynamoMapItem(projected), nil
 }
 
 func validateExpressionAttributes(exprNames map[string]string, exprValues map[string]types.AttributeValue, genericExpressions ...string) error {

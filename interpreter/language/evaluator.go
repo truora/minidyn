@@ -98,6 +98,11 @@ func isUndefined(obj Object) bool {
 	return nullObj.IsUndefined
 }
 
+// IsUndefinedObject reports whether obj is the undefined projection / null sentinel.
+func IsUndefinedObject(obj Object) bool {
+	return isUndefined(obj)
+}
+
 func isComparable(obj Object) bool {
 	return comparableTypes[obj.Type()] || isUndefined(obj)
 }

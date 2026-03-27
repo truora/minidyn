@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/logging"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +44,7 @@ func newTestDynamoClient(t *testing.T, url string) *dynamodb.Client {
 		config.WithRegion("us-east-1"),
 		config.WithEndpointResolverWithOptions(
 			aws.EndpointResolverWithOptionsFunc(
-				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				func(service, region string, options ...any) (aws.Endpoint, error) {
 					if service == dynamodb.ServiceID {
 						return resolver.ResolveEndpoint(region, dynamodb.EndpointResolverOptions{})
 					}
@@ -501,7 +505,7 @@ func TestServerScanWithSDKv2(t *testing.T) {
 	cli := newTestDynamoClient(t, ts.URL)
 
 	makeBasicTable(t, cli, "pokemons", "id")
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		id := aws.String(fmt.Sprintf("%d", i))
 		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
 			TableName: aws.String("pokemons"),
@@ -821,13 +825,449 @@ func TestServerQueryPaginationAndFilters(t *testing.T) {
 	require.Len(t, out.Items, 0) // because start key advanced
 }
 
+func TestServerServeHTTPMethodNotAllowed(t *testing.T) {
+	srv := NewServer()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+}
+
+func TestServerServeHTTPUnsupportedOperation(t *testing.T) {
+	srv := NewServer()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}"))
+	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.UnknownOperation")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+type errCloseReader struct{ *strings.Reader }
+
+func (e *errCloseReader) Close() error { return errors.New("close failed") }
+
+var _ io.ReadCloser = (*errCloseReader)(nil)
+
+func TestServerServeHTTPBodyCloseError(t *testing.T) {
+	srv := NewServer()
+	req := httptest.NewRequest(http.MethodPost, "/", &errCloseReader{Reader: strings.NewReader("{}")})
+	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.UnknownOperation")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestServerServeHTTPInvalidJSONBody(t *testing.T) {
+	srv := NewServer()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"TableName":`))
+	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.CreateTable")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+type failResponseWriter struct {
+	hdr  http.Header
+	code int
+}
+
+func (f *failResponseWriter) Header() http.Header {
+	if f.hdr == nil {
+		f.hdr = make(http.Header)
+	}
+	return f.hdr
+}
+
+func (f *failResponseWriter) WriteHeader(code int) {
+	f.code = code
+}
+
+func (f *failResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestServerServeHTTPJSONEncodeError(t *testing.T) {
+	srv := NewServer()
+	cli := srv.client
+	tableName := "encode-fail-table"
+	_, err := cli.CreateTable(context.Background(), &CreateTableInput{
+		TableName: aws.String(tableName),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		`{"TableName":"`+tableName+`"}`,
+	))
+	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.DescribeTable")
+	rec := &failResponseWriter{}
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusInternalServerError, rec.code)
+}
+
+func TestServerNilServerGuards(t *testing.T) {
+	var s *Server
+
+	s.EmulateFailure(FailureConditionNone)
+	require.ErrorIs(t, s.ClearTable("any"), ErrServerNotInitialized)
+	require.ErrorIs(t, s.ClearAllTables(), ErrServerNotInitialized)
+	require.ErrorIs(t, s.Reset(), ErrServerNotInitialized)
+}
+
+func TestServerEmulateFailureDeprecated(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	s.EmulateFailure(FailureConditionDeprecated)
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+	})
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "InternalFailure", apiErr.ErrorCode())
+	require.Contains(t, apiErr.ErrorMessage(), ErrForcedFailure.Error())
+
+	s.EmulateFailure(FailureConditionNone)
+	_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "2"},
+		},
+	})
+	require.NoError(t, err)
+}
+
+func TestServerCreateTableAlreadyExists(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.CreateTable(context.Background(), &dynamodb.CreateTableInput{
+		TableName: aws.String("pokemons"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	var inUse *ddbtypes.ResourceInUseException
+	require.ErrorAs(t, err, &inUse)
+}
+
+func TestServerPutItemMissingPartitionKeyValidation(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"name": &ddbtypes.AttributeValueMemberS{Value: "no-id"},
+		},
+	})
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "ValidationException", apiErr.ErrorCode())
+}
+
+func TestServerUpdateItemConditionalFailureReturnsAllOldItem(t *testing.T) {
+	// In-memory client: HTTP error responses only encode __type and message, so Item is
+	// not round-tripped through the SDK; mapTypesMapToDDBAttributeValue is exercised here.
+	srv := NewServer()
+	ctx := context.Background()
+
+	_, err := srv.client.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String("pokemons"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	_, err = srv.client.PutItem(ctx, &PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]*AttributeValue{
+			"id":   {S: aws.String("001")},
+			"name": {S: aws.String("Bulbasaur")},
+			"lvl":  {N: aws.String("5")},
+			"tags": {SS: []*string{aws.String("grass"), aws.String("poison")}},
+			"meta": {M: map[string]*AttributeValue{
+				"region": {S: aws.String("kanto")},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = srv.client.UpdateItem(ctx, &UpdateItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]*AttributeValue{
+			"id": {S: aws.String("001")},
+		},
+		ConditionExpression:                 aws.String("attribute_not_exists(#id)"),
+		UpdateExpression:                    aws.String("SET #lvl = :lvl"),
+		ReturnValues:                        ddbtypes.ReturnValueUpdatedNew,
+		ReturnValuesOnConditionCheckFailure: ddbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+		ExpressionAttributeNames: map[string]string{
+			"#id":  "id",
+			"#lvl": "lvl",
+		},
+		ExpressionAttributeValues: map[string]*AttributeValue{
+			":lvl": {N: aws.String("99")},
+		},
+	})
+
+	var cond *ddbtypes.ConditionalCheckFailedException
+	require.ErrorAs(t, err, &cond)
+	require.NotNil(t, cond.Item)
+	require.Equal(t, "001", cond.Item["id"].(*ddbtypes.AttributeValueMemberS).Value)
+	require.Equal(t, "Bulbasaur", cond.Item["name"].(*ddbtypes.AttributeValueMemberS).Value)
+	require.Equal(t, "5", cond.Item["lvl"].(*ddbtypes.AttributeValueMemberN).Value)
+	require.ElementsMatch(t, []string{"grass", "poison"}, cond.Item["tags"].(*ddbtypes.AttributeValueMemberSS).Value)
+	require.Equal(t, "kanto", cond.Item["meta"].(*ddbtypes.AttributeValueMemberM).Value["region"].(*ddbtypes.AttributeValueMemberS).Value)
+}
+
+func TestServerBatchWriteItemUnprocessedOnEmulatedInternalError(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	s.EmulateFailure(FailureConditionInternalServerError)
+
+	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "a"},
+				}}},
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "b"},
+				}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.UnprocessedItems["pokemons"], 2)
+
+	s.EmulateFailure(FailureConditionNone)
+
+	_, err = cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{
+					"id": &ddbtypes.AttributeValueMemberS{Value: "ok"},
+				}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+}
+
+func TestServerGetItemKeyValidationError(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"wrong": &ddbtypes.AttributeValueMemberS{Value: "x"},
+		},
+	})
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "ValidationException", apiErr.ErrorCode())
+}
+
+func TestServerDeleteItemMissingTable(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	_, err := cli.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String("nope"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+	})
+	var notFound *ddbtypes.ResourceNotFoundException
+	require.ErrorAs(t, err, &notFound)
+}
+
+func TestServerDeleteItemKeyValidationError(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"wrong": &ddbtypes.AttributeValueMemberS{Value: "x"},
+		},
+	})
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "ValidationException", apiErr.ErrorCode())
+}
+
+func TestServerDeleteItemEmulateInternalError(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	s.EmulateFailure(FailureConditionInternalServerError)
+
+	_, err := cli.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+	})
+	var internal *ddbtypes.InternalServerError
+	require.ErrorAs(t, err, &internal)
+
+	s.EmulateFailure(FailureConditionNone)
+}
+
+func TestServerDeleteItemWithExpressionAttributeNames(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+		ConditionExpression: aws.String("attribute_exists(#id)"),
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
+		},
+	})
+	require.NoError(t, err)
+}
+
+func TestServerUpdateTableDeleteMissingGSI(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	_, err := cli.UpdateTable(context.Background(), &dynamodb.UpdateTableInput{
+		TableName: aws.String("pokemons"),
+		GlobalSecondaryIndexUpdates: []ddbtypes.GlobalSecondaryIndexUpdate{
+			{Delete: &ddbtypes.DeleteGlobalSecondaryIndexAction{
+				IndexName: aws.String("no-such-index"),
+			}},
+		},
+	})
+	var notFound *ddbtypes.ResourceNotFoundException
+	require.ErrorAs(t, err, &notFound)
+}
+
+func TestServerCreateTableWithProvisionedThroughput(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	_, err := cli.CreateTable(context.Background(), &dynamodb.CreateTableInput{
+		TableName: aws.String("counters"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModeProvisioned,
+		ProvisionedThroughput: &ddbtypes.ProvisionedThroughput{
+			ReadCapacityUnits:  aws.Int64(5),
+			WriteCapacityUnits: aws.Int64(5),
+		},
+	})
+	require.NoError(t, err)
+}
+
+func TestServerBatchWriteItemDeleteRequest(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{DeleteRequest: &ddbtypes.DeleteRequest{
+					Key: map[string]ddbtypes.AttributeValue{
+						"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+					},
+				}},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+	})
+	require.NoError(t, err)
+	require.Empty(t, out.Item)
+}
+
 func TestServerScanFiltersAndErrors(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()
 	cli := newTestDynamoClient(t, ts.URL)
 
 	makeBasicTable(t, cli, "pokemons", "id")
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
 			TableName: aws.String("pokemons"),
 			Item: map[string]ddbtypes.AttributeValue{

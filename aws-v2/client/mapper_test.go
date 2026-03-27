@@ -3,8 +3,8 @@ package client
 import (
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/stretchr/testify/require"
 	"github.com/truora/minidyn/types"
 )
@@ -43,7 +43,7 @@ func TestMapDynamoToTypes(t *testing.T) {
 	c.Equal([]byte("test"), item.B)
 
 	item = mapDynamoToTypesItem(&dynamodbtypes.AttributeValueMemberNS{Value: []string{"1", "2"}})
-	c.Equal([]*string{types.ToString("1"), types.ToString("2")}, item.NS)
+	c.Equal([]*string{new("1"), new("2")}, item.NS)
 
 	trueValue := true
 
@@ -70,7 +70,7 @@ func TestMapTypesToDynamo(t *testing.T) {
 	attributeDefinitionMapOutput := mapTypesToDynamoAttributeDefinitionMapOrList(input)
 	c.Equal(expectedAttributteValue, attributeDefinitionMapOutput)
 
-	input.M = map[string]*types.Item{"test": {S: types.ToString("test")}}
+	input.M = map[string]*types.Item{"test": {S: new("test")}}
 	expectedAttributteValue = &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{"test": &dynamodbtypes.AttributeValueMemberS{Value: "test"}}}
 
 	attributeDefinitionMapOutput = mapTypesToDynamoAttributeDefinitionMapOrList(input)
@@ -96,13 +96,13 @@ func TestMapTypesToDynamo(t *testing.T) {
 	resultItem = mapTypesToDynamoItem(item)
 	c.Equal(expectedAttributteValue, resultItem)
 
-	item = &types.Item{NS: []*string{types.ToString("1")}}
+	item = &types.Item{NS: []*string{new("1")}}
 	expectedAttributteValue = &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}}
 
 	resultItem = mapTypesToDynamoItem(item)
 	c.Equal(expectedAttributteValue, resultItem)
 
-	sliceResult := mapTypesToDynamoStringSlice([]*string{types.ToString("1")})
+	sliceResult := mapTypesToDynamoStringSlice([]*string{new("1")})
 	c.Equal([]string{"1"}, sliceResult)
 
 	projection := mapTypesToDynamoProjection(nil)

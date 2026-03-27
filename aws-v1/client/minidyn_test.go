@@ -51,7 +51,7 @@ func TestEmulateFailure(t *testing.T) {
 
 	c.Panics(func() {
 		config := &aws.Config{}
-		config.Endpoint = aws.String("http://localhost:8000")
+		config.Endpoint = new("http://localhost:8000")
 
 		client := dynamodb.New(session.Must(session.NewSession(config)))
 		EmulateFailure(client, FailureConditionInternalServerError)

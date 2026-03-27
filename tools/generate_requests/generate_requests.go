@@ -18,22 +18,22 @@ import (
 
 // operations we support via HTTP.
 var supportedInputs = []reflect.Type{
-	reflect.TypeOf(dynamodb.CreateTableInput{}),
-	reflect.TypeOf(dynamodb.DeleteTableInput{}),
-	reflect.TypeOf(dynamodb.UpdateTableInput{}),
-	reflect.TypeOf(dynamodb.DescribeTableInput{}),
-	reflect.TypeOf(dynamodb.PutItemInput{}),
-	reflect.TypeOf(dynamodb.DeleteItemInput{}),
-	reflect.TypeOf(dynamodb.UpdateItemInput{}),
-	reflect.TypeOf(dynamodb.GetItemInput{}),
-	reflect.TypeOf(dynamodb.QueryInput{}),
-	reflect.TypeOf(dynamodb.ScanInput{}),
-	reflect.TypeOf(dynamodb.BatchWriteItemInput{}),
-	reflect.TypeOf(dynamodb.BatchGetItemInput{}),
-	reflect.TypeOf(dynamodb.TransactWriteItemsInput{}),
+	reflect.TypeFor[dynamodb.CreateTableInput](),
+	reflect.TypeFor[dynamodb.DeleteTableInput](),
+	reflect.TypeFor[dynamodb.UpdateTableInput](),
+	reflect.TypeFor[dynamodb.DescribeTableInput](),
+	reflect.TypeFor[dynamodb.PutItemInput](),
+	reflect.TypeFor[dynamodb.DeleteItemInput](),
+	reflect.TypeFor[dynamodb.UpdateItemInput](),
+	reflect.TypeFor[dynamodb.GetItemInput](),
+	reflect.TypeFor[dynamodb.QueryInput](),
+	reflect.TypeFor[dynamodb.ScanInput](),
+	reflect.TypeFor[dynamodb.BatchWriteItemInput](),
+	reflect.TypeFor[dynamodb.BatchGetItemInput](),
+	reflect.TypeFor[dynamodb.TransactWriteItemsInput](),
 }
 
-var attributeValueType = reflect.TypeOf((*ddbtypes.AttributeValue)(nil)).Elem()
+var attributeValueType = reflect.TypeFor[ddbtypes.AttributeValue]()
 
 type generated struct {
 	order []string
@@ -104,9 +104,7 @@ func generateStruct(gen *generated, t reflect.Type) { //nolint:gocognit,gocyclo 
 
 	fields := []string{}
 
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-
+	for f := range t.Fields() {
 		// skip smithy internals and unexported.
 		if !f.IsExported() || f.Name == "noSmithyDocumentSerde" {
 			continue
@@ -194,7 +192,7 @@ func renderType(gen *generated, t reflect.Type) (string, []string) { //nolint:go
 		return t.String(), nil
 	case reflect.Struct:
 		if t.PkgPath() == "github.com/aws/aws-sdk-go-v2/service/dynamodb" || t.PkgPath() == "github.com/aws/aws-sdk-go-v2/service/dynamodb/types" {
-			if t == reflect.TypeOf(ddbtypes.AttributeValueMemberNULL{}) {
+			if t == reflect.TypeFor[ddbtypes.AttributeValueMemberNULL]() {
 				return "ddbtypes.AttributeValueMemberNULL", nil
 			}
 
@@ -223,9 +221,7 @@ func needsGeneration(t reflect.Type) bool {
 		return false
 	}
 
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-
+	for f := range t.Fields() {
 		if !f.IsExported() {
 			continue
 		}
@@ -245,8 +241,8 @@ func containsAttributeValue(t reflect.Type) bool {
 	case reflect.Interface:
 		return t == attributeValueType
 	case reflect.Struct:
-		for i := 0; i < t.NumField(); i++ {
-			if containsAttributeValue(t.Field(i).Type) {
+		for field := range t.Fields() {
+			if containsAttributeValue(field.Type) {
 				return true
 			}
 		}

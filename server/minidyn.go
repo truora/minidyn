@@ -34,7 +34,12 @@ var (
 	}
 )
 
-// EmulateFailure forces the HTTP server to fail on subsequent operations.
+// EmulateFailure configures failure injection on the server's in-memory client.
+// Single-item APIs fail per call (e.g. InternalServerError on PutItem). For
+// BatchWriteItem, InternalServerError (and provisioned-throughput exceeded) on a
+// sub-request are treated as retriable: those requests are returned in
+// UnprocessedItems and the batch call still succeeds. Use FailureConditionNone to
+// clear emulation.
 func (s *Server) EmulateFailure(condition FailureCondition) {
 	if s == nil || s.client == nil {
 		return

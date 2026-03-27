@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 
 	"github.com/truora/minidyn/types"
@@ -26,9 +27,7 @@ const (
 
 func copyItem(item map[string]*types.Item) map[string]*types.Item {
 	copy := map[string]*types.Item{}
-	for key, val := range item {
-		copy[key] = val
-	}
+	maps.Copy(copy, item)
 
 	return copy
 }
@@ -43,7 +42,7 @@ func mapSliceType(t reflect.Type) string {
 	return "L"
 }
 
-func mapToDynamoDBType(v interface{}) string {
+func mapToDynamoDBType(v any) string {
 	t := reflect.TypeOf(v)
 	if t == nil {
 		return "NULL"
@@ -65,7 +64,7 @@ func mapToDynamoDBType(v interface{}) string {
 	return ""
 }
 
-func getItemValue(item map[string]*types.Item, field, typ string) (interface{}, error) {
+func getItemValue(item map[string]*types.Item, field, typ string) (any, error) {
 	val, ok := item[field]
 	if !ok {
 		return nil, fmt.Errorf("%w; field: %q", errMissingField, field)
@@ -80,7 +79,7 @@ func getItemValue(item map[string]*types.Item, field, typ string) (interface{}, 
 	return goVal, nil
 }
 
-func getGoValue(val *types.Item, typ string) (interface{}, bool) {
+func getGoValue(val *types.Item, typ string) (any, bool) {
 	switch typ {
 	case "S":
 		return types.StringValue(val.S), val.S != nil
@@ -93,7 +92,7 @@ func getGoValue(val *types.Item, typ string) (interface{}, bool) {
 	return getGoComplexValue(val, typ)
 }
 
-func getGoComplexValue(val *types.Item, typ string) (interface{}, bool) {
+func getGoComplexValue(val *types.Item, typ string) (any, bool) {
 	switch typ {
 	case "B":
 		return val.B, val.B != nil

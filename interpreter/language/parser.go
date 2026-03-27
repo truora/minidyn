@@ -2,6 +2,7 @@ package language
 
 import (
 	"fmt"
+	"slices"
 )
 
 // Parser represent the interpreter parser
@@ -404,13 +405,7 @@ func (p *Parser) peekTokenIs(t TokenType) bool {
 }
 
 func (p *Parser) tokenIsOneOf(ts []TokenType) bool {
-	for _, t := range ts {
-		if p.peekTokenIs(t) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(ts, p.peekTokenIs)
 }
 
 func (p *Parser) expectPeek(t TokenType) bool {

@@ -67,7 +67,7 @@ func createPokemon(client dynamodbiface.DynamoDBAPI, creature pokemon) error {
 
 	input := &dynamodb.PutItemInput{
 		Item:      item,
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
@@ -78,12 +78,12 @@ func createPokemon(client dynamodbiface.DynamoDBAPI, creature pokemon) error {
 func getPokemon(client dynamodbiface.DynamoDBAPI, id string) (map[string]*dynamodb.AttributeValue, error) {
 	key := map[string]*dynamodb.AttributeValue{
 		"id": {
-			S: aws.String(id),
+			S: new(id),
 		},
 	}
 
 	getInput := &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key:       key,
 	}
 
@@ -96,15 +96,15 @@ func getPokemonsByType(client dynamodbiface.DynamoDBAPI, typ string) ([]map[stri
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":type": {
-				S: aws.String(typ),
+				S: new(typ),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+			"#type": new("type"),
 		},
-		KeyConditionExpression: aws.String("#type = :type"),
-		TableName:              aws.String(tableName),
-		IndexName:              aws.String("by-type"),
+		KeyConditionExpression: new("#type = :type"),
+		TableName:              new(tableName),
+		IndexName:              new("by-type"),
 	}
 
 	items := []map[string]*dynamodb.AttributeValue{}
@@ -133,12 +133,12 @@ func setupDynamoDBLocal(endpoint string) dynamodbiface.DynamoDBAPI {
 
 	config := &aws.Config{
 		Credentials: creds,
-		Region:      aws.String("us-east-1"),
+		Region:      new("us-east-1"),
 	}
 
 	// this allow us to test with dynamodb-local
-	config.Endpoint = aws.String(endpoint)
-	config.MaxRetries = aws.Int(1)
+	config.Endpoint = new(endpoint)
+	config.MaxRetries = new(1)
 
 	defer func() {
 		if err := recover(); err != nil {
@@ -163,13 +163,13 @@ func setupNativeInterpreter(native *interpreter.Native, table string) {
 
 func getData(client dynamodbiface.DynamoDBAPI, tn, p, r string) (map[string]*dynamodb.AttributeValue, error) {
 	getInput := &dynamodb.GetItemInput{
-		TableName: aws.String(tn),
+		TableName: new(tn),
 		Key: map[string]*dynamodb.AttributeValue{
 			"partition": {
-				S: aws.String(p),
+				S: new(p),
 			},
 			"range": {
-				S: aws.String(r),
+				S: new(r),
 			},
 		},
 	}
@@ -183,15 +183,15 @@ func getDataInIndex(client dynamodbiface.DynamoDBAPI, index, tn, p, r string) ([
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":data": {
-				S: aws.String(p),
+				S: new(p),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#data": aws.String("data"),
+			"#data": new("data"),
 		},
-		KeyConditionExpression: aws.String("#data = :data"),
-		TableName:              aws.String(tn),
-		IndexName:              aws.String(index),
+		KeyConditionExpression: new("#data = :data"),
+		TableName:              new(tn),
+		IndexName:              new(index),
 	}
 
 	items := []map[string]*dynamodb.AttributeValue{}
@@ -239,35 +239,35 @@ func TestCreateTable(t *testing.T) {
 	input := &dynamodb.CreateTableInput{
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{
-				AttributeName: aws.String("partition"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("partition"),
+				AttributeType: new("S"),
 			},
 		},
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
-				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				AttributeName: new("partition"),
+				KeyType:       new("HASH"),
 			},
 			{
-				AttributeName: aws.String("range"),
-				KeyType:       aws.String("RANGE"),
+				AttributeName: new("range"),
+				KeyType:       new("RANGE"),
 			},
 		},
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 
 	_, err := client.CreateTableWithContext(context.Background(), input)
 	c.Contains(err.Error(), "Range Key not specified in Attribute Definitions")
 
 	input.AttributeDefinitions = append(input.AttributeDefinitions, &dynamodb.AttributeDefinition{
-		AttributeName: aws.String("range"),
-		AttributeType: aws.String("S"),
+		AttributeName: new("range"),
+		AttributeType: new("S"),
 	})
 
 	_, err = client.CreateTableWithContext(context.Background(), input)
 	c.Contains(err.Error(), "No provisioned throughput specified for the table")
 
-	input.BillingMode = aws.String("PAY_PER_REQUEST")
+	input.BillingMode = new("PAY_PER_REQUEST")
 
 	_, err = client.CreateTableWithContext(context.Background(), input)
 	c.NoError(err)
@@ -283,12 +283,12 @@ func TestCreateTableWithGSI(t *testing.T) {
 	input := &dynamodb.CreateTableInput{
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{
-				AttributeName: aws.String("partition"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("partition"),
+				AttributeType: new("S"),
 			},
 			{
-				AttributeName: aws.String("range"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("range"),
+				AttributeType: new("S"),
 			},
 		},
 		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
@@ -297,35 +297,35 @@ func TestCreateTableWithGSI(t *testing.T) {
 		},
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
-				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				AttributeName: new("partition"),
+				KeyType:       new("HASH"),
 			},
 			{
-				AttributeName: aws.String("range"),
-				KeyType:       aws.String("RANGE"),
+				AttributeName: new("range"),
+				KeyType:       new("RANGE"),
 			},
 		},
 		GlobalSecondaryIndexes: []*dynamodb.GlobalSecondaryIndex{},
-		TableName:              aws.String(tableName + "-gsi"),
+		TableName:              new(tableName + "-gsi"),
 	}
 
 	_, err := client.CreateTableWithContext(context.Background(), input)
 	c.Contains(err.Error(), "GSI list is empty/invalid")
 
 	input.GlobalSecondaryIndexes = append(input.GlobalSecondaryIndexes, &dynamodb.GlobalSecondaryIndex{
-		IndexName: aws.String("invert"),
+		IndexName: new("invert"),
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
-				AttributeName: aws.String("range"),
-				KeyType:       aws.String("HASH"),
+				AttributeName: new("range"),
+				KeyType:       new("HASH"),
 			},
 			{
-				AttributeName: aws.String("no_defined"),
-				KeyType:       aws.String("RANGE"),
+				AttributeName: new("no_defined"),
+				KeyType:       new("RANGE"),
 			},
 		},
 		Projection: &dynamodb.Projection{
-			ProjectionType: aws.String("ALL"),
+			ProjectionType: new("ALL"),
 		},
 	})
 
@@ -340,7 +340,7 @@ func TestCreateTableWithGSI(t *testing.T) {
 	_, err = client.CreateTableWithContext(context.Background(), input)
 	c.Contains(err.Error(), "Global Secondary Index Range Key not specified in Attribute Definitions")
 
-	input.GlobalSecondaryIndexes[0].KeySchema[1].AttributeName = aws.String("partition")
+	input.GlobalSecondaryIndexes[0].KeySchema[1].AttributeName = new("partition")
 
 	_, err = client.CreateTableWithContext(context.Background(), input)
 	c.NoError(err)
@@ -353,16 +353,16 @@ func TestCreateTableWithLSI(t *testing.T) {
 	input := &dynamodb.CreateTableInput{
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{
-				AttributeName: aws.String("partition"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("partition"),
+				AttributeType: new("S"),
 			},
 			{
-				AttributeName: aws.String("range"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("range"),
+				AttributeType: new("S"),
 			},
 			{
-				AttributeName: aws.String("data"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("data"),
+				AttributeType: new("S"),
 			},
 		},
 		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
@@ -371,42 +371,42 @@ func TestCreateTableWithLSI(t *testing.T) {
 		},
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
-				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				AttributeName: new("partition"),
+				KeyType:       new("HASH"),
 			},
 			{
-				AttributeName: aws.String("range"),
-				KeyType:       aws.String("RANGE"),
+				AttributeName: new("range"),
+				KeyType:       new("RANGE"),
 			},
 		},
 		LocalSecondaryIndexes: []*dynamodb.LocalSecondaryIndex{},
-		TableName:             aws.String(tableName + "-lsi"),
+		TableName:             new(tableName + "-lsi"),
 	}
 
 	_, err := client.CreateTableWithContext(context.Background(), input)
 	c.Contains(err.Error(), "LSI list is empty/invalid")
 
 	input.LocalSecondaryIndexes = append(input.LocalSecondaryIndexes, &dynamodb.LocalSecondaryIndex{
-		IndexName: aws.String("data"),
+		IndexName: new("data"),
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
-				AttributeName: aws.String("partition"),
-				KeyType:       aws.String("HASH"),
+				AttributeName: new("partition"),
+				KeyType:       new("HASH"),
 			},
 			{
-				AttributeName: aws.String("no_defined"),
-				KeyType:       aws.String("RANGE"),
+				AttributeName: new("no_defined"),
+				KeyType:       new("RANGE"),
 			},
 		},
 		Projection: &dynamodb.Projection{
-			ProjectionType: aws.String("ALL"),
+			ProjectionType: new("ALL"),
 		},
 	})
 
 	_, err = client.CreateTableWithContext(context.Background(), input)
 	c.Contains(err.Error(), "Local Secondary Index Range Key not specified in Attribute Definitions")
 
-	input.LocalSecondaryIndexes[0].KeySchema[1].AttributeName = aws.String("data")
+	input.LocalSecondaryIndexes[0].KeySchema[1].AttributeName = new("data")
 
 	_, err = client.CreateTableWithContext(context.Background(), input)
 	c.NoError(err)
@@ -417,7 +417,7 @@ func TestDeleteTable(t *testing.T) {
 	client := setupClient(tableName)
 
 	input := &dynamodb.DeleteTableInput{
-		TableName: aws.String("table-404"),
+		TableName: new("table-404"),
 	}
 
 	_, err := client.DeleteTableWithContext(context.Background(), input)
@@ -427,7 +427,7 @@ func TestDeleteTable(t *testing.T) {
 	c.NoError(err)
 
 	input = &dynamodb.DeleteTableInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 	out, err := client.DeleteTableWithContext(context.Background(), input)
 	c.NoError(err)
@@ -443,9 +443,9 @@ func TestUpdateTable(t *testing.T) {
 	client := setupClient(tableName)
 
 	input := &dynamodb.UpdateTableInput{
-		BillingMode:                 aws.String("PROVISIONED"),
+		BillingMode:                 new("PROVISIONED"),
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{},
-		TableName:                   aws.String("404"),
+		TableName:                   new("404"),
 	}
 
 	_, err := client.UpdateTableWithContext(context.Background(), input)
@@ -457,35 +457,35 @@ func TestUpdateTable(t *testing.T) {
 	input = &dynamodb.UpdateTableInput{
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{
-				AttributeName: aws.String("id"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("id"),
+				AttributeType: new("S"),
 			},
 			{
-				AttributeName: aws.String("type"),
-				AttributeType: aws.String("S"),
+				AttributeName: new("type"),
+				AttributeType: new("S"),
 			},
 		},
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
 			{
 				Create: &dynamodb.CreateGlobalSecondaryIndexAction{
-					IndexName: aws.String("newIndex"),
+					IndexName: new("newIndex"),
 					KeySchema: []*dynamodb.KeySchemaElement{
 						{
-							AttributeName: aws.String("type"),
-							KeyType:       aws.String("HASH"),
+							AttributeName: new("type"),
+							KeyType:       new("HASH"),
 						},
 						{
-							AttributeName: aws.String("id"),
-							KeyType:       aws.String("RANGE"),
+							AttributeName: new("id"),
+							KeyType:       new("RANGE"),
 						},
 					},
 					Projection: &dynamodb.Projection{
-						ProjectionType: aws.String("ALL"),
+						ProjectionType: new("ALL"),
 					},
 				},
 			},
 		},
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 	output, err := client.UpdateTableWithContext(context.Background(), input)
 	c.NoError(err)
@@ -496,7 +496,7 @@ func TestUpdateTable(t *testing.T) {
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
 			{
 				Update: &dynamodb.UpdateGlobalSecondaryIndexAction{
-					IndexName: aws.String("newIndex"),
+					IndexName: new("newIndex"),
 					ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
 						ReadCapacityUnits:  aws.Int64(1),
 						WriteCapacityUnits: aws.Int64(1),
@@ -504,7 +504,7 @@ func TestUpdateTable(t *testing.T) {
 				},
 			},
 		},
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 	_, err = client.UpdateTableWithContext(context.Background(), input)
 	c.NoError(err)
@@ -513,11 +513,11 @@ func TestUpdateTable(t *testing.T) {
 		GlobalSecondaryIndexUpdates: []*dynamodb.GlobalSecondaryIndexUpdate{
 			{
 				Delete: &dynamodb.DeleteGlobalSecondaryIndexAction{
-					IndexName: aws.String("newIndex"),
+					IndexName: new("newIndex"),
 				},
 			},
 		},
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 	_, err = client.UpdateTableWithContext(context.Background(), input)
 	c.NoError(err)
@@ -542,17 +542,17 @@ func TestPutAndGetItem(t *testing.T) {
 
 	input := &dynamodb.PutItemInput{
 		Item:      item,
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
 	c.NoError(err)
 
 	getInput := &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("001"),
+				S: new("001"),
 			},
 		},
 	}
@@ -563,7 +563,7 @@ func TestPutAndGetItem(t *testing.T) {
 	c.Equal("grass", *out.Item["type"].S)
 
 	_, err = client.GetItemWithContext(context.Background(), &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key:       map[string]*dynamodb.AttributeValue{},
 	})
 
@@ -589,7 +589,7 @@ func TestPutWithGSI(t *testing.T) {
 
 	input := &dynamodb.PutItemInput{
 		Item:      item,
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
@@ -628,14 +628,14 @@ func TestGetItemWithUnusedAttributes(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("001"),
+				S: new("001"),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#name": aws.String("name"),
+			"#name": new("name"),
 		},
 	}
 
@@ -653,15 +653,15 @@ func TestGetItemWithInvalidExpressionAttributeNames(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("001"),
+				S: new("001"),
 			},
 		},
-		ProjectionExpression: aws.String("#name-1"),
+		ProjectionExpression: new("#name-1"),
 		ExpressionAttributeNames: map[string]*string{
-			"#name-1": aws.String("name"),
+			"#name-1": new("name"),
 		},
 	}
 
@@ -686,10 +686,10 @@ func TestPutItemWithConditions(t *testing.T) {
 
 	input := &dynamodb.PutItemInput{
 		Item:                item,
-		TableName:           aws.String(tableName),
-		ConditionExpression: aws.String("attribute_not_exists(#type)"),
+		TableName:           new(tableName),
+		ConditionExpression: new("attribute_not_exists(#type)"),
 		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+			"#type": new("type"),
 		},
 	}
 
@@ -700,31 +700,31 @@ func TestPutItemWithConditions(t *testing.T) {
 	c.Error(err)
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":not_used": {NULL: aws.Bool(true)},
+		":not_used": {NULL: new(true)},
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeValuesMsg)
 
-	input.ConditionExpression = aws.String("attribute_not_exists(#invalid-name)")
+	input.ConditionExpression = new("attribute_not_exists(#invalid-name)")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("hello"),
+		"#invalid-name": new("hello"),
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
-	input.ConditionExpression = aws.String("#valid_name = :invalid-value")
+	input.ConditionExpression = new("#valid_name = :invalid-value")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#valid_name": aws.String("hello"),
+		"#valid_name": new("hello"),
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: new(true)},
 	}
 
 	_, err = client.PutItemWithContext(context.Background(), input)
@@ -748,18 +748,18 @@ func TestUpdateItemWithContext(t *testing.T) {
 
 	expr := map[string]*dynamodb.AttributeValue{
 		":ntype": {
-			S: aws.String(string("poison")),
+			S: new(string("poison")),
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("001"),
+				S: new("001"),
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
-		UpdateExpression:          aws.String("SET second_type = :ntype"),
+		ReturnValues:              new("UPDATED_NEW"),
+		UpdateExpression:          new("SET second_type = :ntype"),
 		ExpressionAttributeValues: expr,
 	}
 
@@ -771,7 +771,7 @@ func TestUpdateItemWithContext(t *testing.T) {
 	c.Equal("poison", aws.StringValue(item["second_type"].S))
 
 	input.Key["id"] = &dynamodb.AttributeValue{
-		S: aws.String("404"),
+		S: new("404"),
 	}
 
 	_, err = client.UpdateItemWithContext(context.Background(), input)
@@ -791,10 +791,10 @@ func TestUpdateItemWithContext(t *testing.T) {
 
 	input.Key = map[string]*dynamodb.AttributeValue{
 		"id": {
-			S: aws.String("001"),
+			S: new("001"),
 		},
 	}
-	expr[":ntype"].S = aws.String(string("water"))
+	expr[":ntype"].S = new(string("water"))
 
 	_, err = client.UpdateItemWithContext(context.Background(), input)
 	c.NoError(err)
@@ -828,46 +828,46 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	uexpr := "SET second_type = :ntype"
 	expr := map[string]*dynamodb.AttributeValue{
 		":ntyp": {
-			S: aws.String(string("poison")),
+			S: new(string("poison")),
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("404"),
+				S: new("404"),
 			},
 		},
-		ConditionExpression:       aws.String("attribute_exists(id)"),
-		ReturnValues:              aws.String("UPDATED_NEW"),
-		UpdateExpression:          aws.String(uexpr),
+		ConditionExpression:       new("attribute_exists(id)"),
+		ReturnValues:              new("UPDATED_NEW"),
+		UpdateExpression:          new(uexpr),
 		ExpressionAttributeValues: expr,
 		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+			"#id": new("id"),
 		},
 	}
 
 	_, err = client.UpdateItemWithContext(context.Background(), input)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 
-	input.ConditionExpression = aws.String("attribute_exists(#invalid-name)")
+	input.ConditionExpression = new("attribute_exists(#invalid-name)")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("type"),
+		"#invalid-name": new("type"),
 	}
 
 	_, err = client.UpdateItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
-	input.ConditionExpression = aws.String("#t = :invalid-value")
+	input.ConditionExpression = new("#t = :invalid-value")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+		"#t": new("type"),
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: new(true)},
 	}
 
 	_, err = client.UpdateItemWithContext(context.Background(), input)
@@ -875,18 +875,18 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 
 	input = &dynamodb.UpdateItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("404"),
+				S: new("404"),
 			},
 		},
-		ConditionExpression:       aws.String("attribute_exists(#id)"),
-		ReturnValues:              aws.String("UPDATED_NEW"),
-		UpdateExpression:          aws.String(uexpr),
+		ConditionExpression:       new("attribute_exists(#id)"),
+		ReturnValues:              new("UPDATED_NEW"),
+		UpdateExpression:          new(uexpr),
 		ExpressionAttributeValues: expr,
 		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+			"#id": new("id"),
 		},
 	}
 
@@ -914,20 +914,20 @@ func TestUpdateItemWithGSI(t *testing.T) {
 	uexpr := "SET #type = :ntype"
 	expr := map[string]*dynamodb.AttributeValue{
 		":ntype": {
-			S: aws.String(string("poison")),
+			S: new(string("poison")),
 		},
 	}
-	names := map[string]*string{"#type": aws.String("type")}
+	names := map[string]*string{"#type": new("type")}
 
 	input := &dynamodb.UpdateItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("001"),
+				S: new("001"),
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
-		UpdateExpression:          aws.String(uexpr),
+		ReturnValues:              new("UPDATED_NEW"),
+		UpdateExpression:          new(uexpr),
 		ExpressionAttributeValues: expr,
 		ExpressionAttributeNames:  names,
 	}
@@ -960,18 +960,18 @@ func TestUpdateItemError(t *testing.T) {
 
 	expr := map[string]*dynamodb.AttributeValue{
 		":second_type": {
-			S: aws.String(string("poison")),
+			S: new(string("poison")),
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"foo": {
-				S: aws.String("a"),
+				S: new("a"),
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
-		UpdateExpression:          aws.String("SET second_type = :second_type"),
+		ReturnValues:              new("UPDATED_NEW"),
+		UpdateExpression:          new("SET second_type = :second_type"),
 		ExpressionAttributeValues: expr,
 	}
 
@@ -1004,15 +1004,15 @@ func TestUpdateExpressions(t *testing.T) {
 	}{
 		"add": {
 			input: &dynamodb.UpdateItemInput{
-				TableName: aws.String(tableName),
+				TableName: new(tableName),
 				Key: map[string]*dynamodb.AttributeValue{
 					"id": {
-						S: aws.String("001"),
+						S: new("001"),
 					},
 				},
-				ReturnValues:              aws.String("UPDATED_NEW"),
-				UpdateExpression:          aws.String("ADD lvl :one"),
-				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{":one": {N: aws.String("1")}},
+				ReturnValues:              new("UPDATED_NEW"),
+				UpdateExpression:          new("ADD lvl :one"),
+				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{":one": {N: new("1")}},
 			},
 			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
 				a := assert.New(tc)
@@ -1025,16 +1025,16 @@ func TestUpdateExpressions(t *testing.T) {
 		},
 		"remove": {
 			input: &dynamodb.UpdateItemInput{
-				TableName: aws.String(tableName),
+				TableName: new(tableName),
 				Key: map[string]*dynamodb.AttributeValue{
 					"id": {
-						S: aws.String("001"),
+						S: new("001"),
 					},
 				},
-				ReturnValues:     aws.String("UPDATED_NEW"),
-				UpdateExpression: aws.String("REMOVE #l[0],#l[1],#l[2],#l[3]"),
+				ReturnValues:     new("UPDATED_NEW"),
+				UpdateExpression: new("REMOVE #l[0],#l[1],#l[2],#l[3]"),
 				ExpressionAttributeNames: map[string]*string{
-					"#l": aws.String("local"),
+					"#l": new("local"),
 				},
 			},
 			verify: func(tc *testing.T, client dynamodbiface.DynamoDBAPI) {
@@ -1048,17 +1048,17 @@ func TestUpdateExpressions(t *testing.T) {
 		},
 		"delete": {
 			input: &dynamodb.UpdateItemInput{
-				TableName: aws.String(tableName),
+				TableName: new(tableName),
 				Key: map[string]*dynamodb.AttributeValue{
 					"id": {
-						S: aws.String("001"),
+						S: new("001"),
 					},
 				},
-				ReturnValues:     aws.String("UPDATED_NEW"),
-				UpdateExpression: aws.String("DELETE moves :move"),
+				ReturnValues:     new("UPDATED_NEW"),
+				UpdateExpression: new("DELETE moves :move"),
 				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 					":move": {
-						SS: []*string{aws.String("Growl")},
+						SS: []*string{new("Growl")},
 					},
 				},
 			},
@@ -1125,14 +1125,14 @@ func TestQueryWithContext(t *testing.T) {
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":id": {
-				S: aws.String("004"),
+				S: new("004"),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+			"#id": new("id"),
 		},
-		KeyConditionExpression: aws.String("#id = :id"),
-		TableName:              aws.String(tableName),
+		KeyConditionExpression: new("#id = :id"),
+		TableName:              new(tableName),
 	}
 
 	out, err := client.QueryWithContext(context.Background(), input)
@@ -1148,11 +1148,11 @@ func TestQueryWithContext(t *testing.T) {
 	c.Equal(pokemonQueried.Type, "fire")
 	c.Equal(pokemonQueried.Name, "Charmander")
 
-	input.FilterExpression = aws.String("#type = :type")
+	input.FilterExpression = new("#type = :type")
 
-	input.ExpressionAttributeNames["#type"] = aws.String("type")
+	input.ExpressionAttributeNames["#type"] = new("type")
 	input.ExpressionAttributeValues[":type"] = &dynamodb.AttributeValue{
-		S: aws.String("fire"),
+		S: new("fire"),
 	}
 
 	out, err = client.QueryWithContext(context.Background(), input)
@@ -1160,36 +1160,36 @@ func TestQueryWithContext(t *testing.T) {
 	c.Len(out.Items, 1)
 
 	input.ExpressionAttributeValues[":type"] = &dynamodb.AttributeValue{
-		S: aws.String("grass"),
+		S: new("grass"),
 	}
 
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
 	c.Empty(out.Items)
 
-	input.ExpressionAttributeNames["#not_used"] = aws.String("hello")
+	input.ExpressionAttributeNames["#not_used"] = new("hello")
 
 	_, err = client.QueryWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 
-	input.KeyConditionExpression = aws.String("#invalid-name = :id")
+	input.KeyConditionExpression = new("#invalid-name = :id")
 	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("id"),
+		"#invalid-name": new("id"),
 	}
 
 	_, err = client.QueryWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
-	input.KeyConditionExpression = aws.String("#t = :invalid-value")
+	input.KeyConditionExpression = new("#t = :invalid-value")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+		"#t": new("type"),
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: new(true)},
 	}
 
 	_, err = client.QueryWithContext(context.Background(), input)
@@ -1207,14 +1207,14 @@ func TestQueryWithContext(t *testing.T) {
 	input = &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":id": {
-				S: aws.String("004"),
+				S: new("004"),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#id": aws.String("id"),
+			"#id": new("id"),
 		},
-		KeyConditionExpression: aws.String("#id = :id"),
-		TableName:              aws.String(tableName),
+		KeyConditionExpression: new("#id = :id"),
+		TableName:              new(tableName),
 	}
 
 	out, err = client.QueryWithContext(context.Background(), input)
@@ -1257,15 +1257,15 @@ func TestQueryWithContextPagination(t *testing.T) {
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":type": {
-				S: aws.String("grass"),
+				S: new("grass"),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+			"#type": new("type"),
 		},
-		KeyConditionExpression: aws.String("#type = :type"),
-		TableName:              aws.String(tableName),
-		IndexName:              aws.String("by-type"),
+		KeyConditionExpression: new("#type = :type"),
+		TableName:              new(tableName),
+		IndexName:              new("by-type"),
 		Limit:                  aws.Int64(1),
 	}
 
@@ -1337,7 +1337,7 @@ func TestQueryWithContextPagination(t *testing.T) {
 	c.Len(out.Items, 3)
 	c.Empty(out.LastEvaluatedKey)
 
-	input.ScanIndexForward = aws.Bool(false)
+	input.ScanIndexForward = new(false)
 
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
@@ -1346,12 +1346,12 @@ func TestQueryWithContextPagination(t *testing.T) {
 	// Query with FilterExpression
 	input.ScanIndexForward = nil
 	input.ExclusiveStartKey = nil
-	input.FilterExpression = aws.String("begins_with(#name, :letter)")
+	input.FilterExpression = new("begins_with(#name, :letter)")
 	input.Limit = aws.Int64(2)
 	input.ExpressionAttributeValues[":letter"] = &dynamodb.AttributeValue{
-		S: aws.String("V"),
+		S: new("V"),
 	}
-	input.ExpressionAttributeNames["#name"] = aws.String("name")
+	input.ExpressionAttributeNames["#name"] = new("name")
 
 	out, err = client.QueryWithContext(context.Background(), input)
 	c.NoError(err)
@@ -1382,15 +1382,15 @@ func TestQuerySyntaxError(t *testing.T) {
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":partition": {
-				S: aws.String("a"),
+				S: new("a"),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#partition": aws.String("partition"),
+			"#partition": new("partition"),
 		},
 		// Syntax Error
-		KeyConditionExpression: aws.String("#partition != :partition"),
-		TableName:              aws.String(tableName),
+		KeyConditionExpression: new("#partition != :partition"),
+		TableName:              new(tableName),
 	}
 
 	c.Panics(func() {
@@ -1428,7 +1428,7 @@ func TestScanWithContext(t *testing.T) {
 	c.NoError(err)
 
 	input := &dynamodb.ScanInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 
 	out, err := client.ScanWithContext(context.Background(), input)
@@ -1441,23 +1441,23 @@ func TestScanWithContext(t *testing.T) {
 	c.Len(out.Items, 1)
 	c.NotEmpty(out.LastEvaluatedKey)
 
-	input.FilterExpression = aws.String("#invalid-name = Raichu")
+	input.FilterExpression = new("#invalid-name = Raichu")
 	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("Name"),
+		"#invalid-name": new("Name"),
 	}
 
 	_, err = client.ScanWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
-	input.FilterExpression = aws.String("#t = :invalid-value")
+	input.FilterExpression = new("#t = :invalid-value")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+		"#t": new("type"),
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: new(true)},
 	}
 
 	_, err = client.ScanWithContext(context.Background(), input)
@@ -1465,21 +1465,21 @@ func TestScanWithContext(t *testing.T) {
 	c.Contains(err.Error(), invalidExpressionAttributeValue)
 
 	input.Limit = nil
-	input.FilterExpression = aws.String("#name = :name")
+	input.FilterExpression = new("#name = :name")
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
 		":name": {
-			S: aws.String("Venusaur"),
+			S: new("Venusaur"),
 		},
 	}
 	input.ExpressionAttributeNames = map[string]*string{
-		"#name": aws.String("name"),
+		"#name": new("name"),
 	}
 
 	out, err = client.ScanWithContext(context.Background(), input)
 	c.NoError(err)
 	c.Len(out.Items, 1)
 
-	input.ExpressionAttributeNames["#not_used"] = aws.String("hello")
+	input.ExpressionAttributeNames["#not_used"] = new("hello")
 
 	_, err = client.ScanWithContext(context.Background(), input)
 	c.NotNil(err)
@@ -1531,12 +1531,12 @@ func TestDeleteItemWithContext(t *testing.T) {
 	c.NoError(err)
 
 	key := map[string]*dynamodb.AttributeValue{
-		"id": {S: aws.String("003")},
+		"id": {S: new("003")},
 	}
 
 	input := &dynamodb.DeleteItemInput{
 		Key:       key,
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 
 	items, err := getPokemonsByType(client, "grass")
@@ -1591,10 +1591,10 @@ func TestDeleteItemWithConditions(t *testing.T) {
 
 	input := &dynamodb.DeleteItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
-			"id": {S: aws.String("001")},
+			"id": {S: new("001")},
 		},
-		TableName:           aws.String(tableName),
-		ConditionExpression: aws.String("attribute_exists(id)"),
+		TableName:           new(tableName),
+		ConditionExpression: new("attribute_exists(id)"),
 	}
 
 	_, err = client.DeleteItemWithContext(context.Background(), input)
@@ -1604,31 +1604,31 @@ func TestDeleteItemWithConditions(t *testing.T) {
 	c.Contains(err.Error(), dynamodb.ErrCodeConditionalCheckFailedException)
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#not_used": aws.String("hello"),
+		"#not_used": new("hello"),
 	}
 
 	_, err = client.DeleteItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), unusedExpressionAttributeNamesMsg)
 
-	input.ConditionExpression = aws.String("#invalid-name = Squirtle")
+	input.ConditionExpression = new("#invalid-name = Squirtle")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#invalid-name": aws.String("hello"),
+		"#invalid-name": new("hello"),
 	}
 
 	_, err = client.DeleteItemWithContext(context.Background(), input)
 	c.NotNil(err)
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 
-	input.ConditionExpression = aws.String("#t = :invalid-value")
+	input.ConditionExpression = new("#t = :invalid-value")
 
 	input.ExpressionAttributeNames = map[string]*string{
-		"#t": aws.String("type"),
+		"#t": new("type"),
 	}
 
 	input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
-		":invalid-value": {NULL: aws.Bool(true)},
+		":invalid-value": {NULL: new(true)},
 	}
 
 	_, err = client.DeleteItemWithContext(context.Background(), input)
@@ -1653,10 +1653,10 @@ func TestDeleteItemWithContextWithReturnValues(t *testing.T) {
 
 	input := &dynamodb.DeleteItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
-			"id": {S: aws.String("001")},
+			"id": {S: new("001")},
 		},
-		TableName:    aws.String(tableName),
-		ReturnValues: aws.String("ALL_OLD"),
+		TableName:    new(tableName),
+		ReturnValues: new("ALL_OLD"),
 	}
 
 	output, err := client.DeleteItemWithContext(context.Background(), input)
@@ -1674,7 +1674,7 @@ func TestDescribeTable(t *testing.T) {
 	c.NoError(err)
 
 	describeTableInput := &dynamodb.DescribeTableInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 	}
 
 	output, err := client.DescribeTableWithContext(aws.BackgroundContext(), describeTableInput)
@@ -1695,7 +1695,7 @@ func TestDescribeTableFail(t *testing.T) {
 
 	expected := "ResourceNotFoundException: Cannot do operations on a non-existent table"
 	describeTableInput := &dynamodb.DescribeTableInput{
-		TableName: aws.String("non_existing"),
+		TableName: new("non_existing"),
 	}
 
 	output, err := client.DescribeTableWithContext(aws.BackgroundContext(), describeTableInput)
@@ -1739,7 +1739,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 			{
 				ItemCollectionKey: map[string]*dynamodb.AttributeValue{
 					"report_id": {
-						S: aws.String("1234"),
+						S: new("1234"),
 					},
 				},
 			},
@@ -1760,7 +1760,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 			tableName: {
 				{
 					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
-						"id": {S: aws.String("001")},
+						"id": {S: new("001")},
 					}},
 				},
 			},
@@ -1780,8 +1780,8 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 			tableName: {
 				{
 					DeleteRequest: &dynamodb.DeleteRequest{Key: map[string]*dynamodb.AttributeValue{
-						"id":   {S: aws.String("001")},
-						"type": {S: aws.String("grass")},
+						"id":   {S: new("001")},
+						"type": {S: new("grass")},
 					}},
 					PutRequest: &dynamodb.PutRequest{Item: item},
 				},
@@ -1803,7 +1803,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 	item, err = dynamodbattribute.MarshalMap(m)
 	c.NoError(err)
 
-	for i := 0; i < batchRequestsLimit; i++ {
+	for range batchRequestsLimit {
 		requests = append(requests, &dynamodb.WriteRequest{
 			PutRequest: &dynamodb.PutRequest{Item: item},
 		})
@@ -1867,21 +1867,21 @@ func TestTransactWriteItemsWithContext(t *testing.T) {
 		{
 			Update: &dynamodb.Update{
 				Key: map[string]*dynamodb.AttributeValue{
-					"id":     {S: aws.String("001")},
-					":ntype": {S: aws.String("poison")},
+					"id":     {S: new("001")},
+					":ntype": {S: new("poison")},
 				},
-				TableName:        aws.String(tableName),
-				UpdateExpression: aws.String("SET second_type = :ntype"),
+				TableName:        new(tableName),
+				UpdateExpression: new("SET second_type = :ntype"),
 				ExpressionAttributeNames: map[string]*string{
-					"#id": aws.String("id"),
+					"#id": new("id"),
 				},
 				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-					":update": {S: aws.String(time.Now().Format(time.RFC3339))},
+					":update": {S: new(time.Now().Format(time.RFC3339))},
 					":incr": {
-						N: aws.String("1"),
+						N: new("1"),
 					},
 					":initial": {
-						N: aws.String("0"),
+						N: new("0"),
 					},
 				},
 			},
@@ -1970,25 +1970,25 @@ func TestUpdateItemAndQueryAfterUpsert(t *testing.T) {
 
 	expr := map[string]*dynamodb.AttributeValue{
 		":type": {
-			S: aws.String(string("water")),
+			S: new(string("water")),
 		},
 		":name": {
-			S: aws.String(string("piplup")),
+			S: new(string("piplup")),
 		},
 	}
 	input := &dynamodb.UpdateItemInput{
-		TableName: aws.String(tableName),
+		TableName: new(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
 			"id": {
-				S: aws.String("001"),
+				S: new("001"),
 			},
 		},
-		ReturnValues:              aws.String("UPDATED_NEW"),
-		UpdateExpression:          aws.String("SET #type = :type, #name = :name"),
+		ReturnValues:              new("UPDATED_NEW"),
+		UpdateExpression:          new("SET #type = :type, #name = :name"),
 		ExpressionAttributeValues: expr,
 		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
-			"#name": aws.String("name"),
+			"#type": new("type"),
+			"#name": new("name"),
 		},
 	}
 
@@ -2035,15 +2035,15 @@ func BenchmarkQuery(b *testing.B) {
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":type": {
-				S: aws.String("grass"),
+				S: new("grass"),
 			},
 		},
 		ExpressionAttributeNames: map[string]*string{
-			"#type": aws.String("type"),
+			"#type": new("type"),
 		},
-		KeyConditionExpression: aws.String("#type = :type"),
-		TableName:              aws.String(tableName),
-		IndexName:              aws.String("by-type"),
+		KeyConditionExpression: new("#type = :type"),
+		TableName:              new(tableName),
+		IndexName:              new("by-type"),
 		Limit:                  aws.Int64(1),
 	}
 
@@ -2071,12 +2071,12 @@ func BenchmarkQueryWithContext(b *testing.B) {
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":id": {
-				S: aws.String("001"),
+				S: new("001"),
 			},
 		},
-		KeyConditionExpression:   aws.String("#id = :id"),
-		ExpressionAttributeNames: map[string]*string{"#id": aws.String("id")},
-		TableName:                aws.String(tableName),
+		KeyConditionExpression:   new("#id = :id"),
+		ExpressionAttributeNames: map[string]*string{"#id": new("id")},
+		TableName:                new(tableName),
 		Limit:                    aws.Int64(1),
 	}
 

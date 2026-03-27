@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/truora/minidyn/interpreter/language"
@@ -26,17 +27,13 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	env := language.NewEnvironment()
 
 	aliases := map[string]string{}
-	for k, v := range input.Aliases {
-		aliases[k] = v
-	}
+	maps.Copy(aliases, input.Aliases)
 
 	env.Aliases = aliases
 
 	item := map[string]*types.Item{}
 
-	for field, val := range input.Item {
-		item[field] = val
-	}
+	maps.Copy(item, input.Item)
 
 	err := env.AddAttributes(item)
 	if err != nil {
@@ -63,9 +60,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 
 func buildAliases(input UpdateInput) map[string]string {
 	aliases := map[string]string{}
-	for k, v := range input.Aliases {
-		aliases[k] = v
-	}
+	maps.Copy(aliases, input.Aliases)
 
 	return aliases
 }
@@ -91,9 +86,7 @@ func (li *Language) Update(input UpdateInput) error {
 
 	item := map[string]*types.Item{}
 
-	for field, val := range input.Item {
-		item[field] = val
-	}
+	maps.Copy(item, input.Item)
 
 	err := env.AddAttributes(item)
 	if err != nil {

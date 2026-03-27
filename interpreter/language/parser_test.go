@@ -26,7 +26,7 @@ func TestParsingPrefixExpressions(t *testing.T) {
 	prefixTests := []struct {
 		input    string
 		operator string
-		value    interface{}
+		value    any
 	}{
 		{"NOT :b", "NOT", ":b"},
 	}
@@ -56,9 +56,9 @@ func TestParsingPrefixExpressions(t *testing.T) {
 func TestParsingInfixExpressions(t *testing.T) {
 	infixTests := []struct {
 		input      string
-		leftValue  interface{}
+		leftValue  any
 		operator   string
-		rightValue interface{}
+		rightValue any
 	}{
 		{"#a = :a", "#a", "=", ":a"},
 		{"#a <> :a", "#a", "<>", ":a"},
@@ -84,8 +84,8 @@ func TestParsingInfixExpressions(t *testing.T) {
 func TestParsingIndexExpressions(t *testing.T) {
 	indexTests := []struct {
 		input    string
-		left     interface{}
-		indexVal interface{}
+		left     any
+		indexVal any
 	}{
 		{"a[:i]", "a", ":i"},
 		{"#a[1]", "#a", "1"},
@@ -108,7 +108,7 @@ func TestParsingIndexExpressions(t *testing.T) {
 	}
 }
 
-func testIndexExpression(t *testing.T, opExp *IndexExpression, left, index interface{}) bool {
+func testIndexExpression(t *testing.T, opExp *IndexExpression, left, index any) bool {
 	if !testLiteralExpression(t, opExp.Left, left) {
 		return true
 	}
@@ -123,9 +123,9 @@ func testIndexExpression(t *testing.T, opExp *IndexExpression, left, index inter
 func TestParsingBetweenExpression(t *testing.T) {
 	betweenTests := []struct {
 		input     string
-		leftValue interface{}
-		min       interface{}
-		max       interface{}
+		leftValue any
+		min       any
+		max       any
 	}{
 		{"#b BETWEEN :a AND :c", "#b", ":a", ":c"},
 	}
@@ -145,7 +145,7 @@ func TestParsingBetweenExpression(t *testing.T) {
 	}
 }
 
-func testBetweenExpression(t *testing.T, opExp *BetweenExpression, left, min, max interface{}) bool {
+func testBetweenExpression(t *testing.T, opExp *BetweenExpression, left, min, max any) bool {
 	if !testLiteralExpression(t, opExp.Left, left) {
 		return true
 	}
@@ -355,7 +355,7 @@ func checkParserErrors(t *testing.T, p *Parser) {
 	t.FailNow()
 }
 
-func testLiteralExpression(t *testing.T, exp Expression, expected interface{}) bool {
+func testLiteralExpression(t *testing.T, exp Expression, expected any) bool {
 	v, ok := expected.(string)
 	if ok {
 		return testIdentifier(t, exp, v)
@@ -366,7 +366,7 @@ func testLiteralExpression(t *testing.T, exp Expression, expected interface{}) b
 	return false
 }
 
-func testInfixExpression(t *testing.T, exp Expression, left interface{}, operator string, right interface{}) bool {
+func testInfixExpression(t *testing.T, exp Expression, left any, operator string, right any) bool {
 	opExp, ok := exp.(*InfixExpression)
 	if !ok {
 		t.Errorf("exp is not OperatorExpression. got=%T(%s)", exp, exp)

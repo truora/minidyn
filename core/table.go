@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/truora/minidyn/interpreter"
@@ -378,9 +379,7 @@ func (t *Table) getLastKey(item map[string]*types.Item, limit, count, scanned, k
 
 	if index != nil {
 		iKey := index.keySchema.getKeyItem(item)
-		for field, val := range iKey {
-			key[field] = val
-		}
+		maps.Copy(key, iKey)
 	}
 
 	return key

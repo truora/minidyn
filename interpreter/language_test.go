@@ -36,16 +36,16 @@ func matchTestCaseVerify(tc matchTestCase, t *testing.T) {
 func TestLanguageMatch(t *testing.T) {
 	item := map[string]*types.Item{
 		"a": {
-			S: types.ToString("a"),
+			S: new("a"),
 		},
 		"n": {
-			N: types.ToString("1"),
+			N: new("1"),
 		},
 		"b": {
 			BOOL: &boolTrue,
 		},
 		"txt": {
-			S: types.ToString("hello world"),
+			S: new("hello world"),
 		},
 	}
 
@@ -58,7 +58,7 @@ func TestLanguageMatch(t *testing.T) {
 				Item:       item,
 				Attributes: map[string]*types.Item{
 					":a": {
-						S: types.ToString("a"),
+						S: new("a"),
 					},
 				},
 			},
@@ -135,12 +135,12 @@ func TestLanguageUpdate(t *testing.T) {
 				Expression: "SET #t = :a + :a, a = :a",
 				Item: map[string]*types.Item{
 					"a": {
-						S: types.ToString("a"),
+						S: new("a"),
 					},
 				},
 				Attributes: map[string]*types.Item{
 					":a": {
-						N: types.ToString("1"),
+						N: new("1"),
 					},
 				},
 				Aliases: map[string]string{
@@ -149,10 +149,10 @@ func TestLanguageUpdate(t *testing.T) {
 			},
 			output: map[string]*types.Item{
 				"a": {
-					N: types.ToString("1"),
+					N: new("1"),
 				},
 				"two": {
-					N: types.ToString("2"),
+					N: new("2"),
 				},
 			},
 		},
@@ -163,12 +163,12 @@ func TestLanguageUpdate(t *testing.T) {
 				Expression: "SET",
 				Item: map[string]*types.Item{
 					"a": {
-						S: types.ToString("a"),
+						S: new("a"),
 					},
 				},
 				Attributes: map[string]*types.Item{
 					":a": {
-						N: types.ToString("1"),
+						N: new("1"),
 					},
 				},
 			},

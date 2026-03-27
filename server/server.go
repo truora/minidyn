@@ -48,7 +48,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	encoder.SetEscapeHTML(false)
 
 	var (
-		resp interface{}
+		resp any
 		err  error
 	)
 

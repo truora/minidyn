@@ -1934,7 +1934,7 @@ func TestBatchWriteItem(t *testing.T) {
 	item, err = attributevalue.MarshalMap(m)
 	c.NoError(err)
 
-	for i := 0; i < batchRequestsLimit; i++ {
+	for range batchRequestsLimit {
 		requests = append(requests, dynamodbtypes.WriteRequest{
 			PutRequest: &dynamodbtypes.PutRequest{Item: item},
 		})

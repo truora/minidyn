@@ -57,7 +57,7 @@ func EvalUpdate(n Node, env *Environment) Object {
 	return newError("unsupported expression: %s", n.String())
 }
 
-func newError(format string, a ...interface{}) *Error {
+func newError(format string, a ...any) *Error {
 	return &Error{Message: fmt.Sprintf(format, a...)}
 }
 
@@ -427,7 +427,7 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 
 type indexAccessor struct {
 	kind     ObjectType
-	val      interface{}
+	val      any
 	operator Token
 }
 

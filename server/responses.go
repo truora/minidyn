@@ -5,22 +5,22 @@ package server
 
 // CreateTableOutput mirrors DynamoDB CreateTableOutput.
 type CreateTableOutput struct {
-	TableDescription interface{} `json:"TableDescription,omitempty"`
+	TableDescription any `json:"TableDescription,omitempty"`
 }
 
 // DeleteTableOutput mirrors DynamoDB DeleteTableOutput.
 type DeleteTableOutput struct {
-	TableDescription interface{} `json:"TableDescription,omitempty"`
+	TableDescription any `json:"TableDescription,omitempty"`
 }
 
 // UpdateTableOutput mirrors DynamoDB UpdateTableOutput.
 type UpdateTableOutput struct {
-	TableDescription interface{} `json:"TableDescription,omitempty"`
+	TableDescription any `json:"TableDescription,omitempty"`
 }
 
 // DescribeTableOutput mirrors DynamoDB DescribeTableOutput.
 type DescribeTableOutput struct {
-	Table interface{} `json:"Table,omitempty"`
+	Table any `json:"Table,omitempty"`
 }
 
 // PutItemOutput mirrors DynamoDB PutItemOutput.

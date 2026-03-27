@@ -310,8 +310,10 @@ type TableDescription struct {
 }
 
 // ToString returns the pointer of a string
+//
+//go:fix inline
 func ToString(str string) *string {
-	return &str
+	return new(str)
 }
 
 // StringValue returns the string value of a string pointer

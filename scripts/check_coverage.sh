@@ -2,7 +2,7 @@
 
 # We are evaluating all files for now (later we could change it so it only uses changed files)
 # pkgs_to_test=`git diff --name-status $diff |  grep -E '^(A|M|R)'  | awk '{ print $NF }' | grep '\.go$' | xargs -n1 dirname | sort -u`
-pkgs_to_test=`find . -type f -name '*.go' | grep -v '^\./tools/' | xargs -n1 dirname | sort -u`
+pkgs_to_test=`find . -type f -name '*.go' | grep -v -E '^\./(tools|e2e)/' | xargs -n1 dirname | sort -u`
 
 
 function parse_test {

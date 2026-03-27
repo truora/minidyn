@@ -3,9 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 // Server implements http.Handler for DynamoDB JSON API subset.
@@ -126,6 +130,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	var ccf *ddbtypes.ConditionalCheckFailedException
+
+	if errors.As(err, &ccf) {
+		type ccfBody struct {
+			Type    string `json:"__type"`
+			Message string `json:"message"`
+			Item    map[string]*AttributeValue `json:"Item,omitempty"`
+		}
+
+		body := ccfBody{
+			Type:    "ConditionalCheckFailedException",
+			Message: aws.ToString(ccf.Message),
+		}
+
+		if len(ccf.Item) > 0 {
+			body.Item = mapDDBAttributeMapToWire(ccf.Item)
+		}
+
+		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(body)
+
+		return
+	}
+
 	type errorBody struct {
 		Type    string `json:"__type"`
 		Message string `json:"message"`

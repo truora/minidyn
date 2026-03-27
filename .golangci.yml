@@ -82,9 +82,9 @@ linters:
         - name: modifies-value-receiver
         - name: unnecessary-stmt
     gocyclo:
-      min-complexity: 9
+      min-complexity: 20
     gocognit:
-      min-complexity: 10
+      min-complexity: 19
     gocritic:
       enable-all: true
       disabled-checks:

@@ -100,6 +100,15 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	return nil
 }
 
+func isValidKeyAttributeType(typ string) bool {
+	switch typ {
+	case "S", "N", "B":
+		return true
+	default:
+		return false
+	}
+}
+
 func (t *Table) validateAttributeDefinition(ks keySchema, message string) error {
 	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
 		return types.NewError("ValidationException", fmt.Sprintf("%sHash Key not specified in Attribute Definitions.", message), nil)
@@ -107,6 +116,24 @@ func (t *Table) validateAttributeDefinition(ks keySchema, message string) error 
 
 	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
 		return types.NewError("ValidationException", fmt.Sprintf("%sRange Key not specified in Attribute Definitions.", message), nil)
+	}
+
+	hashType := t.AttributesDef[ks.HashKey]
+	if !isValidKeyAttributeType(hashType) {
+		return types.NewError("ValidationException", fmt.Sprintf(
+			"%sHash key attribute %q has invalid type %q; key attributes must be scalar types S, N, or B.",
+			message, ks.HashKey, hashType,
+		), nil)
+	}
+
+	if ks.RangeKey != "" {
+		rangeType := t.AttributesDef[ks.RangeKey]
+		if !isValidKeyAttributeType(rangeType) {
+			return types.NewError("ValidationException", fmt.Sprintf(
+				"%sRange key attribute %q has invalid type %q; key attributes must be scalar types S, N, or B.",
+				message, ks.RangeKey, rangeType,
+			), nil)
+		}
 	}
 
 	return nil

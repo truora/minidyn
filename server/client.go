@@ -283,7 +283,12 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, err
 	}
 
-	key, err := table.KeySchema.GetKey(table.AttributesDef, mapAttributeValueMapToTypes(input.Key))
+	keyMap := mapAttributeValueMapToTypes(input.Key)
+	if vErr := types.ValidateItemMap(keyMap); vErr != nil {
+		return nil, mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
+	}
+
+	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
 	if err != nil {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
@@ -309,7 +314,7 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		input.ScanIndexForward = aws.Bool(true)
 	}
 
-	items, last := table.SearchData(core.QueryInput{
+	items, last, err := table.SearchData(core.QueryInput{
 		Index:                     aws.ToString(input.IndexName),
 		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
 		Aliases:                   input.ExpressionAttributeNames,
@@ -319,6 +324,9 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		Limit:                     int64(aws.ToInt32(input.Limit)),
 		ScanIndexForward:          aws.ToBool(input.ScanIndexForward),
 	})
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
 
 	count := int32(len(items))
 
@@ -343,7 +351,7 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, err
 	}
 
-	items, last := table.SearchData(core.QueryInput{
+	items, last, err := table.SearchData(core.QueryInput{
 		Index:                     aws.ToString(input.IndexName),
 		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
 		Aliases:                   input.ExpressionAttributeNames,
@@ -353,6 +361,9 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		Scan:                      true,
 		ScanIndexForward:          true,
 	})
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
 
 	count := int32(len(items))
 

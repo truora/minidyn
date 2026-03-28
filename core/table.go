@@ -235,6 +235,30 @@ func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 	return nil
 }
 
+func validateSearchInputMaps(input QueryInput) error {
+	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := types.ValidateItemMap(input.ExclusiveStartKey); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
+	if err := types.ValidateItemMap(input.Key); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
 func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]*types.Item) string {
 	startKey := ""
 	if len(startkeyAttr) != 0 {
@@ -320,8 +344,12 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 	return sortedKeys[pos]
 }
 
-// SearchData quiery the table based on the input
-func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item) {
+// SearchData queries the table based on the input.
+func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item, error) {
+	if err := validateSearchInputMaps(input); err != nil {
+		return nil, nil, err
+	}
+
 	items := []map[string]*types.Item{}
 	limit := input.Limit
 	exclusiveStartKey := input.ExclusiveStartKey
@@ -367,7 +395,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 		}
 	}
 
-	return items, t.getLastKey(last, limit, count, scanned, sortedKeysSize, index)
+	return items, t.getLastKey(last, limit, count, scanned, sortedKeysSize, index), nil
 }
 
 func (t *Table) getLastKey(item map[string]*types.Item, limit, count, scanned, keysSize int64, index *index) map[string]*types.Item {
@@ -471,6 +499,14 @@ func (t *Table) Clear() {
 
 // Put puts items into table
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
+	if err := types.ValidateItemMap(input.Item); err != nil {
+		return copyItem(input.Item), types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
+		return copyItem(input.Item), types.NewError("ValidationException", err.Error(), nil)
+	}
+
 	item := copyItem(input.Item)
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
@@ -514,7 +550,11 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 }
 
 // Update updates an item in the table based on the input
-func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, error) {
+func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, error) { //nolint:gocognit,gocyclo // conditional writes, interpreter update, GSI updates
+	if err := validateUpdateItemInputKeysAndValues(input); err != nil {
+		return nil, err
+	}
+
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
@@ -582,6 +622,14 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 // Delete deletes an item in the table based on the input
 func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) {
+	if err := types.ValidateItemMap(input.Key); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)

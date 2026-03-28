@@ -471,7 +471,8 @@ func TestSearchData(t *testing.T) {
 
 	queryInput := QueryInput{}
 
-	result, lastItem := newTable.SearchData(queryInput)
+	result, lastItem, err := newTable.SearchData(queryInput)
+	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
 
@@ -495,7 +496,8 @@ func TestSearchData(t *testing.T) {
 		},
 	}
 
-	result, lastItem = newTable.SearchData(queryInput)
+	result, lastItem, err = newTable.SearchData(queryInput)
+	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
 
@@ -518,16 +520,91 @@ func TestSearchData(t *testing.T) {
 	queryInput.Index = "indice"
 	queryInput.started = true
 
-	result, lastItem = newTable.SearchData(queryInput)
+	result, lastItem, err = newTable.SearchData(queryInput)
+	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
 
 	queryInput.ExclusiveStartKey = item
-	result, lastItem = newTable.SearchData(queryInput)
+	result, lastItem, err = newTable.SearchData(queryInput)
+	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
 
 	newIndex.Clear()
+}
+
+func TestPut_duplicateSetValidationException(t *testing.T) {
+	c := require.New(t)
+
+	newTable := NewTable(tableName)
+	newTable.AttributesDef = map[string]string{"id": "S", "name": "S"}
+	newTable.KeySchema = keySchema{"id", "name", false}
+
+	a, b := "x", "x"
+	item := map[string]*types.Item{
+		"id":   {S: new("001")},
+		"name": {S: new("n")},
+		"tags": {SS: []*string{&a, &b}},
+	}
+
+	_, err := newTable.Put(&types.PutItemInput{Item: item, TableName: &newTable.Name})
+	c.Error(err)
+
+	var apiErr types.Error
+	c.True(errors.As(err, &apiErr))
+	c.Equal("ValidationException", apiErr.Code())
+	c.Contains(apiErr.Message(), "contains duplicates")
+}
+
+func TestSearchData_duplicateExpressionAttributeValues(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	a, b := "d", "d"
+	_, _, err = newTable.SearchData(QueryInput{
+		ExpressionAttributeValues: map[string]*types.Item{
+			":v": {SS: []*string{&a, &b}},
+		},
+	})
+	c.Error(err)
+
+	var apiErr types.Error
+	c.True(errors.As(err, &apiErr))
+	c.Equal("ValidationException", apiErr.Code())
+	c.Contains(apiErr.Message(), "contains duplicates")
+}
+
+func TestUpdate_duplicateExpressionAttributeValues(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+
+	_, err = newTable.Put(&types.PutItemInput{Item: item, TableName: &newTable.Name})
+	c.NoError(err)
+
+	a, b := "p", "p"
+	_, err = newTable.Update(&types.UpdateItemInput{
+		Key: item,
+		ExpressionAttributeValues: map[string]*types.Item{
+			":s": {SS: []*string{&a, &b}},
+		},
+	})
+	c.Error(err)
+
+	var apiErr types.Error
+	c.True(errors.As(err, &apiErr))
+	c.Equal("ValidationException", apiErr.Code())
+	c.Contains(apiErr.Message(), "contains duplicates")
 }
 
 func TestUpdate(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
+	"github.com/truora/minidyn/types"
 )
 
 const (
@@ -265,7 +266,7 @@ func (fd *Client) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInp
 }
 
 // DeleteItem mock response for dynamodb
-func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) { //nolint:gocognit,gocyclo // validate, conditional SearchData, delete, return shapes
 	err := input.Validate()
 	if err != nil {
 		return nil, err
@@ -290,13 +291,17 @@ func (fd *Client) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteI
 
 	// support conditional writes
 	if input.ConditionExpression != nil {
-		items, _ := table.SearchData(core.QueryInput{
+		items, _, serr := table.SearchData(core.QueryInput{
 			Index:                     core.PrimaryIndexName,
 			ExpressionAttributeValues: mapAttributeValueToTypes(input.ExpressionAttributeValues),
 			Aliases:                   aws.StringValueMap(input.ExpressionAttributeNames),
 			Limit:                     1,
 			ConditionExpression:       input.ConditionExpression,
 		})
+		if serr != nil {
+			return nil, serr
+		}
+
 		if len(items) == 0 {
 			return &dynamodb.DeleteItemOutput{}, awserr.New(dynamodb.ErrCodeConditionalCheckFailedException, core.ErrConditionalRequestFailed.Error(), nil)
 		}
@@ -390,7 +395,12 @@ func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 		return nil, err
 	}
 
-	key, err := table.KeySchema.GetKey(table.AttributesDef, mapAttributeValueToTypes(input.Key))
+	keyMap := mapAttributeValueToTypes(input.Key)
+	if vErr := types.ValidateItemMap(keyMap); vErr != nil {
+		return nil, awserr.New("ValidationException", vErr.Error(), nil)
+	}
+
+	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
 	if err != nil {
 		return nil, awserr.New("ValidationException", err.Error(), nil)
 	}
@@ -434,7 +444,7 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 		input.ScanIndexForward = new(true)
 	}
 
-	items, lastKey := table.SearchData(core.QueryInput{
+	items, lastKey, err := table.SearchData(core.QueryInput{
 		Index:                     indexName,
 		ExpressionAttributeValues: mapAttributeValueToTypes(input.ExpressionAttributeValues),
 		Aliases:                   aws.StringValueMap(input.ExpressionAttributeNames),
@@ -444,6 +454,9 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 		FilterExpression:          aws.StringValue(input.FilterExpression),
 		ScanIndexForward:          aws.BoolValue(input.ScanIndexForward),
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	count := int64(len(items))
 
@@ -482,7 +495,7 @@ func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 
 	indexName := aws.StringValue(input.IndexName)
 
-	items, lastKey := table.SearchData(core.QueryInput{
+	items, lastKey, err := table.SearchData(core.QueryInput{
 		Index:                     indexName,
 		ExpressionAttributeValues: mapAttributeValueToTypes(input.ExpressionAttributeValues),
 		Aliases:                   aws.StringValueMap(input.ExpressionAttributeNames),
@@ -492,6 +505,9 @@ func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 		Scan:                      true,
 		ScanIndexForward:          true,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	count := int64(len(items))
 

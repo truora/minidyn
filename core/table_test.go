@@ -222,6 +222,126 @@ func TestCreatePrimaryIndex(t *testing.T) {
 	c.NoError(err)
 }
 
+func TestValidateKeyAttributeScalarTypesPrimaryIndex(t *testing.T) {
+	c := require.New(t)
+
+	tbl := NewTable(tableName)
+	tbl.BillingMode = new("PAY_PER_REQUEST")
+	tbl.AttributesDef = map[string]string{"pk": "BOOL"}
+	err := tbl.CreatePrimaryIndex(&types.CreateTableInput{
+		KeySchema: []*types.KeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+	})
+	c.Error(err)
+	c.Contains(err.Error(), "pk")
+	c.Contains(err.Error(), "BOOL")
+	c.Contains(err.Error(), "S, N, or B")
+
+	tbl.AttributesDef = map[string]string{"pk": "S", "sk": "L"}
+	err = tbl.CreatePrimaryIndex(&types.CreateTableInput{
+		KeySchema: []*types.KeySchemaElement{
+			{AttributeName: "pk", KeyType: "HASH"},
+			{AttributeName: "sk", KeyType: "RANGE"},
+		},
+	})
+	c.Error(err)
+	c.Contains(err.Error(), "sk")
+	c.Contains(err.Error(), "L")
+
+	tbl.AttributesDef = map[string]string{"pk": "N"}
+	err = tbl.CreatePrimaryIndex(&types.CreateTableInput{
+		KeySchema: []*types.KeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}},
+	})
+	c.NoError(err)
+
+	tbl.AttributesDef = map[string]string{"pk": "B", "sk": "N"}
+	err = tbl.CreatePrimaryIndex(&types.CreateTableInput{
+		KeySchema: []*types.KeySchemaElement{
+			{AttributeName: "pk", KeyType: "HASH"},
+			{AttributeName: "sk", KeyType: "RANGE"},
+		},
+	})
+	c.NoError(err)
+}
+
+func TestValidateKeyAttributeScalarTypesGSI(t *testing.T) {
+	c := require.New(t)
+
+	tbl := NewTable(tableName)
+	tbl.BillingMode = new("PAY_PER_REQUEST")
+	tbl.AttributesDef = map[string]string{"pk": "S", "gsi_h": "BOOL"}
+	idxName := "by-bool"
+	err := tbl.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
+		IndexName:             &idxName,
+		KeySchema:             []*types.KeySchemaElement{{AttributeName: "gsi_h", KeyType: "HASH"}},
+		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
+		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+	}})
+	c.Error(err)
+	c.Contains(err.Error(), "Global Secondary Index ")
+	c.Contains(err.Error(), "gsi_h")
+	c.Contains(err.Error(), "BOOL")
+
+	tbl.AttributesDef = map[string]string{"pk": "S", "gsi_h": "N", "gsi_r": "M"}
+	idxName = "by-map"
+	err = tbl.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
+		IndexName: &idxName,
+		KeySchema: []*types.KeySchemaElement{
+			{AttributeName: "gsi_h", KeyType: "HASH"},
+			{AttributeName: "gsi_r", KeyType: "RANGE"},
+		},
+		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
+		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+	}})
+	c.Error(err)
+	c.Contains(err.Error(), "gsi_r")
+	c.Contains(err.Error(), "M")
+
+	tbl.AttributesDef = map[string]string{"pk": "S", "gsi_h": "B", "gsi_r": "N"}
+	idxName = "by-bin"
+	err = tbl.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
+		IndexName: &idxName,
+		KeySchema: []*types.KeySchemaElement{
+			{AttributeName: "gsi_h", KeyType: "HASH"},
+			{AttributeName: "gsi_r", KeyType: "RANGE"},
+		},
+		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
+		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+	}})
+	c.NoError(err)
+}
+
+func TestValidateKeyAttributeScalarTypesLSI(t *testing.T) {
+	c := require.New(t)
+
+	tbl := NewTable(tableName)
+	tbl.BillingMode = new("PAY_PER_REQUEST")
+	tbl.AttributesDef = map[string]string{"pk": "S", "sk": "S", "lsi_r": "BOOL"}
+	idxName := "lsi-bad"
+	err := tbl.AddLocalIndexes([]*types.LocalSecondaryIndex{{
+		IndexName: &idxName,
+		KeySchema: []*types.KeySchemaElement{
+			{AttributeName: "pk", KeyType: "HASH"},
+			{AttributeName: "lsi_r", KeyType: "RANGE"},
+		},
+		Projection: &types.Projection{ProjectionType: aws.String("ALL")},
+	}})
+	c.Error(err)
+	c.Contains(err.Error(), "Local Secondary Index ")
+	c.Contains(err.Error(), "lsi_r")
+
+	tbl.AttributesDef = map[string]string{"pk": "S", "sk": "S", "lsi_r": "B"}
+	idxName = "lsi-ok"
+	err = tbl.AddLocalIndexes([]*types.LocalSecondaryIndex{{
+		IndexName: &idxName,
+		KeySchema: []*types.KeySchemaElement{
+			{AttributeName: "pk", KeyType: "HASH"},
+			{AttributeName: "lsi_r", KeyType: "RANGE"},
+		},
+		Projection: &types.Projection{ProjectionType: aws.String("ALL")},
+	}})
+	c.NoError(err)
+}
+
 func TestCreateTableIndexes(t *testing.T) {
 	c := require.New(t)
 

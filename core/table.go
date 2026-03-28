@@ -18,6 +18,7 @@ type QueryInput struct {
 	KeyConditionExpression    string
 	ConditionExpression       *string
 	FilterExpression          string
+	ProjectionExpression      string
 	Aliases                   map[string]string
 	ScanIndexForward          bool
 	Scan                      bool
@@ -333,17 +334,31 @@ func prepareSearch(input *QueryInput, index *index, k, startKey string) (string,
 	return "", false
 }
 
-func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*types.Item, interpreter.ExpressionType, bool) {
+func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool) {
 	storedItem, ok := t.Data[pk]
 
 	lastMatchExpressionType, matched := t.matchKey(*input, storedItem)
 
+	fullCopy := copyItem(storedItem)
+
 	if !ok || !input.started || !matched {
-		return copyItem(storedItem), lastMatchExpressionType, false
+		return fullCopy, fullCopy, lastMatchExpressionType, false
 	}
 
-	// TODO: use project info to create the copy
-	return copyItem(storedItem), lastMatchExpressionType, true
+	if input.ProjectionExpression != "" {
+		projected, err := t.LangInterpreter.Project(interpreter.ProjectInput{
+			Expression: input.ProjectionExpression,
+			Item:       storedItem,
+			Aliases:    input.Aliases,
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		return projected, fullCopy, lastMatchExpressionType, true
+	}
+
+	return fullCopy, fullCopy, lastMatchExpressionType, true
 }
 
 func shouldReturnNextKey(item map[string]*types.Item, count, scanned, limit, keysSize int64) bool {
@@ -403,7 +418,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 			continue
 		}
 
-		item, expressionType, matched := t.getMatchedItemAndCount(&input, pk, startKey)
+		item, keyItem, expressionType, matched := t.getMatchedItemAndCount(&input, pk, startKey)
 
 		if matched {
 			items = append(items, item)
@@ -415,7 +430,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 			count++
 		}
 
-		last = item
+		last = keyItem
 
 		if shouldBreakPage(count, limit) {
 			break

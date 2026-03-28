@@ -144,6 +144,30 @@ func (p *Parser) nextToken() {
 	p.peekToken = p.l.NextToken()
 }
 
+// ParseProjectionExpression parses a comma-separated list of path expressions (ProjectionExpression).
+// Whitespace may appear between paths. An empty input yields an empty slice and no errors.
+func (p *Parser) ParseProjectionExpression() []Expression {
+	var expressions []Expression
+
+	if p.curToken.Type == EOF {
+		return expressions
+	}
+
+	expressions = append(expressions, p.parseExpression(precedenceValueLowset))
+
+	for p.peekTokenIs(COMMA) {
+		p.nextToken()
+		p.nextToken()
+		expressions = append(expressions, p.parseExpression(precedenceValueLowset))
+	}
+
+	if !p.peekTokenIs(EOF) {
+		p.peekError(EOF)
+	}
+
+	return expressions
+}
+
 // ParseConditionalExpression tokenizes a ConditionalExpression
 func (p *Parser) ParseConditionalExpression() *ConditionalExpression {
 	stmt := &ConditionalExpression{Token: p.curToken}

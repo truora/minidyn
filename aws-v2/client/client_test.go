@@ -770,6 +770,65 @@ func TestGetItemWithInvalidExpressionAttributeNames(t *testing.T) {
 	c.Contains(err.Error(), invalidExpressionAttributeName)
 }
 
+func TestGetItemWithProjectionExpression(t *testing.T) {
+	c := require.New(t)
+
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	err = createPokemon(client, pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+	c.NoError(err)
+
+	out, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+		},
+		ProjectionExpression: aws.String("#n"),
+		ExpressionAttributeNames: map[string]string{
+			"#n": "name",
+		},
+	})
+	c.NoError(err)
+	c.Len(out.Item, 1)
+
+	name, ok := out.Item["name"].(*dynamodbtypes.AttributeValueMemberS)
+	c.True(ok)
+	c.Equal("Bulbasaur", name.Value)
+}
+
+func TestGetItemWithProjectionInvalidExpression(t *testing.T) {
+	c := require.New(t)
+
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	err = createPokemon(client, pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+	c.NoError(err)
+
+	_, err = client.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+		},
+		ProjectionExpression: aws.String("("),
+	})
+	c.Error(err)
+	c.Contains(err.Error(), "ValidationException")
+}
+
 func TestPutItemWithConditions(t *testing.T) {
 	c := require.New(t)
 

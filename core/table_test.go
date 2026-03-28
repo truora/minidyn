@@ -1104,3 +1104,34 @@ func TestFetchQueryData(t *testing.T) {
 	c.NotEmpty(sortedKeys)
 	c.Equal(index.sortedRefs[0][0], "006.Bellsprout")
 }
+
+func TestSearchDataWithProjectionExpression(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable("proj")
+	table.AttributesDef = map[string]string{"id": "S", "foo": "S"}
+	table.KeySchema = keySchema{"id", "", false}
+	table.LangInterpreter = interpreter.Language{}
+
+	_, err := table.Put(&types.PutItemInput{
+		TableName: aws.String("proj"),
+		Item: map[string]*types.Item{
+			"id":  {S: aws.String("1")},
+			"foo": {S: aws.String("bar")},
+		},
+	})
+	c.NoError(err)
+
+	items, lastKey, err := table.SearchData(QueryInput{
+		Scan:                 true,
+		ProjectionExpression: "#f",
+		Aliases:              map[string]string{"#f": "foo"},
+		Limit:                1,
+	})
+
+	c.NoError(err)
+	c.Len(items, 1)
+	c.Len(items[0], 1)
+	c.Equal("bar", *items[0]["foo"].S)
+	c.Contains(lastKey, "id")
+}

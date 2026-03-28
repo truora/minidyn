@@ -405,10 +405,15 @@ func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 		return nil, awserr.New("ValidationException", err.Error(), nil)
 	}
 
-	item := copyItem(mapAttributeValueToDynamodb(table.Data[key]))
+	stored := table.Data[key]
+
+	item, err := getItemAttributesForOutputV1(table, stored, aws.StringValue(input.ProjectionExpression), aws.StringValueMap(input.ExpressionAttributeNames))
+	if err != nil {
+		return nil, awserr.New("ValidationException", err.Error(), nil)
+	}
 
 	output := &dynamodb.GetItemOutput{
-		Item: item,
+		Item: copyItem(item),
 	}
 
 	return output, nil
@@ -452,6 +457,7 @@ func (fd *Client) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, erro
 		ExclusiveStartKey:         mapAttributeValueToTypes(input.ExclusiveStartKey),
 		KeyConditionExpression:    *input.KeyConditionExpression,
 		FilterExpression:          aws.StringValue(input.FilterExpression),
+		ProjectionExpression:      aws.StringValue(input.ProjectionExpression),
 		ScanIndexForward:          aws.BoolValue(input.ScanIndexForward),
 	})
 	if err != nil {
@@ -502,6 +508,7 @@ func (fd *Client) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 		Limit:                     aws.Int64Value(input.Limit),
 		ExclusiveStartKey:         mapAttributeValueToTypes(input.ExclusiveStartKey),
 		FilterExpression:          aws.StringValue(input.FilterExpression),
+		ProjectionExpression:      aws.StringValue(input.ProjectionExpression),
 		Scan:                      true,
 		ScanIndexForward:          true,
 	})
@@ -667,6 +674,23 @@ func (fd *Client) TransactWriteItems(input *dynamodb.TransactWriteItemsInput) (*
 // TransactWriteItemsWithContext mock response for dynamodb
 func (fd *Client) TransactWriteItemsWithContext(ctx aws.Context, input *dynamodb.TransactWriteItemsInput, opts ...request.Option) (*dynamodb.TransactWriteItemsOutput, error) {
 	return fd.TransactWriteItems(input)
+}
+
+func getItemAttributesForOutputV1(table *core.Table, stored map[string]*types.Item, projectionExpr string, aliases map[string]string) (map[string]*dynamodb.AttributeValue, error) {
+	if projectionExpr == "" {
+		return mapAttributeValueToDynamodb(stored), nil
+	}
+
+	projected, err := table.LangInterpreter.Project(interpreter.ProjectInput{
+		Expression: projectionExpr,
+		Item:       stored,
+		Aliases:    aliases,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return mapAttributeValueToDynamodb(projected), nil
 }
 
 func (fd *Client) getTable(tableName string) (*core.Table, error) {

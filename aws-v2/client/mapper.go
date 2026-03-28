@@ -398,6 +398,10 @@ func mapDynamoToTypesQueryInput(input *dynamodb.QueryInput, indexName string) co
 		output.ScanIndexForward = aws.ToBool(input.ScanIndexForward)
 	}
 
+	if input.ProjectionExpression != nil {
+		output.ProjectionExpression = aws.ToString(input.ProjectionExpression)
+	}
+
 	return output
 }
 

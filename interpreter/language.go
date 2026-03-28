@@ -9,6 +9,13 @@ import (
 	"github.com/truora/minidyn/types"
 )
 
+// ProjectInput parameters for Project.
+type ProjectInput struct {
+	Expression string
+	Item       map[string]*types.Item
+	Aliases    map[string]string
+}
+
 // Language interpreter
 type Language struct {
 	Debug bool
@@ -56,6 +63,53 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	}
 
 	return result == language.TRUE, nil
+}
+
+// Project evaluates a projection expression and returns a new attribute map containing only the requested paths.
+func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) {
+	l := language.NewLexer(input.Expression)
+	p := language.NewParser(l)
+	exprs := p.ParseProjectionExpression()
+
+	if len(p.Errors()) != 0 {
+		return nil, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
+	}
+
+	env := language.NewEnvironment()
+	aliases := map[string]string{}
+	maps.Copy(aliases, input.Aliases)
+	env.Aliases = aliases
+
+	item := map[string]*types.Item{}
+	maps.Copy(item, input.Item)
+
+	err := env.AddAttributes(item)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFeature, err.Error())
+	}
+
+	out := map[string]*types.Item{}
+
+	for _, expr := range exprs {
+		result := language.Eval(expr, env)
+		if language.IsUndefinedObject(result) {
+			continue
+		}
+
+		if result.Type() == language.ObjectTypeError {
+			return nil, fmt.Errorf("%w: %s", ErrSyntaxError, result.Inspect())
+		}
+
+		path, err := language.ExtractPath(expr, env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrSyntaxError, err.Error())
+		}
+
+		val := result.ToDynamoDB()
+		language.SetProjectedPath(out, path, val)
+	}
+
+	return out, nil
 }
 
 func buildAliases(input UpdateInput) map[string]string {

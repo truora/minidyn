@@ -309,13 +309,6 @@ type TableDescription struct {
 	TableStatus            string                            `type:"string" enum:"TableStatus"`
 }
 
-// ToString returns the pointer of a string
-//
-//go:fix inline
-func ToString(str string) *string {
-	return new(str)
-}
-
 // StringValue returns the string value of a string pointer
 func StringValue(str *string) string {
 	if str == nil {

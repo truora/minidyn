@@ -1011,6 +1011,44 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 	}
 }
 
+func testEvalBooleanInfixUndefinedOrNil(t *testing.T, name string, left, right Object) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		got := evalBooleanInfixExpression("AND", left, right)
+		if got != FALSE {
+			t.Fatalf("AND: got %s, want FALSE", got.Inspect())
+		}
+		got = evalBooleanInfixExpression("OR", left, right)
+		if got != FALSE {
+			t.Fatalf("OR: got %s, want FALSE", got.Inspect())
+		}
+	})
+}
+
+func TestEvalBooleanInfixExpressionUndefinedOrNil(t *testing.T) {
+	testEvalBooleanInfixUndefinedOrNil(t, "undefined_left", UNDEFINED, TRUE)
+	testEvalBooleanInfixUndefinedOrNil(t, "undefined_right", TRUE, UNDEFINED)
+	testEvalBooleanInfixUndefinedOrNil(t, "both_undefined", UNDEFINED, UNDEFINED)
+	testEvalBooleanInfixUndefinedOrNil(t, "nil_left", nil, TRUE)
+	testEvalBooleanInfixUndefinedOrNil(t, "nil_right", TRUE, nil)
+}
+
+func TestEvalBooleanInfixExpressionLeftNotBoolean(t *testing.T) {
+	got := evalBooleanInfixExpression("AND", &Number{Value: 1}, TRUE)
+	want := newError("left operand is not boolean: N")
+	if !isError(got) || got.Inspect() != want.Inspect() {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestEvalBooleanInfixExpressionRightNotBoolean(t *testing.T) {
+	got := evalBooleanInfixExpression("OR", TRUE, &String{Value: "x"})
+	want := newError("right operand is not boolean: S")
+	if !isError(got) || got.Inspect() != want.Inspect() {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func BenchmarkEval(b *testing.B) {
 	input := ":a OR :b"
 

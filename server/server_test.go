@@ -1285,6 +1285,174 @@ func TestServerScanFiltersAndErrors(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClientGetItemMissingTableEmulatedErrorAndInvalidKeyMap(t *testing.T) {
+	ctx := context.Background()
+	s := NewServer()
+	cli := s.client
+
+	_, err := cli.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String("items"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	_, err = cli.GetItem(ctx, &GetItemInput{
+		TableName: aws.String("no-such-table"),
+		Key:       map[string]*AttributeValue{"id": {S: aws.String("1")}},
+	})
+	var notFound *ddbtypes.ResourceNotFoundException
+	require.ErrorAs(t, err, &notFound)
+
+	s.EmulateFailure(FailureConditionInternalServerError)
+	_, err = cli.GetItem(ctx, &GetItemInput{
+		TableName: aws.String("items"),
+		Key:       map[string]*AttributeValue{"id": {S: aws.String("1")}},
+	})
+	var internal *ddbtypes.InternalServerError
+	require.ErrorAs(t, err, &internal)
+	s.EmulateFailure(FailureConditionNone)
+
+	dupA, dupB := "x", "x"
+	_, err = cli.GetItem(ctx, &GetItemInput{
+		TableName: aws.String("items"),
+		Key: map[string]*AttributeValue{
+			"id": {SS: []*string{&dupA, &dupB}},
+		},
+	})
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "ValidationException", apiErr.ErrorCode())
+	require.Contains(t, apiErr.ErrorMessage(), "duplicates")
+}
+
+func TestClientQueryScanMissingTableEmulatedErrorAndInvalidExprValues(t *testing.T) {
+	ctx := context.Background()
+	s := NewServer()
+	cli := s.client
+
+	_, err := cli.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String("items"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	_, err = cli.Query(ctx, &QueryInput{
+		TableName: aws.String("missing"),
+	})
+	var notFoundQ *ddbtypes.ResourceNotFoundException
+	require.ErrorAs(t, err, &notFoundQ)
+
+	_, err = cli.Scan(ctx, &ScanInput{
+		TableName: aws.String("missing"),
+	})
+	var notFoundS *ddbtypes.ResourceNotFoundException
+	require.ErrorAs(t, err, &notFoundS)
+
+	s.EmulateFailure(FailureConditionInternalServerError)
+	_, err = cli.Query(ctx, &QueryInput{TableName: aws.String("items")})
+	var internalQ *ddbtypes.InternalServerError
+	require.ErrorAs(t, err, &internalQ)
+
+	_, err = cli.Scan(ctx, &ScanInput{TableName: aws.String("items")})
+	var internalS *ddbtypes.InternalServerError
+	require.ErrorAs(t, err, &internalS)
+	s.EmulateFailure(FailureConditionNone)
+
+	dupA, dupB := "p", "p"
+	_, err = cli.Query(ctx, &QueryInput{
+		TableName: aws.String("items"),
+		ExpressionAttributeValues: map[string]*AttributeValue{
+			":v": {SS: []*string{&dupA, &dupB}},
+		},
+	})
+	var valErrQ smithy.APIError
+	require.ErrorAs(t, err, &valErrQ)
+	require.Equal(t, "ValidationException", valErrQ.ErrorCode())
+
+	_, err = cli.Scan(ctx, &ScanInput{
+		TableName: aws.String("items"),
+		ExpressionAttributeValues: map[string]*AttributeValue{
+			":v": {SS: []*string{&dupA, &dupB}},
+		},
+	})
+	var valErrS smithy.APIError
+	require.ErrorAs(t, err, &valErrS)
+	require.Equal(t, "ValidationException", valErrS.ErrorCode())
+}
+
+func TestClientQueryScanIndexForwardFalseAndScanWithLimitAndStartKey(t *testing.T) {
+	ctx := context.Background()
+	cli := NewClient()
+
+	_, err := cli.CreateTable(ctx, &CreateTableInput{
+		TableName: aws.String("pk"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("h"), KeyType: ddbtypes.KeyTypeHash},
+			{AttributeName: aws.String("r"), KeyType: ddbtypes.KeyTypeRange},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("h"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("r"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	for _, r := range []string{"a", "b", "c"} {
+		_, putErr := cli.PutItem(ctx, &PutItemInput{
+			TableName: aws.String("pk"),
+			Item: map[string]*AttributeValue{
+				"h": {S: aws.String("1")},
+				"r": {S: aws.String(r)},
+			},
+		})
+		require.NoError(t, putErr)
+	}
+
+	qOut, err := cli.Query(ctx, &QueryInput{
+		TableName:              aws.String("pk"),
+		KeyConditionExpression: aws.String("h = :h"),
+		ExpressionAttributeValues: map[string]*AttributeValue{
+			":h": {S: aws.String("1")},
+		},
+		ScanIndexForward: aws.Bool(false),
+		Limit:            aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, qOut.Items, 1)
+	require.Equal(t, "c", aws.ToString(qOut.Items[0]["r"].S))
+	require.NotEmpty(t, qOut.LastEvaluatedKey)
+
+	scanOut, err := cli.Scan(ctx, &ScanInput{
+		TableName: aws.String("pk"),
+		Limit:     aws.Int32(2),
+	})
+	require.NoError(t, err)
+	require.Len(t, scanOut.Items, 2)
+	require.Equal(t, int32(2), scanOut.Count)
+	require.NotEmpty(t, scanOut.LastEvaluatedKey)
+
+	scan2, err := cli.Scan(ctx, &ScanInput{
+		TableName:         aws.String("pk"),
+		Limit:             aws.Int32(10),
+		ExclusiveStartKey: scanOut.LastEvaluatedKey,
+	})
+	require.NoError(t, err)
+	require.Len(t, scan2.Items, 1)
+}
+
 // helpers
 
 func makeBasicTable(t *testing.T, cli *dynamodb.Client, table, hashKey string) {

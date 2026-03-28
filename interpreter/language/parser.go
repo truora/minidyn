@@ -14,6 +14,10 @@ type Parser struct {
 
 	unsupported bool
 
+	// updateClauseHeaders tracks SET/ADD/REMOVE/DELETE clause headers for the
+	// current ParseUpdateExpression (each keyword at most once, per DynamoDB).
+	updateClauseHeaders map[TokenType]bool
+
 	prefixParseFns map[TokenType]prefixParseFn
 	infixParseFns  map[TokenType]infixParseFn
 }
@@ -313,12 +317,19 @@ func (p *Parser) parseCallArguments() []Expression {
 
 // ParseUpdateExpression it tokenizes the update expression and returns an UpdateStatement
 func (p *Parser) ParseUpdateExpression() *UpdateStatement {
+	p.updateClauseHeaders = make(map[TokenType]bool)
+
 	stmt := &UpdateStatement{Token: p.curToken}
 
-	for p.curToken.Type != EOF {
-		stmt.Expression = p.parseExpression(precedenceValueLowset)
+	if p.curToken.Type == EOF {
+		return stmt
+	}
 
-		p.nextToken()
+	stmt.Expression = p.parseExpression(precedenceValueLowset)
+
+	if !p.peekTokenIs(EOF) {
+		msg := fmt.Sprintf("unexpected token after update expression: %s", p.peekToken.Type)
+		p.errors = append(p.errors, msg)
 	}
 
 	return stmt
@@ -363,6 +374,19 @@ func (p *Parser) parseAction(token Token) *ActionExpression {
 
 func (p *Parser) parseActions(token Token) []Expression {
 	actions := []Expression{}
+
+	if p.updateClauseHeaders == nil {
+		p.updateClauseHeaders = make(map[TokenType]bool)
+	}
+
+	if p.updateClauseHeaders[token.Type] {
+		msg := fmt.Sprintf("duplicate update clause keyword: %s", token.Literal)
+		p.errors = append(p.errors, msg)
+
+		return nil
+	}
+
+	p.updateClauseHeaders[token.Type] = true
 
 	if p.peekTokenIs(EOF) {
 		return actions

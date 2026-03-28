@@ -468,6 +468,50 @@ func TestParsingRemoveExpression(t *testing.T) {
 	}
 }
 
+func TestParsingDuplicateUpdateClauseHeaders(t *testing.T) {
+	t.Parallel()
+
+	duplicateCases := []string{
+		"SET a = :x SET b = :y",
+		"ADD n :one ADD m :two",
+		"REMOVE a REMOVE b",
+		"DELETE s :x DELETE s :y",
+		"SET a = :x REMOVE b SET c = :z",
+	}
+
+	for _, input := range duplicateCases {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+
+			l := NewLexer(input)
+			p := NewUpdateParser(l)
+			p.ParseUpdateExpression()
+
+			if len(p.Errors()) == 0 {
+				t.Fatalf("expected parse errors for duplicate clause headers, got none (input=%q)", input)
+			}
+		})
+	}
+}
+
+func TestParsingCommaSeparatedSameClauseStillValid(t *testing.T) {
+	t.Parallel()
+
+	l := NewLexer("SET a = :x, b = :y")
+	p := NewUpdateParser(l)
+	update := p.ParseUpdateExpression()
+	checkParserErrors(t, p)
+
+	opExp, ok := update.Expression.(*UpdateExpression)
+	if !ok {
+		t.Fatalf("exp is not UpdateExpression. got=%T(%s)", update.Expression, update.Expression)
+	}
+
+	if len(opExp.Expressions) != 2 {
+		t.Fatalf("unexpected actions size. got=%d want=2", len(opExp.Expressions))
+	}
+}
+
 func TestParsingTwoUpdateActions(t *testing.T) {
 	setTests := []struct {
 		input       string

@@ -1990,6 +1990,66 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	c.Nil(output)
 }
 
+func TestHandleBatchWriteRequestError(t *testing.T) {
+	t.Run("nil error", func(t *testing.T) {
+		unprocessed := map[string][]dynamodbtypes.WriteRequest{}
+		req := dynamodbtypes.WriteRequest{PutRequest: &dynamodbtypes.PutRequest{}}
+		err := handleBatchWriteRequestError("t", req, unprocessed, nil)
+		require.NoError(t, err)
+		require.Empty(t, unprocessed)
+	})
+
+	t.Run("non smithy API error", func(t *testing.T) {
+		unprocessed := map[string][]dynamodbtypes.WriteRequest{}
+		req := dynamodbtypes.WriteRequest{}
+		in := errors.New("plain failure")
+		err := handleBatchWriteRequestError("t", req, unprocessed, in)
+		require.ErrorIs(t, err, in)
+		require.Empty(t, unprocessed)
+	})
+
+	t.Run("smithy API error not retriable", func(t *testing.T) {
+		unprocessed := map[string][]dynamodbtypes.WriteRequest{}
+		req := dynamodbtypes.WriteRequest{}
+		in := &smithy.GenericAPIError{Code: "ValidationException", Message: "invalid"}
+		err := handleBatchWriteRequestError("t", req, unprocessed, in)
+		require.ErrorIs(t, err, in)
+		require.Empty(t, unprocessed)
+	})
+
+	t.Run("internal server error adds to unprocessed", func(t *testing.T) {
+		unprocessed := map[string][]dynamodbtypes.WriteRequest{}
+		req := dynamodbtypes.WriteRequest{PutRequest: &dynamodbtypes.PutRequest{}}
+		in := &dynamodbtypes.InternalServerError{Message: aws.String("emulated")}
+		err := handleBatchWriteRequestError("mytable", req, unprocessed, in)
+		require.NoError(t, err)
+		require.Len(t, unprocessed["mytable"], 1)
+		require.Equal(t, req, unprocessed["mytable"][0])
+	})
+
+	t.Run("internal server error appends when table key already exists", func(t *testing.T) {
+		first := dynamodbtypes.WriteRequest{DeleteRequest: &dynamodbtypes.DeleteRequest{}}
+		second := dynamodbtypes.WriteRequest{PutRequest: &dynamodbtypes.PutRequest{}}
+		unprocessed := map[string][]dynamodbtypes.WriteRequest{"tbl": {first}}
+		in := &dynamodbtypes.InternalServerError{Message: aws.String("retry")}
+		err := handleBatchWriteRequestError("tbl", second, unprocessed, in)
+		require.NoError(t, err)
+		require.Len(t, unprocessed["tbl"], 2)
+		require.Equal(t, first, unprocessed["tbl"][0])
+		require.Equal(t, second, unprocessed["tbl"][1])
+	})
+
+	t.Run("provisioned throughput exceeded adds to unprocessed", func(t *testing.T) {
+		unprocessed := map[string][]dynamodbtypes.WriteRequest{}
+		req := dynamodbtypes.WriteRequest{PutRequest: &dynamodbtypes.PutRequest{}}
+		in := &dynamodbtypes.ProvisionedThroughputExceededException{Message: aws.String("throttled")}
+		err := handleBatchWriteRequestError("tbl", req, unprocessed, in)
+		require.NoError(t, err)
+		require.Len(t, unprocessed["tbl"], 1)
+		require.Equal(t, req, unprocessed["tbl"][0])
+	})
+}
+
 func TestTransactWriteItems(t *testing.T) {
 	c := require.New(t)
 	client := NewClient()

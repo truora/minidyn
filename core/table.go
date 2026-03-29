@@ -677,12 +677,35 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
-	// delete is an idempotent operation,
-	// running it multiple times on the same item or attribute does not result in an error response,
-	// therefore we do not need to check if the item exists.
 	item, ok := t.Data[key]
+	existingForCond := item
 	if !ok {
-		return item, nil
+		existingForCond = map[string]*types.Item{}
+	}
+
+	if input.ConditionExpression != nil && *input.ConditionExpression != "" {
+		aliases := map[string]string{}
+		for k, v := range input.ExpressionAttributeNames {
+			if v != nil {
+				aliases[k] = *v
+			}
+		}
+
+		_, matched := t.matchKey(QueryInput{
+			Index:                     PrimaryIndexName,
+			ExpressionAttributeValues: input.ExpressionAttributeValues,
+			Aliases:                   aliases,
+			Limit:                     1,
+			ConditionExpression:       input.ConditionExpression,
+		}, existingForCond)
+
+		if !matched {
+			return nil, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
+		}
+	}
+
+	if !ok {
+		return nil, nil
 	}
 
 	item = copyItem(item)

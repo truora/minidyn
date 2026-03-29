@@ -406,3 +406,74 @@ func fromStringPtrs(in []*string) []string {
 
 	return out
 }
+
+// mapDDBAttributeMapToWire converts SDK v2 attribute maps to DynamoDB JSON wire values (e.g. CCF error payloads).
+func mapDDBAttributeMapToWire(m map[string]ddbtypes.AttributeValue) map[string]*AttributeValue {
+	if m == nil {
+		return nil
+	}
+
+	out := make(map[string]*AttributeValue, len(m))
+
+	for k, v := range m {
+		out[k] = mapDDBAttributeValueToWire(v)
+	}
+
+	return out
+}
+
+//nolint:gocyclo // mirror all DynamoDB attribute shapes
+func mapDDBAttributeValueToWire(av ddbtypes.AttributeValue) *AttributeValue {
+	if av == nil {
+		return nil
+	}
+
+	switch v := av.(type) {
+	case *ddbtypes.AttributeValueMemberS:
+		return &AttributeValue{S: aws.String(v.Value)}
+	case *ddbtypes.AttributeValueMemberN:
+		return &AttributeValue{N: aws.String(v.Value)}
+	case *ddbtypes.AttributeValueMemberB:
+		return &AttributeValue{B: v.Value}
+	case *ddbtypes.AttributeValueMemberBOOL:
+		return &AttributeValue{BOOL: aws.Bool(v.Value)}
+	case *ddbtypes.AttributeValueMemberBS:
+		return &AttributeValue{BS: v.Value}
+	case *ddbtypes.AttributeValueMemberNS:
+		sl := make([]*string, len(v.Value))
+
+		for i := range v.Value {
+			sl[i] = aws.String(v.Value[i])
+		}
+
+		return &AttributeValue{NS: sl}
+	case *ddbtypes.AttributeValueMemberSS:
+		sl := make([]*string, len(v.Value))
+
+		for i := range v.Value {
+			sl[i] = aws.String(v.Value[i])
+		}
+
+		return &AttributeValue{SS: sl}
+	case *ddbtypes.AttributeValueMemberNULL:
+		return &AttributeValue{NULL: aws.Bool(v.Value)}
+	case *ddbtypes.AttributeValueMemberM:
+		inner := make(map[string]*AttributeValue, len(v.Value))
+
+		for ik, iv := range v.Value {
+			inner[ik] = mapDDBAttributeValueToWire(iv)
+		}
+
+		return &AttributeValue{M: inner}
+	case *ddbtypes.AttributeValueMemberL:
+		ll := make([]*AttributeValue, len(v.Value))
+
+		for i := range v.Value {
+			ll[i] = mapDDBAttributeValueToWire(v.Value[i])
+		}
+
+		return &AttributeValue{L: ll}
+	default:
+		return nil
+	}
+}

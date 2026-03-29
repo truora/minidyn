@@ -11,7 +11,7 @@ import (
 
 var (
 	// revive:disable-next-line
-	errMissingField = errors.New("number of conditions on the keys is invalid")
+	errMissingField = errors.New("One of the required keys was not given a value") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
 	// ErrConditionalRequestFailed when the conditional write is not meet
 	ErrConditionalRequestFailed = errors.New("Conditional request failed") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors

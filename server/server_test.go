@@ -474,6 +474,125 @@ func TestServerUpdateItemWithSDKv2(t *testing.T) {
 	require.Equal(t, "2", upd.Attributes["lvl"].(*ddbtypes.AttributeValueMemberN).Value)
 }
 
+func TestServerUpdateItemWithConditionalExpression(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	ctx := context.Background()
+
+	_, err := cli.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "001"},
+			"type": &ddbtypes.AttributeValueMemberS{Value: "grass"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "002"},
+			"type": &ddbtypes.AttributeValueMemberS{Value: "grass"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "Ivysaur"},
+		},
+	})
+	require.NoError(t, err)
+
+	uexpr := "SET second_type = :ntype"
+	expr := map[string]ddbtypes.AttributeValue{
+		":ntyp": &ddbtypes.AttributeValueMemberS{Value: "poison"},
+	}
+	input := &dynamodb.UpdateItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "404"},
+		},
+		ConditionExpression:       aws.String("attribute_exists(id)"),
+		ReturnValues:              ddbtypes.ReturnValueUpdatedNew,
+		UpdateExpression:          aws.String(uexpr),
+		ExpressionAttributeValues: expr,
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
+		},
+	}
+
+	_, err = cli.UpdateItem(ctx, input)
+	require.Error(t, err)
+	var valErr smithy.APIError
+	require.ErrorAs(t, err, &valErr)
+	require.Equal(t, "ValidationException", valErr.ErrorCode())
+	require.Contains(t, valErr.ErrorMessage(), unusedExpressionAttributeNamesMsg)
+
+	input.ConditionExpression = aws.String("attribute_exists(#invalid-name)")
+	input.ExpressionAttributeNames = map[string]string{
+		"#invalid-name": "type",
+	}
+
+	_, err = cli.UpdateItem(ctx, input)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &valErr)
+	require.Equal(t, "ValidationException", valErr.ErrorCode())
+	require.Contains(t, valErr.ErrorMessage(), invalidExpressionAttributeName)
+
+	input.ConditionExpression = aws.String("#t = :invalid-value")
+	input.ExpressionAttributeNames = map[string]string{
+		"#t": "type",
+	}
+	input.ExpressionAttributeValues = map[string]ddbtypes.AttributeValue{
+		":invalid-value": &ddbtypes.AttributeValueMemberNULL{Value: true},
+	}
+
+	_, err = cli.UpdateItem(ctx, input)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &valErr)
+	require.Equal(t, "ValidationException", valErr.ErrorCode())
+	require.Contains(t, valErr.ErrorMessage(), invalidExpressionAttributeValue)
+
+	input = &dynamodb.UpdateItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "404"},
+		},
+		ConditionExpression:       aws.String("attribute_exists(#id)"),
+		ReturnValues:              ddbtypes.ReturnValueUpdatedNew,
+		UpdateExpression:          aws.String(uexpr),
+		ExpressionAttributeValues: expr,
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
+		},
+	}
+
+	var cond *ddbtypes.ConditionalCheckFailedException
+	_, err = cli.UpdateItem(ctx, input)
+	require.ErrorAs(t, err, &cond)
+
+	input = &dynamodb.UpdateItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "001"},
+		},
+		ConditionExpression:       aws.String("attribute_not_exists(#id)"),
+		ReturnValues:              ddbtypes.ReturnValueUpdatedNew,
+		UpdateExpression:          aws.String(uexpr),
+		ExpressionAttributeValues: expr,
+		ExpressionAttributeNames: map[string]string{
+			"#id": "id",
+		},
+		ReturnValuesOnConditionCheckFailure: ddbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+	}
+
+	cond = nil
+	_, err = cli.UpdateItem(ctx, input)
+	require.ErrorAs(t, err, &cond)
+	require.NotEmpty(t, cond.Item)
+	require.Equal(t, &ddbtypes.AttributeValueMemberS{Value: "001"}, cond.Item["id"])
+	require.Equal(t, &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, cond.Item["name"])
+}
+
 func TestServerDeleteItemReturnsOldWithSDKv2(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()
@@ -726,6 +845,35 @@ func TestServerGetItemInvalidExpressionAttributeNameKey(t *testing.T) {
 	require.Contains(t, apiErr.ErrorMessage(), invalidExpressionAttributeName)
 }
 
+func TestServerGetItemProjectionInvalidExpression(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "001"},
+			"type": &ddbtypes.AttributeValueMemberS{Value: "grass"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "001"},
+		},
+		ProjectionExpression: aws.String("("),
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "ValidationException", apiErr.ErrorCode())
+}
+
 func TestServerPutItemWithConditionsValidation(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()
@@ -742,7 +890,7 @@ func TestServerPutItemWithConditionsValidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// second with unused expression attribute value
+	// second with unused expression attribute value (matches aws-v2 client / DynamoDB)
 	_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
 		TableName: aws.String("pokemons"),
 		Item: map[string]ddbtypes.AttributeValue{
@@ -756,7 +904,12 @@ func TestServerPutItemWithConditionsValidation(t *testing.T) {
 			":not_used": &ddbtypes.AttributeValueMemberNULL{Value: true},
 		},
 	})
-	require.NoError(t, err)
+	require.Error(t, err)
+	var putValErr smithy.APIError
+	require.ErrorAs(t, err, &putValErr)
+	require.Equal(t, "ValidationException", putValErr.ErrorCode())
+
+	require.Contains(t, putValErr.ErrorMessage(), unusedExpressionAttributeValuesMsg)
 }
 
 func TestServerUpdateExpressionsAddRemoveDelete(t *testing.T) {

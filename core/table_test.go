@@ -32,6 +32,14 @@ func createPokemon(creature pokemon) map[string]*types.Item {
 	return item
 }
 
+// primaryKeyFromPokemonItem returns only the attributes used in createPokemonTable's primary key (id + name).
+func primaryKeyFromPokemonItem(item map[string]*types.Item) map[string]*types.Item {
+	return map[string]*types.Item{
+		"id":   item["id"],
+		"name": item["name"],
+	}
+}
+
 func createPokemonTable() (*Table, error) {
 	table := NewTable(tableName)
 
@@ -525,7 +533,7 @@ func TestDeleteItem(t *testing.T) {
 	}
 
 	_, err = newTable.Delete(inp)
-	c.EqualError(err, `ValidationException: number of conditions on the keys is invalid; field: "name"`)
+	c.EqualError(err, `ValidationException: The number of conditions on the keys is invalid`)
 }
 
 func TestDeleteIndex(t *testing.T) {
@@ -714,7 +722,7 @@ func TestUpdate_duplicateExpressionAttributeValues(t *testing.T) {
 
 	a, b := "p", "p"
 	_, err = newTable.Update(&types.UpdateItemInput{
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeValues: map[string]*types.Item{
 			":s": {SS: []*string{&a, &b}},
 		},
@@ -749,7 +757,7 @@ func TestUpdate(t *testing.T) {
 
 	updateInput := &types.UpdateItemInput{}
 	_, err = newTable.Update(updateInput)
-	c.Contains(err.Error(), "number of conditions on the keys is invalid;")
+	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
 
 	updateInput = &types.UpdateItemInput{
 		ExpressionAttributeNames: map[string]string{
@@ -758,7 +766,7 @@ func TestUpdate(t *testing.T) {
 		ExpressionAttributeValues: map[string]*types.Item{
 			":id": {S: new("002")},
 		},
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 	}
 
 	_, err = newTable.Update(updateInput)
@@ -809,7 +817,7 @@ func TestUpdateMultiClauseExpression(t *testing.T) {
 	c.NoError(err)
 
 	updateInput := &types.UpdateItemInput{
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeNames: map[string]string{
 			"#n": "name",
 		},
@@ -849,7 +857,7 @@ func TestUpdateDuplicateClauseKeywordError(t *testing.T) {
 	c.NoError(err)
 
 	updateInput := &types.UpdateItemInput{
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeNames: map[string]string{
 			"#n": "name",
 		},
@@ -884,7 +892,7 @@ func TestPutItem(t *testing.T) {
 	}
 
 	_, err := newTable.Put(input)
-	c.EqualError(err, `ValidationException: number of conditions on the keys is invalid; field: ""`)
+	c.EqualError(err, `ValidationException: One of the required keys was not given a value; field: ""`)
 
 	newTable.AttributesDef = map[string]string{"id": "S", "name": "S"}
 	newTable.KeySchema = keySchema{"id", "name", false}

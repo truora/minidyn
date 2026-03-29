@@ -50,6 +50,12 @@ func NewTable(name string) *Table {
 	}
 }
 
+// ValidatePrimaryKeyMap checks that a Key map for GetItem, DeleteItem, or UpdateItem
+// contains exactly the table's primary key attribute names (hash and range when defined).
+func (t *Table) ValidatePrimaryKeyMap(key map[string]*types.Item) error {
+	return t.KeySchema.validatePrimaryKeyMap(key)
+}
+
 // SetAttributeDefinition sets the attribute definition of a table
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {
@@ -622,6 +628,10 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
+	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
@@ -698,6 +708,10 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 	}
 
 	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 

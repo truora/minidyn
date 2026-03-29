@@ -76,7 +76,7 @@ func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) 
 	exprs := p.ParseProjectionExpression()
 
 	if len(p.Errors()) != 0 {
-		return nil, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
+		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(p.Errors(), "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 	}
 
 	env := language.NewEnvironment()

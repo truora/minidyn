@@ -8,7 +8,7 @@ import (
 
 var (
 	// ErrSyntaxError when a syntax error is detected
-	ErrSyntaxError = errors.New("syntax error")
+	ErrSyntaxError = errors.New("Syntax error") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 	// ErrUnsupportedFeature when an expression or attribute type in not yet supported by the interpreter
 	ErrUnsupportedFeature = errors.New("unsupported expression or attribute type")
 )

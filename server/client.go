@@ -182,6 +182,14 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.ConditionExpression),
+	); err != nil {
+		return nil, err
+	}
+
 	table, err := c.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, err
@@ -212,6 +220,14 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
+	}
+
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.ConditionExpression),
+	); err != nil {
+		return nil, err
 	}
 
 	table, err := c.getTable(aws.ToString(input.TableName))
@@ -245,6 +261,15 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
+	}
+
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.UpdateExpression),
+		aws.ToString(input.ConditionExpression),
+	); err != nil {
+		return nil, err
 	}
 
 	table, err := c.getTable(aws.ToString(input.TableName))
@@ -292,6 +317,10 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
 	}
 
+	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
+	}
+
 	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
 	if err != nil {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
@@ -314,6 +343,16 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
+	}
+
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.KeyConditionExpression),
+		aws.ToString(input.FilterExpression),
+		aws.ToString(input.ProjectionExpression),
+	); err != nil {
+		return nil, err
 	}
 
 	table, err := c.getTable(aws.ToString(input.TableName))
@@ -355,6 +394,15 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
+	}
+
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.ProjectionExpression),
+		aws.ToString(input.FilterExpression),
+	); err != nil {
+		return nil, err
 	}
 
 	table, err := c.getTable(aws.ToString(input.TableName))

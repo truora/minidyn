@@ -1967,7 +1967,7 @@ func TestBatchWriteItem(t *testing.T) {
 	delete(item, "id")
 
 	_, err = client.BatchWriteItem(context.Background(), input)
-	c.Contains(err.Error(), "number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "One of the required keys was not given a value")
 
 	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]dynamodbtypes.WriteRequest{

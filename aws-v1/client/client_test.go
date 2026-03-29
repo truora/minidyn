@@ -1824,7 +1824,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 	delete(item, "id")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), input)
-	c.Contains(err.Error(), "ValidationException: number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "One of the required keys was not given a value")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]*dynamodb.WriteRequest{

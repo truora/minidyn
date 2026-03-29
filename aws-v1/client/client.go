@@ -400,6 +400,10 @@ func (fd *Client) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 		return nil, awserr.New("ValidationException", vErr.Error(), nil)
 	}
 
+	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
+		return nil, awserr.New("ValidationException", keyErr.Error(), nil)
+	}
+
 	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
 	if err != nil {
 		return nil, awserr.New("ValidationException", err.Error(), nil)
@@ -726,7 +730,7 @@ func validateExpressionAttributes(exprNames map[string]*string, exprValues map[s
 	}
 
 	if len(missingValues) > 0 {
-		return awserr.New("ValidationException", fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeValuesMsg, strings.Join(missingValues, ", ")), nil)
+		return awserr.New("ValidationException", fmt.Sprintf("%s; keys: {%s}", unusedExpressionAttributeValuesMsg, strings.Join(missingValues, ", ")), nil)
 	}
 
 	err = validateSyntaxExpression(expressionAttributeValuesRegex, flattenValues, invalidExpressionAttributeValue)

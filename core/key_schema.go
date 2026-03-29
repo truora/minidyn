@@ -8,10 +8,45 @@ import (
 	"github.com/truora/minidyn/types"
 )
 
+// errInvalidKeyConditionCount matches DynamoDB ValidationException when Key does
+// not include exactly the table's primary key attributes (hash and range if defined).
+//
+//nolint:stylecheck,staticcheck,ST1005 // AWS error message
+var errInvalidKeyConditionCount = errors.New("The number of conditions on the keys is invalid")
+
 type keySchema struct {
 	HashKey   string
 	RangeKey  string
 	Secondary bool
+}
+
+// validatePrimaryKeyMap ensures Key-shaped maps (GetItem, DeleteItem, UpdateItem)
+// contain exactly the hash key and, when applicable, the range key attribute names.
+func (ks keySchema) validatePrimaryKeyMap(key map[string]*types.Item) error {
+	if ks.Secondary {
+		return nil
+	}
+
+	want := 1
+	if ks.RangeKey != "" {
+		want = 2
+	}
+
+	if len(key) != want {
+		return errInvalidKeyConditionCount
+	}
+
+	if _, ok := key[ks.HashKey]; !ok {
+		return errInvalidKeyConditionCount
+	}
+
+	if ks.RangeKey != "" {
+		if _, ok := key[ks.RangeKey]; !ok {
+			return errInvalidKeyConditionCount
+		}
+	}
+
+	return nil
 }
 
 func (ks keySchema) GetKey(attrs map[string]string, item map[string]*types.Item) (string, error) {

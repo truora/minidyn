@@ -663,6 +663,69 @@ func TestServerGetItemAttributeNameValidation(t *testing.T) {
 	require.Equal(t, "pikachu", out.Item["name"].(*ddbtypes.AttributeValueMemberS).Value)
 }
 
+func TestServerGetItemUnusedExpressionAttributeNames(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "1"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "pikachu"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+		ExpressionAttributeNames: map[string]string{
+			"#name": "name",
+		},
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "ValidationException", apiErr.ErrorCode())
+	require.Contains(t, apiErr.ErrorMessage(), unusedExpressionAttributeNamesMsg)
+}
+
+func TestServerGetItemInvalidExpressionAttributeNameKey(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "1"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "pikachu"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+		},
+		ProjectionExpression: aws.String("#name-1"),
+		ExpressionAttributeNames: map[string]string{
+			"#name-1": "name",
+		},
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "ValidationException", apiErr.ErrorCode())
+	require.Contains(t, apiErr.ErrorMessage(), invalidExpressionAttributeName)
+}
+
 func TestServerPutItemWithConditionsValidation(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

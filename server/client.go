@@ -278,6 +278,10 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.ToString(input.ProjectionExpression)); err != nil {
+		return nil, err
+	}
+
 	table, err := c.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, err
@@ -293,7 +297,14 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
 
-	return &GetItemOutput{Item: mapTypesMapToAttributeValue(table.Data[key])}, nil
+	stored := table.Data[key]
+
+	item, err := getItemAttributesForOutput(table, stored, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
+	if err != nil {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+	}
+
+	return &GetItemOutput{Item: item}, nil
 }
 
 // Query searches items by key condition and optional filter.

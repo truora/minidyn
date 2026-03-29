@@ -771,7 +771,7 @@ func TestUpdate(t *testing.T) {
 
 	var checkErr *types.ConditionalCheckFailedException
 	c.True(errors.As(err, &checkErr))
-	c.Contains(checkErr.Error(), "conditional request failed")
+	c.Contains(checkErr.Error(), "Conditional request failed")
 	c.Len(checkErr.Item, 3)
 	c.Equal("001", types.StringValue(checkErr.Item["id"].S))
 	c.Equal("grass", types.StringValue(checkErr.Item["type"].S))

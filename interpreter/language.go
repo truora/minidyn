@@ -31,6 +31,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
 	}
 
+	if conditional.Expression == nil {
+		return false, fmt.Errorf("%w: empty expression", ErrSyntaxError)
+	}
+
 	env := language.NewEnvironment()
 
 	aliases := map[string]string{}

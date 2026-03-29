@@ -89,6 +89,17 @@ func TestLanguageMatch(t *testing.T) {
 			},
 			expectedErr: ErrSyntaxError,
 		},
+		{
+			name: "empty expression",
+			input: MatchInput{
+				TableName:      "test",
+				Expression:     "",
+				Item:           item,
+				Attributes:     map[string]*types.Item{},
+				ExpressionType: ExpressionTypeConditional,
+			},
+			expectedErr: ErrSyntaxError,
+		},
 	}
 
 	for _, tc := range testCases {

@@ -1581,9 +1581,11 @@ func TestQuerySyntaxError(t *testing.T) {
 		TableName:              aws.String(tableName),
 	}
 
-	c.Panics(func() {
-		_, _ = client.Query(context.Background(), input)
-	})
+	_, err = client.Query(context.Background(), input)
+	c.Error(err)
+	var apiErr smithy.APIError
+	c.True(errors.As(err, &apiErr))
+	c.Equal("ValidationException", apiErr.ErrorCode())
 }
 
 func TestScan(t *testing.T) {

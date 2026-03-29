@@ -14,10 +14,10 @@ var (
 	errMissingField = errors.New("number of conditions on the keys is invalid")
 
 	// ErrConditionalRequestFailed when the conditional write is not meet
-	ErrConditionalRequestFailed = errors.New("conditional request failed")
+	ErrConditionalRequestFailed = errors.New("Conditional request failed") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
 	// ErrInvalidAtrributeValue when the attributte value is invalid
-	ErrInvalidAtrributeValue = errors.New("invalid attribute value type")
+	ErrInvalidAtrributeValue = errors.New("Invalid attribute value type") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 )
 
 const (

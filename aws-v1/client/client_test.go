@@ -1442,9 +1442,11 @@ func TestQuerySyntaxError(t *testing.T) {
 		TableName:              new(tableName),
 	}
 
-	c.Panics(func() {
-		_, _ = client.QueryWithContext(context.Background(), input)
-	})
+	_, err = client.QueryWithContext(context.Background(), input)
+	c.Error(err)
+	var aerr awserr.Error
+	c.True(errors.As(err, &aerr))
+	c.Equal("ValidationException", aerr.Code())
 }
 
 func TestScanWithContext(t *testing.T) {

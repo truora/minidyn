@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/smithy-go"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/types"
 )
@@ -680,7 +681,7 @@ func mapKnownError(err error) error {
 		return checkErr
 	case "ResourceNotFoundException":
 		return &dynamodbtypes.ResourceNotFoundException{Message: aws.String(intErr.Message())}
+	default:
+		return &smithy.GenericAPIError{Code: intErr.Code(), Message: intErr.Message()}
 	}
-
-	return err
 }

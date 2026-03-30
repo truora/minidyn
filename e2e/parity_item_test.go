@@ -427,6 +427,59 @@ func TestE2E_Item(t *testing.T) {
 			},
 		},
 		{
+			name: "UpdateItemReturnValues",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				opt := func(o *attributevalue.EncoderOptions) {
+					o.TagKey = "json"
+				}
+
+				putAndUpdate := func(pk string, rv dynamodbtypes.ReturnValue) map[string]dynamodbtypes.AttributeValue {
+					t.Helper()
+
+					item, err := attributevalue.MarshalMapWithOptions(parityPokemon{
+						ID:   pk,
+						Type: "grass",
+						Name: "Bulbasaur",
+					}, opt)
+					require.NoError(t, err)
+
+					_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+						TableName: aws.String(parityPokemonTable),
+						Item:      item,
+					})
+					require.NoError(t, err)
+
+					out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+						TableName: aws.String(parityPokemonTable),
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: pk},
+						},
+						UpdateExpression: aws.String("SET second_type = :st"),
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+							":st": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
+						},
+						ReturnValues: rv,
+					})
+					require.NoError(t, err)
+
+					return out.Attributes
+				}
+
+				none := putAndUpdate("e2e-urv-none", dynamodbtypes.ReturnValueNone)
+				allOld := putAndUpdate("e2e-urv-all-old", dynamodbtypes.ReturnValueAllOld)
+				updatedOld := putAndUpdate("e2e-urv-upd-old", dynamodbtypes.ReturnValueUpdatedOld)
+				updatedNew := putAndUpdate("e2e-urv-upd-new", dynamodbtypes.ReturnValueUpdatedNew)
+				allNew := putAndUpdate("e2e-urv-all-new", dynamodbtypes.ReturnValueAllNew)
+
+				return []any{none, allOld, updatedOld, updatedNew, allNew}
+			},
+		},
+		{
 			name: "UpdateItemWithConditionalExpression",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()

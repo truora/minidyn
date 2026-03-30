@@ -787,6 +787,7 @@ func TestUpdate(t *testing.T) {
 
 	updateInput.ConditionExpression = new("attribute_exists(id)")
 	updateInput.UpdateExpression = "SET id = :id"
+	updateInput.ReturnValues = aws.String("ALL_NEW")
 
 	_, err = newTable.Update(updateInput)
 	c.Error(err)
@@ -831,12 +832,106 @@ func TestUpdateMultiClauseExpression(t *testing.T) {
 			":one": {N: new("1")},
 		},
 		UpdateExpression: "SET #t = :new ADD lvl :one",
+		ReturnValues:     aws.String("ALL_NEW"),
 	}
 
 	result, err := newTable.Update(updateInput)
 	c.NoError(err)
 	c.Equal("poison", types.StringValue(result["type"].S))
 	c.Equal("2", types.StringValue(result["lvl"].N))
+
+	newTable.Clear()
+}
+
+func TestUpdateReturnValuesSemantics(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	exprVals := map[string]*types.Item{":st": {S: new("poison")}}
+	uexpr := "SET second_type = :st"
+
+	run := func(id string, rv *string) map[string]*types.Item {
+		t.Helper()
+
+		item := createPokemon(pokemon{
+			ID:   id,
+			Type: "grass",
+			Name: "Bulbasaur",
+		})
+
+		_, perr := newTable.Put(&types.PutItemInput{
+			Item:      item,
+			TableName: &newTable.Name,
+		})
+		c.NoError(perr)
+
+		out, uerr := newTable.Update(&types.UpdateItemInput{
+			TableName:                 &newTable.Name,
+			Key:                       primaryKeyFromPokemonItem(item),
+			ReturnValues:              rv,
+			UpdateExpression:          uexpr,
+			ExpressionAttributeValues: exprVals,
+		})
+		c.NoError(uerr)
+
+		return out
+	}
+
+	c.Nil(run("rv-none", nil))
+	c.Nil(run("rv-none-explicit", aws.String("NONE")))
+
+	allOld := run("rv-all-old", aws.String("ALL_OLD"))
+	c.Len(allOld, 3)
+	c.Equal("Bulbasaur", types.StringValue(allOld["name"].S))
+	c.Equal("grass", types.StringValue(allOld["type"].S))
+	c.Equal("rv-all-old", types.StringValue(allOld["id"].S))
+
+	updatedOld := run("rv-upd-old", aws.String("UPDATED_OLD"))
+	c.Empty(updatedOld)
+
+	updatedNew := run("rv-upd-new", aws.String("UPDATED_NEW"))
+	c.Len(updatedNew, 1)
+	c.Equal("poison", types.StringValue(updatedNew["second_type"].S))
+
+	allNew := run("rv-all-new", aws.String("ALL_NEW"))
+	c.Len(allNew, 4)
+	c.Equal("poison", types.StringValue(allNew["second_type"].S))
+	c.Equal("Bulbasaur", types.StringValue(allNew["name"].S))
+	c.Equal("rv-all-new", types.StringValue(allNew["id"].S))
+
+	newTable.Clear()
+}
+
+func TestUpdateInvalidReturnValues(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{
+		ID:   "bad-rv",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+
+	_, err = newTable.Put(&types.PutItemInput{
+		Item:      item,
+		TableName: &newTable.Name,
+	})
+	c.NoError(err)
+
+	_, err = newTable.Update(&types.UpdateItemInput{
+		TableName:                 &newTable.Name,
+		Key:                       primaryKeyFromPokemonItem(item),
+		ReturnValues:              aws.String("NOT_A_REAL_MODE"),
+		UpdateExpression:          "SET #n = :new",
+		ExpressionAttributeNames:  map[string]string{"#n": "name"},
+		ExpressionAttributeValues: map[string]*types.Item{":new": {S: new("X")}},
+	})
+	c.Error(err)
+	c.Contains(err.Error(), "returnValues")
 
 	newTable.Clear()
 }

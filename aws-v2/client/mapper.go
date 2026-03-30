@@ -612,6 +612,10 @@ func mapTypesToDynamoAttributeDefinitionMapOrList(item *types.Item) dynamodbtype
 }
 
 func mapTypesToDynamoMapItem(input map[string]*types.Item) map[string]dynamodbtypes.AttributeValue {
+	if input == nil {
+		return nil
+	}
+
 	output := map[string]dynamodbtypes.AttributeValue{}
 
 	for key, item := range input {

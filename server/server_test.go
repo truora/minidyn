@@ -543,6 +543,61 @@ func TestServerUpdateItemWithSDKv2(t *testing.T) {
 	require.Equal(t, "2", upd.Attributes["lvl"].(*ddbtypes.AttributeValueMemberN).Value)
 }
 
+func TestServerUpdateItemReturnValuesMatrix(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	ctx := context.Background()
+
+	putAndUpdate := func(pk string, rv ddbtypes.ReturnValue) map[string]ddbtypes.AttributeValue {
+		t.Helper()
+
+		_, err := cli.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id":   &ddbtypes.AttributeValueMemberS{Value: pk},
+				"type": &ddbtypes.AttributeValueMemberS{Value: "grass"},
+				"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+			},
+		})
+		require.NoError(t, err)
+
+		out, err := cli.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName: aws.String("pokemons"),
+			Key: map[string]ddbtypes.AttributeValue{
+				"id": &ddbtypes.AttributeValueMemberS{Value: pk},
+			},
+			UpdateExpression: aws.String("SET second_type = :st"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":st": &ddbtypes.AttributeValueMemberS{Value: "poison"},
+			},
+			ReturnValues: rv,
+		})
+		require.NoError(t, err)
+
+		return out.Attributes
+	}
+
+	require.Nil(t, putAndUpdate("srv-urv-none", ddbtypes.ReturnValueNone))
+
+	allOld := putAndUpdate("srv-urv-all-old", ddbtypes.ReturnValueAllOld)
+	require.Len(t, allOld, 3)
+	require.Equal(t, "Bulbasaur", allOld["name"].(*ddbtypes.AttributeValueMemberS).Value)
+
+	updatedOld := putAndUpdate("srv-urv-upd-old", ddbtypes.ReturnValueUpdatedOld)
+	require.Empty(t, updatedOld)
+
+	updatedNew := putAndUpdate("srv-urv-upd-new", ddbtypes.ReturnValueUpdatedNew)
+	require.Len(t, updatedNew, 1)
+	require.Equal(t, "poison", updatedNew["second_type"].(*ddbtypes.AttributeValueMemberS).Value)
+
+	allNew := putAndUpdate("srv-urv-all-new", ddbtypes.ReturnValueAllNew)
+	require.Len(t, allNew, 4)
+	require.Equal(t, "poison", allNew["second_type"].(*ddbtypes.AttributeValueMemberS).Value)
+}
+
 func TestServerUpdateItemWithConditionalExpression(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

@@ -285,6 +285,7 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		ExpressionAttributeValues:           mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
 		Key:                                 mapAttributeValueMapToTypes(input.Key),
 		UpdateExpression:                    aws.ToString(input.UpdateExpression),
+		ReturnValues:                        toStringPtr(string(input.ReturnValues)),
 		ReturnValuesOnConditionCheckFailure: toStringPtr(string(input.ReturnValuesOnConditionCheckFailure)),
 	})
 	if err != nil {

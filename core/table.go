@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"maps"
+	"reflect"
 	"sort"
 
 	"github.com/truora/minidyn/interpreter"
@@ -623,9 +624,116 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 	return t.LangInterpreter.Update(input)
 }
 
+func validateUpdateItemReturnValues(rv *string) error {
+	if rv == nil || *rv == "" {
+		return nil
+	}
+
+	switch *rv {
+	case "NONE", "ALL_OLD", "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
+		return nil
+	default:
+		return types.NewError("ValidationException",
+			fmt.Sprintf("1 validation error detected: Value '%s' at 'returnValues' failed to satisfy constraint: Member must satisfy enum value set: [NONE, ALL_OLD, UPDATED_OLD, UPDATED_NEW, ALL_NEW]", *rv),
+			nil)
+	}
+}
+
+func dynamoItemEqual(a, b *types.Item) bool {
+	return reflect.DeepEqual(a, b)
+}
+
+func changedUpdateAttributeKeys(oldItem, newItem map[string]*types.Item) []string {
+	keys := make(map[string]struct{})
+
+	for k := range oldItem {
+		keys[k] = struct{}{}
+	}
+
+	for k := range newItem {
+		keys[k] = struct{}{}
+	}
+
+	changed := make([]string, 0, len(keys))
+
+	for k := range keys {
+		ov, okO := oldItem[k]
+		nv, okN := newItem[k]
+
+		if !okO {
+			ov = nil
+		}
+
+		if !okN {
+			nv = nil
+		}
+
+		if !dynamoItemEqual(ov, nv) {
+			changed = append(changed, k)
+		}
+	}
+
+	sort.Strings(changed)
+
+	return changed
+}
+
+func buildUpdateItemReturnAttributes(rv *string, oldItem, newItem map[string]*types.Item) map[string]*types.Item {
+	mode := ""
+
+	if rv != nil {
+		mode = *rv
+	}
+
+	switch mode {
+	case "", "NONE":
+		return nil
+	case "ALL_NEW":
+		return copyItem(newItem)
+	case "ALL_OLD":
+		return copyItem(oldItem)
+	case "UPDATED_OLD":
+		ck := changedUpdateAttributeKeys(oldItem, newItem)
+		if len(ck) == 0 {
+			return map[string]*types.Item{}
+		}
+
+		out := make(map[string]*types.Item, len(ck))
+
+		for _, k := range ck {
+			if v, ok := oldItem[k]; ok {
+				out[k] = deepCopyTypesItem(v)
+			}
+		}
+
+		return out
+	case "UPDATED_NEW":
+		ck := changedUpdateAttributeKeys(oldItem, newItem)
+		if len(ck) == 0 {
+			return map[string]*types.Item{}
+		}
+
+		out := make(map[string]*types.Item, len(ck))
+
+		for _, k := range ck {
+			if v, ok := newItem[k]; ok {
+				out[k] = deepCopyTypesItem(v)
+			}
+		}
+
+		return out
+	default:
+		return nil
+	}
+}
+
 // Update updates an item in the table based on the input
 func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, error) { //nolint:gocognit,gocyclo // conditional writes, interpreter update, GSI updates
 	if err := validateUpdateItemInputKeysAndValues(input); err != nil {
+		return nil, err
+	}
+
+	if err := validateUpdateItemReturnValues(input.ReturnValues); err != nil {
 		return nil, err
 	}
 
@@ -687,7 +795,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		item = copyItem(input.Key)
 	}
 
-	oldItem := copyItem(item)
+	oldItem := deepCopyItemMap(item)
 
 	err = t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.Name,
@@ -710,7 +818,9 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		}
 	}
 
-	return copyItem(item), nil
+	newItem := copyItem(item)
+
+	return buildUpdateItemReturnAttributes(input.ReturnValues, oldItem, newItem), nil
 }
 
 // Delete deletes an item in the table based on the input

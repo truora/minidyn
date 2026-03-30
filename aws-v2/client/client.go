@@ -319,8 +319,10 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		return nil, mapKnownError(err)
 	}
 
-	output := &dynamodb.UpdateItemOutput{
-		Attributes: mapTypesToDynamoMapItem(item),
+	output := &dynamodb.UpdateItemOutput{}
+
+	if item != nil {
+		output.Attributes = mapTypesToDynamoMapItem(item)
 	}
 
 	return output, nil

@@ -853,6 +853,60 @@ func TestUpdateItemWithContext(t *testing.T) {
 	c.Equal("water", aws.StringValue(item["second_type"].S))
 }
 
+func TestUpdateItemReturnValuesMatrix(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+
+	putAndUpdate := func(pk string, rv *string) map[string]*dynamodb.AttributeValue {
+		t.Helper()
+
+		_, err := client.PutItemWithContext(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]*dynamodb.AttributeValue{
+				"id":   {S: aws.String(pk)},
+				"type": {S: aws.String("grass")},
+				"name": {S: aws.String("Bulbasaur")},
+			},
+		})
+		c.NoError(err)
+
+		out, err := client.UpdateItemWithContext(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String(tableName),
+			Key: map[string]*dynamodb.AttributeValue{
+				"id": {S: aws.String(pk)},
+			},
+			UpdateExpression: aws.String("SET second_type = :st"),
+			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+				":st": {S: aws.String("poison")},
+			},
+			ReturnValues: rv,
+		})
+		c.NoError(err)
+
+		return out.Attributes
+	}
+
+	c.Nil(putAndUpdate("v1-urv-none", aws.String("NONE")))
+
+	allOld := putAndUpdate("v1-urv-all-old", aws.String("ALL_OLD"))
+	c.Len(allOld, 3)
+	c.Equal("Bulbasaur", aws.StringValue(allOld["name"].S))
+	c.Equal("grass", aws.StringValue(allOld["type"].S))
+
+	updatedOld := putAndUpdate("v1-urv-upd-old", aws.String("UPDATED_OLD"))
+	c.Empty(updatedOld)
+
+	updatedNew := putAndUpdate("v1-urv-upd-new", aws.String("UPDATED_NEW"))
+	c.Len(updatedNew, 1)
+	c.Equal("poison", aws.StringValue(updatedNew["second_type"].S))
+
+	allNew := putAndUpdate("v1-urv-all-new", aws.String("ALL_NEW"))
+	c.Len(allNew, 4)
+	c.Equal("poison", aws.StringValue(allNew["second_type"].S))
+}
+
 func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)

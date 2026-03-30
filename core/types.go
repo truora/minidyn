@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"maps"
@@ -30,6 +31,105 @@ func copyItem(item map[string]*types.Item) map[string]*types.Item {
 	maps.Copy(copy, item)
 
 	return copy
+}
+
+func cloneBoolPtr(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+
+	v := *b
+
+	return &v
+}
+
+func cloneStringPtr(s *string) *string {
+	if s == nil {
+		return nil
+	}
+
+	v := *s
+
+	return &v
+}
+
+func deepCopyStringPtrSlice(src []*string) []*string {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make([]*string, len(src))
+
+	for i, s := range src {
+		out[i] = cloneStringPtr(s)
+	}
+
+	return out
+}
+
+func deepCopyByteSliceSlice(src [][]byte) [][]byte {
+	if len(src) == 0 {
+		return nil
+	}
+
+	out := make([][]byte, len(src))
+
+	for i, b := range src {
+		out[i] = bytes.Clone(b)
+	}
+
+	return out
+}
+
+// deepCopyTypesItem returns a deep copy of a DynamoDB attribute value tree.
+func deepCopyTypesItem(it *types.Item) *types.Item {
+	if it == nil {
+		return nil
+	}
+
+	out := &types.Item{
+		BOOL: cloneBoolPtr(it.BOOL),
+		NULL: cloneBoolPtr(it.NULL),
+		S:    cloneStringPtr(it.S),
+		N:    cloneStringPtr(it.N),
+	}
+
+	if it.B != nil {
+		out.B = bytes.Clone(it.B)
+	}
+
+	out.BS = deepCopyByteSliceSlice(it.BS)
+	out.SS = deepCopyStringPtrSlice(it.SS)
+	out.NS = deepCopyStringPtrSlice(it.NS)
+
+	if len(it.L) > 0 {
+		out.L = make([]*types.Item, len(it.L))
+
+		for i, e := range it.L {
+			out.L[i] = deepCopyTypesItem(e)
+		}
+	}
+
+	if len(it.M) > 0 {
+		out.M = deepCopyItemMap(it.M)
+	}
+
+	return out
+}
+
+// deepCopyItemMap returns a deep copy of an item attribute map.
+func deepCopyItemMap(m map[string]*types.Item) map[string]*types.Item {
+	if m == nil {
+		return nil
+	}
+
+	out := make(map[string]*types.Item, len(m))
+
+	for k, v := range m {
+		out[k] = deepCopyTypesItem(v)
+	}
+
+	return out
 }
 
 func mapSliceType(t reflect.Type) string {

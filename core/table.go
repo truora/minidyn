@@ -50,6 +50,12 @@ func NewTable(name string) *Table {
 	}
 }
 
+// ValidatePrimaryKeyMap checks that a Key map for GetItem, DeleteItem, or UpdateItem
+// contains exactly the table's primary key attribute names (hash and range when defined).
+func (t *Table) ValidatePrimaryKeyMap(key map[string]*types.Item) error {
+	return t.KeySchema.validatePrimaryKeyMap(key)
+}
+
 // SetAttributeDefinition sets the attribute definition of a table
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {
@@ -112,11 +118,11 @@ func isValidKeyAttributeType(typ string) bool {
 
 func (t *Table) validateAttributeDefinition(ks keySchema, message string) error {
 	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return types.NewError("ValidationException", fmt.Sprintf("%sHash Key not specified in Attribute Definitions.", message), nil)
+		return types.NewError("ValidationException", fmt.Sprintf("%sHash Key not specified in Attribute Definitions.  Type unknown.", message), nil)
 	}
 
 	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return types.NewError("ValidationException", fmt.Sprintf("%sRange Key not specified in Attribute Definitions.", message), nil)
+		return types.NewError("ValidationException", fmt.Sprintf("%sRange Key not specified in Attribute Definitions.  Type unknown.", message), nil)
 	}
 
 	hashType := t.AttributesDef[ks.HashKey]
@@ -334,15 +340,18 @@ func prepareSearch(input *QueryInput, index *index, k, startKey string) (string,
 	return "", false
 }
 
-func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool) {
+func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool, error) {
 	storedItem, ok := t.Data[pk]
 
-	lastMatchExpressionType, matched := t.matchKey(*input, storedItem)
+	lastMatchExpressionType, matched, err := t.matchKey(*input, storedItem)
+	if err != nil {
+		return nil, nil, lastMatchExpressionType, false, err
+	}
 
 	fullCopy := copyItem(storedItem)
 
 	if !ok || !input.started || !matched {
-		return fullCopy, fullCopy, lastMatchExpressionType, false
+		return fullCopy, fullCopy, lastMatchExpressionType, false, nil
 	}
 
 	if input.ProjectionExpression != "" {
@@ -352,13 +361,13 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 			Aliases:    input.Aliases,
 		})
 		if err != nil {
-			panic(err)
+			return nil, nil, lastMatchExpressionType, false, err
 		}
 
-		return projected, fullCopy, lastMatchExpressionType, true
+		return projected, fullCopy, lastMatchExpressionType, true, nil
 	}
 
-	return fullCopy, fullCopy, lastMatchExpressionType, true
+	return fullCopy, fullCopy, lastMatchExpressionType, true, nil
 }
 
 func shouldReturnNextKey(item map[string]*types.Item, count, scanned, limit, keysSize int64) bool {
@@ -387,7 +396,7 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 }
 
 // SearchData queries the table based on the input.
-func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item, error) {
+func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
 	if err := validateSearchInputMaps(input); err != nil {
 		return nil, nil, err
 	}
@@ -418,7 +427,10 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 			continue
 		}
 
-		item, keyItem, expressionType, matched := t.getMatchedItemAndCount(&input, pk, startKey)
+		item, keyItem, expressionType, matched, gerr := t.getMatchedItemAndCount(&input, pk, startKey)
+		if gerr != nil {
+			return nil, nil, types.NewError("ValidationException", gerr.Error(), nil)
+		}
 
 		if matched {
 			items = append(items, item)
@@ -455,28 +467,30 @@ func (t *Table) getLastKey(item map[string]*types.Item, limit, count, scanned, k
 	return key
 }
 
-func (t *Table) interpreterMatch(input interpreter.MatchInput) bool {
+func (t *Table) interpreterMatch(input interpreter.MatchInput) (bool, error) {
 	if t.UseNativeInterpreter {
 		matched, err := t.NativeInterpreter.Match(input)
 		if err == nil {
-			return matched
+			return matched, nil
 		}
 	}
 
 	matched, err := t.LangInterpreter.Match(input)
 	if err != nil {
-		panic(err)
+		return false, err
 	}
 
-	return matched
+	return matched, nil
 }
 
-func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpreter.ExpressionType, bool) {
+func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpreter.ExpressionType, bool, error) { //nolint:gocognit // key, filter, and conditional expression branches
 	var lastMatchExpressionType interpreter.ExpressionType
 	matched := input.Scan
 
 	if input.KeyConditionExpression != "" {
-		matched = t.interpreterMatch(interpreter.MatchInput{
+		var err error
+
+		matched, err = t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
 			Expression:     input.KeyConditionExpression,
 			ExpressionType: interpreter.ExpressionTypeKey,
@@ -484,23 +498,34 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
+		if err != nil {
+			return interpreter.ExpressionTypeKey, false, err
+		}
 		lastMatchExpressionType = interpreter.ExpressionTypeKey
 	}
 
 	if input.FilterExpression != "" {
-		matched = matched && t.interpreterMatch(interpreter.MatchInput{
-			TableName:      t.Name,
-			Expression:     input.FilterExpression,
-			ExpressionType: interpreter.ExpressionTypeFilter,
-			Item:           item,
-			Aliases:        input.Aliases,
-			Attributes:     input.ExpressionAttributeValues,
-		})
+		if matched {
+			m, err := t.interpreterMatch(interpreter.MatchInput{
+				TableName:      t.Name,
+				Expression:     input.FilterExpression,
+				ExpressionType: interpreter.ExpressionTypeFilter,
+				Item:           item,
+				Aliases:        input.Aliases,
+				Attributes:     input.ExpressionAttributeValues,
+			})
+			if err != nil {
+				return interpreter.ExpressionTypeFilter, false, err
+			}
+			matched = m
+		}
 		lastMatchExpressionType = interpreter.ExpressionTypeFilter
 	}
 
 	if input.ConditionExpression != nil && *input.ConditionExpression != "" {
-		matched = t.interpreterMatch(interpreter.MatchInput{
+		var err error
+
+		matched, err = t.interpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
 			Expression:     *input.ConditionExpression,
 			ExpressionType: interpreter.ExpressionTypeConditional,
@@ -508,10 +533,13 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 			Aliases:        input.Aliases,
 			Attributes:     input.ExpressionAttributeValues,
 		})
+		if err != nil {
+			return interpreter.ExpressionTypeConditional, false, err
+		}
 		lastMatchExpressionType = interpreter.ExpressionTypeConditional
 	}
 
-	return lastMatchExpressionType, matched
+	return lastMatchExpressionType, matched, nil
 }
 
 func (t *Table) setItem(key string, item map[string]*types.Item) {
@@ -540,7 +568,7 @@ func (t *Table) Clear() {
 }
 
 // Put puts items into table
-func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
+func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) { //nolint:gocognit // conditional write, key resolution, GSI updates
 	if err := types.ValidateItemMap(input.Item); err != nil {
 		return copyItem(input.Item), types.NewError("ValidationException", err.Error(), nil)
 	}
@@ -558,13 +586,16 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 
 	// support conditional writes
 	if input.ConditionExpression != nil {
-		_, matched := t.matchKey(QueryInput{
+		_, matched, merr := t.matchKey(QueryInput{
 			Index:                     PrimaryIndexName,
 			ExpressionAttributeValues: input.ExpressionAttributeValues,
 			Aliases:                   input.ExpressionAttributeNames,
 			Limit:                     1,
 			ConditionExpression:       input.ConditionExpression,
 		}, t.getItem(key))
+		if merr != nil {
+			return item, types.NewError("ValidationException", merr.Error(), nil)
+		}
 
 		if !matched {
 			return item, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
@@ -597,6 +628,10 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
+	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
 	// update primary index
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
 	if err != nil {
@@ -619,7 +654,11 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 			Aliases:                   input.ExpressionAttributeNames,
 		}
 
-		_, matched := t.matchKey(query, item)
+		_, matched, merr := t.matchKey(query, item)
+		if merr != nil {
+			return nil, types.NewError("ValidationException", merr.Error(), nil)
+		}
+
 		if !matched {
 			checkErr := &types.ConditionalCheckFailedException{
 				MessageText: ErrConditionalRequestFailed.Error(),
@@ -646,7 +685,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		Aliases:    input.ExpressionAttributeNames,
 	})
 	if err != nil {
-		return nil, err
+		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	t.setItem(key, item)
@@ -663,12 +702,16 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 }
 
 // Delete deletes an item in the table based on the input
-func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) {
+func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) { //nolint:gocognit,gocyclo // conditional delete, key resolution, index cleanup
 	if err := types.ValidateItemMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
@@ -678,6 +721,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 	}
 
 	item, ok := t.Data[key]
+
 	existingForCond := item
 	if !ok {
 		existingForCond = map[string]*types.Item{}
@@ -685,19 +729,23 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 
 	if input.ConditionExpression != nil && *input.ConditionExpression != "" {
 		aliases := map[string]string{}
+
 		for k, v := range input.ExpressionAttributeNames {
 			if v != nil {
 				aliases[k] = *v
 			}
 		}
 
-		_, matched := t.matchKey(QueryInput{
+		_, matched, merr := t.matchKey(QueryInput{
 			Index:                     PrimaryIndexName,
 			ExpressionAttributeValues: input.ExpressionAttributeValues,
 			Aliases:                   aliases,
 			Limit:                     1,
 			ConditionExpression:       input.ConditionExpression,
 		}, existingForCond)
+		if merr != nil {
+			return nil, types.NewError("ValidationException", merr.Error(), nil)
+		}
 
 		if !matched {
 			return nil, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)

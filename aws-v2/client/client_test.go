@@ -1165,7 +1165,7 @@ func TestUpdateItemError(t *testing.T) {
 	}
 
 	_, err = client.UpdateItem(context.Background(), input)
-	c.Contains(err.Error(), "number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "One of the required keys was not given a value")
 
 	ActiveForceFailure(client)
 	defer DeactiveForceFailure(client)
@@ -1581,9 +1581,11 @@ func TestQuerySyntaxError(t *testing.T) {
 		TableName:              aws.String(tableName),
 	}
 
-	c.Panics(func() {
-		_, _ = client.Query(context.Background(), input)
-	})
+	_, err = client.Query(context.Background(), input)
+	c.Error(err)
+	var apiErr smithy.APIError
+	c.True(errors.As(err, &apiErr))
+	c.Equal("ValidationException", apiErr.ErrorCode())
 }
 
 func TestScan(t *testing.T) {
@@ -1965,7 +1967,7 @@ func TestBatchWriteItem(t *testing.T) {
 	delete(item, "id")
 
 	_, err = client.BatchWriteItem(context.Background(), input)
-	c.Contains(err.Error(), "number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "One of the required keys was not given a value")
 
 	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]dynamodbtypes.WriteRequest{

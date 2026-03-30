@@ -32,6 +32,14 @@ func createPokemon(creature pokemon) map[string]*types.Item {
 	return item
 }
 
+// primaryKeyFromPokemonItem returns only the attributes used in createPokemonTable's primary key (id + name).
+func primaryKeyFromPokemonItem(item map[string]*types.Item) map[string]*types.Item {
+	return map[string]*types.Item{
+		"id":   item["id"],
+		"name": item["name"],
+	}
+}
+
 func createPokemonTable() (*Table, error) {
 	table := NewTable(tableName)
 
@@ -436,10 +444,10 @@ func TestGetKey(t *testing.T) {
 	c.Equal("range.HASH", k)
 
 	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
-	c.EqualError(err, `invalid attribute value type; field "HASH"`)
+	c.EqualError(err, `Invalid attribute value type; field "HASH"`)
 
 	_, err = newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
-	c.EqualError(err, `invalid attribute value type; field "range"`)
+	c.EqualError(err, `Invalid attribute value type; field "range"`)
 
 	newTable.KeySchema = keySchema{"", "", true}
 	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
@@ -525,7 +533,7 @@ func TestDeleteItem(t *testing.T) {
 	}
 
 	_, err = newTable.Delete(inp)
-	c.EqualError(err, `ValidationException: number of conditions on the keys is invalid; field: "name"`)
+	c.EqualError(err, `ValidationException: The number of conditions on the keys is invalid; expected 2 keys, got 1`)
 }
 
 func TestDeleteIndex(t *testing.T) {
@@ -714,7 +722,7 @@ func TestUpdate_duplicateExpressionAttributeValues(t *testing.T) {
 
 	a, b := "p", "p"
 	_, err = newTable.Update(&types.UpdateItemInput{
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeValues: map[string]*types.Item{
 			":s": {SS: []*string{&a, &b}},
 		},
@@ -749,7 +757,7 @@ func TestUpdate(t *testing.T) {
 
 	updateInput := &types.UpdateItemInput{}
 	_, err = newTable.Update(updateInput)
-	c.Contains(err.Error(), "number of conditions on the keys is invalid;")
+	c.Contains(err.Error(), "The number of conditions on the keys is invalid")
 
 	updateInput = &types.UpdateItemInput{
 		ExpressionAttributeNames: map[string]string{
@@ -758,7 +766,7 @@ func TestUpdate(t *testing.T) {
 		ExpressionAttributeValues: map[string]*types.Item{
 			":id": {S: new("002")},
 		},
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 	}
 
 	_, err = newTable.Update(updateInput)
@@ -771,7 +779,7 @@ func TestUpdate(t *testing.T) {
 
 	var checkErr *types.ConditionalCheckFailedException
 	c.True(errors.As(err, &checkErr))
-	c.Contains(checkErr.Error(), "conditional request failed")
+	c.Contains(checkErr.Error(), "Conditional request failed")
 	c.Len(checkErr.Item, 3)
 	c.Equal("001", types.StringValue(checkErr.Item["id"].S))
 	c.Equal("grass", types.StringValue(checkErr.Item["type"].S))
@@ -809,7 +817,7 @@ func TestUpdateMultiClauseExpression(t *testing.T) {
 	c.NoError(err)
 
 	updateInput := &types.UpdateItemInput{
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeNames: map[string]string{
 			"#n": "name",
 		},
@@ -849,7 +857,7 @@ func TestUpdateDuplicateClauseKeywordError(t *testing.T) {
 	c.NoError(err)
 
 	updateInput := &types.UpdateItemInput{
-		Key: item,
+		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeNames: map[string]string{
 			"#n": "name",
 		},
@@ -884,7 +892,7 @@ func TestPutItem(t *testing.T) {
 	}
 
 	_, err := newTable.Put(input)
-	c.EqualError(err, `ValidationException: number of conditions on the keys is invalid; field: ""`)
+	c.EqualError(err, `ValidationException: One of the required keys was not given a value; field: ""`)
 
 	newTable.AttributesDef = map[string]string{"id": "S", "name": "S"}
 	newTable.KeySchema = keySchema{"id", "name", false}
@@ -973,21 +981,28 @@ func TestInterpreterMatch(t *testing.T) {
 				S: new("001"),
 			},
 		},
+		Aliases: map[string]string{
+			"#id": "id",
+		},
 		ExpressionType: interpreter.ExpressionTypeConditional,
 	}
 
-	newTable.interpreterMatch(matchInput)
+	matched, err := newTable.interpreterMatch(matchInput)
+	c.NoError(err)
+	c.True(matched)
 
 	matchInput = interpreter.MatchInput{
 		TableName: tableName,
 	}
 
-	c.Panics(func() { newTable.interpreterMatch(matchInput) })
+	_, err = newTable.interpreterMatch(matchInput)
+	c.Error(err)
 
 	newTable.UseNativeInterpreter = false
 	matchInput.Expression = "bad_expression(id)"
 
-	c.Panics(func() { newTable.interpreterMatch(matchInput) })
+	_, err = newTable.interpreterMatch(matchInput)
+	c.Error(err)
 }
 
 func TestMatchKey(t *testing.T) {
@@ -1011,7 +1026,8 @@ func TestMatchKey(t *testing.T) {
 		ConditionExpression:    new("attribute_exists(id)"),
 	}
 
-	expresionType, ok := newTable.matchKey(queryInput, item)
+	expresionType, ok, err := newTable.matchKey(queryInput, item)
+	c.NoError(err)
 	c.True(ok)
 	c.NotNil(expresionType)
 }

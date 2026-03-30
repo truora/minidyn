@@ -3,6 +3,7 @@ package interpreter
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -89,12 +90,47 @@ func TestLanguageMatch(t *testing.T) {
 			},
 			expectedErr: ErrSyntaxError,
 		},
+		{
+			name: "empty expression",
+			input: MatchInput{
+				TableName:      "test",
+				Expression:     "",
+				Item:           item,
+				Attributes:     map[string]*types.Item{},
+				ExpressionType: ExpressionTypeConditional,
+			},
+			expectedErr: ErrSyntaxError,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			matchTestCaseVerify(tc, t)
 		})
+	}
+}
+
+func TestLanguageMatch_keyConditionSyntaxErrorPrefix(t *testing.T) {
+	interp := Language{}
+	_, err := interp.Match(MatchInput{
+		TableName:      "test",
+		Expression:     "#a != :a",
+		ExpressionType: ExpressionTypeKey,
+		Item: map[string]*types.Item{
+			"a": {S: new("a")},
+		},
+		Attributes: map[string]*types.Item{
+			":a": {S: new("x")},
+		},
+		Aliases: map[string]string{"#a": "a"},
+	})
+	if !errors.Is(err, ErrSyntaxError) {
+		t.Fatalf("want ErrSyntaxError, got %v", err)
+	}
+
+	const wantPrefix = "Invalid KeyConditionExpression: Syntax error;"
+	if !strings.Contains(err.Error(), wantPrefix) {
+		t.Fatalf("message should contain %q, got %q", wantPrefix, err.Error())
 	}
 }
 

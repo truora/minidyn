@@ -182,6 +182,14 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.ConditionExpression),
+	); err != nil {
+		return nil, err
+	}
+
 	table, err := c.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, err
@@ -212,6 +220,14 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
+	}
+
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.ConditionExpression),
+	); err != nil {
+		return nil, err
 	}
 
 	table, err := c.getTable(aws.ToString(input.TableName))
@@ -247,6 +263,15 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.UpdateExpression),
+		aws.ToString(input.ConditionExpression),
+	); err != nil {
+		return nil, err
+	}
+
 	table, err := c.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, err
@@ -278,6 +303,10 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.ToString(input.ProjectionExpression)); err != nil {
+		return nil, err
+	}
+
 	table, err := c.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, err
@@ -288,12 +317,23 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
 	}
 
+	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
+	}
+
 	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
 	if err != nil {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
 
-	return &GetItemOutput{Item: mapTypesMapToAttributeValue(table.Data[key])}, nil
+	stored := table.Data[key]
+
+	item, err := getItemAttributesForOutput(table, stored, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
+	if err != nil {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+	}
+
+	return &GetItemOutput{Item: item}, nil
 }
 
 // Query searches items by key condition and optional filter.
@@ -303,6 +343,16 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
+	}
+
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.KeyConditionExpression),
+		aws.ToString(input.FilterExpression),
+		aws.ToString(input.ProjectionExpression),
+	); err != nil {
+		return nil, err
 	}
 
 	table, err := c.getTable(aws.ToString(input.TableName))
@@ -346,6 +396,15 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateExpressionAttributes(
+		input.ExpressionAttributeNames,
+		keysFromAttributeValueMap(input.ExpressionAttributeValues),
+		aws.ToString(input.ProjectionExpression),
+		aws.ToString(input.FilterExpression),
+	); err != nil {
+		return nil, err
+	}
+
 	table, err := c.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, err
@@ -374,6 +433,52 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 	}, nil
 }
 
+const batchWriteItemRequestsLimit = 25
+
+// DynamoDB returns this message when a WriteRequest has both Put and Delete, or neither.
+var errBatchWriteRequestShape = &smithy.GenericAPIError{
+	Code:    "ValidationException",
+	Message: "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes",
+}
+
+func validateWriteRequest(req WriteRequest) error {
+	hasPut := req.PutRequest != nil
+
+	hasDel := req.DeleteRequest != nil
+	if hasPut == hasDel {
+		return errBatchWriteRequestShape
+	}
+
+	return nil
+}
+
+func validateBatchWriteItemInput(input *BatchWriteItemInput) error {
+	if input == nil {
+		return nil
+	}
+
+	count := 0
+
+	for _, reqs := range input.RequestItems {
+		for _, req := range reqs {
+			if err := validateWriteRequest(req); err != nil {
+				return err
+			}
+
+			count++
+		}
+	}
+
+	if count > batchWriteItemRequestsLimit {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "Too many items requested for the BatchWriteItem call",
+		}
+	}
+
+	return nil
+}
+
 // BatchWriteItem runs put and delete sub-requests in order. Sub-request failures that look
 // retriable (InternalServerError, ProvisionedThroughputExceededException) are appended to
 // UnprocessedItems and processing continues, matching DynamoDB batch semantics. Any other
@@ -385,6 +490,10 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 //gocyclo:ignore
 //gocognit:ignore
 func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput) (*BatchWriteItemOutput, error) {
+	if err := validateBatchWriteItemInput(input); err != nil {
+		return nil, err
+	}
+
 	unprocessed := map[string][]WriteRequest{}
 
 	for tableName, reqs := range input.RequestItems {

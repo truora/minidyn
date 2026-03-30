@@ -350,6 +350,10 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 		return nil, mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
 	}
 
+	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
+		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
+	}
+
 	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
 	if err != nil {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}

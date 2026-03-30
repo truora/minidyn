@@ -134,8 +134,8 @@ func writeError(w http.ResponseWriter, err error) {
 
 	if errors.As(err, &ccf) {
 		type ccfBody struct {
-			Type    string `json:"__type"`
-			Message string `json:"message"`
+			Type    string                     `json:"__type"`
+			Message string                     `json:"message"`
 			Item    map[string]*AttributeValue `json:"Item,omitempty"`
 		}
 

@@ -1025,7 +1025,7 @@ func TestUpdateItemError(t *testing.T) {
 	}
 
 	_, err = client.UpdateItem(input)
-	c.Contains(err.Error(), "number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "One of the required keys was not given a value")
 
 	ActiveForceFailure(client)
 	defer DeactiveForceFailure(client)
@@ -1442,9 +1442,11 @@ func TestQuerySyntaxError(t *testing.T) {
 		TableName:              new(tableName),
 	}
 
-	c.Panics(func() {
-		_, _ = client.QueryWithContext(context.Background(), input)
-	})
+	_, err = client.QueryWithContext(context.Background(), input)
+	c.Error(err)
+	var aerr awserr.Error
+	c.True(errors.As(err, &aerr))
+	c.Equal("ValidationException", aerr.Code())
 }
 
 func TestScanWithContext(t *testing.T) {
@@ -1822,7 +1824,7 @@ func TestBatchWriteItemWithContext(t *testing.T) {
 	delete(item, "id")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), input)
-	c.Contains(err.Error(), "ValidationException: number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "One of the required keys was not given a value")
 
 	_, err = client.BatchWriteItemWithContext(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]*dynamodb.WriteRequest{

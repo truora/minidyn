@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -19,25 +20,53 @@ const e2eBatchWriteRequestsLimit = 25
 
 var sdkErrRequestIDRE = regexp.MustCompile(`RequestID:\s*[^,]+,\s*`)
 
+// DynamoDB Local often omits the ": keys: {#...}" suffix for unused ExpressionAttributeNames
+// when no expression is present (for example GetItem with only ExpressionAttributeNames).
+// Minidyn includes that detail; strip it so parity compares the shared ValidationException text.
+var sdkErrUnusedExprAttrNamesKeysRE = regexp.MustCompile(
+	`ExpressionAttributeNames can only be specified when using expressions: keys: \{[^}]+\}`,
+)
+
 // normalizeSDKErrorString makes minidyn and DynamoDB Local operation errors comparable by
 // stripping request IDs and DynamoDB-Local-specific validation suffixes.
 func normalizeSDKErrorString(s string) string {
 	s = sdkErrRequestIDRE.ReplaceAllString(s, "RequestID: , ")
-	s = strings.ReplaceAll(s, " Type unknown.", "")
 	s = strings.TrimSpace(s)
-	// DynamoDB Local vs minidyn phrasing
-	s = strings.ReplaceAll(s,
-		"Local Secondary Index range key not specified in Attribute Definitions",
-		"Local Secondary Index Range Key not specified in Attribute Definitions",
-	)
-
-	s = strings.ReplaceAll(s, "The number of conditions on the keys is invalid", "number of conditions on the keys is invalid")
 
 	if i := strings.Index(s, ";"); i >= 0 {
 		s = strings.TrimSpace(s[:i])
 	}
 
+	s = sdkErrUnusedExprAttrNamesKeysRE.ReplaceAllString(s,
+		"ExpressionAttributeNames can only be specified when using expressions")
+
 	return s
+}
+
+// assertParityEqual compares minidyn vs DynamoDB Local results. For slices it
+// asserts each index separately so failures name the server and position.
+func assertParityEqual(t *testing.T, gotMinidyn, gotLocal any) {
+	t.Helper()
+
+	vm := reflect.ValueOf(gotMinidyn)
+	vl := reflect.ValueOf(gotLocal)
+	if vm.Kind() == reflect.Slice && vl.Kind() == reflect.Slice {
+		if vm.Len() != vl.Len() {
+			t.Errorf("slice length mismatch (minidyn=%d, dynamodb-local=%d)\n  minidyn:         %#v\n  dynamodb-local: %#v",
+				vm.Len(), vl.Len(), gotMinidyn, gotLocal)
+			return
+		}
+		for i := 0; i < vm.Len(); i++ {
+			em := vm.Index(i).Interface()
+			el := vl.Index(i).Interface()
+			assert.Equal(t, em, el,
+				"index %d — minidyn %#v, dynamodb-local %#v", i, em, el)
+		}
+		return
+	}
+
+	assert.Equal(t, gotMinidyn, gotLocal,
+		"minidyn %#v vs dynamodb-local %#v", gotMinidyn, gotLocal)
 }
 
 // RunE2E runs fn against minidyn (httptest) and DynamoDB Local (Docker), then
@@ -59,7 +88,7 @@ func RunE2E[T any](t *testing.T, fn func(t *testing.T, client *dynamodb.Client) 
 	})
 
 	if !minidynFailed && !localFailed {
-		assert.Equal(t, gotMinidyn, gotLocal)
+		assertParityEqual(t, gotMinidyn, gotLocal)
 	}
 }
 

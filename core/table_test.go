@@ -788,9 +788,14 @@ func TestUpdate(t *testing.T) {
 	updateInput.ConditionExpression = new("attribute_exists(id)")
 	updateInput.UpdateExpression = "SET id = :id"
 
-	result, err := newTable.Update(updateInput)
-	c.NoError(err)
-	c.Equal("002", types.StringValue(result["id"].S))
+	_, err = newTable.Update(updateInput)
+	c.Error(err)
+
+	var keyUpdateErr types.Error
+	c.True(errors.As(err, &keyUpdateErr))
+	c.Equal("ValidationException", keyUpdateErr.Code())
+	c.Contains(keyUpdateErr.Message(), "Cannot update attribute id")
+	c.Contains(keyUpdateErr.Message(), "part of the key")
 
 	newTable.Clear()
 }
@@ -819,18 +824,18 @@ func TestUpdateMultiClauseExpression(t *testing.T) {
 	updateInput := &types.UpdateItemInput{
 		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeNames: map[string]string{
-			"#n": "name",
+			"#t": "type",
 		},
 		ExpressionAttributeValues: map[string]*types.Item{
-			":new": {S: new("Ivysaur")},
+			":new": {S: new("poison")},
 			":one": {N: new("1")},
 		},
-		UpdateExpression: "SET #n = :new ADD lvl :one",
+		UpdateExpression: "SET #t = :new ADD lvl :one",
 	}
 
 	result, err := newTable.Update(updateInput)
 	c.NoError(err)
-	c.Equal("Ivysaur", types.StringValue(result["name"].S))
+	c.Equal("poison", types.StringValue(result["type"].S))
 	c.Equal("2", types.StringValue(result["lvl"].N))
 
 	newTable.Clear()
@@ -859,13 +864,13 @@ func TestUpdateDuplicateClauseKeywordError(t *testing.T) {
 	updateInput := &types.UpdateItemInput{
 		Key: primaryKeyFromPokemonItem(item),
 		ExpressionAttributeNames: map[string]string{
-			"#n": "name",
+			"#t": "type",
 		},
 		ExpressionAttributeValues: map[string]*types.Item{
 			":a": {S: new("x")},
 			":b": {S: new("y")},
 		},
-		UpdateExpression: "SET #n = :a SET name = :b",
+		UpdateExpression: "SET #t = :a SET type = :b",
 	}
 
 	_, err = newTable.Update(updateInput)

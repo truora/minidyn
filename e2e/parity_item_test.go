@@ -596,6 +596,57 @@ func TestE2E_Item(t *testing.T) {
 			},
 		},
 		{
+			name: "UpdateItemCannotSetPartitionKey",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression: aws.String("SET id = :new"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":new": &dynamodbtypes.AttributeValueMemberS{Value: "002"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateItemCannotSetPartitionKeyWithNameAlias",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression: aws.String("SET #pk = :new"),
+					ExpressionAttributeNames: map[string]string{
+						"#pk": "id",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":new": &dynamodbtypes.AttributeValueMemberS{Value: "002"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
 			name: "UpdateExpressions_add",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()

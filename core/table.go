@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/truora/minidyn/interpreter"
+	"github.com/truora/minidyn/interpreter/language"
 	"github.com/truora/minidyn/types"
 )
 
@@ -630,6 +631,17 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if !t.KeySchema.Secondary {
+		if err := language.ValidateUpdateExpressionDoesNotTargetPrimaryKey(
+			input.UpdateExpression,
+			input.ExpressionAttributeNames,
+			t.KeySchema.HashKey,
+			t.KeySchema.RangeKey,
+		); err != nil {
+			return nil, types.NewError("ValidationException", err.Error(), nil)
+		}
 	}
 
 	// update primary index

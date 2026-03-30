@@ -444,6 +444,75 @@ func TestServerBatchWriteWithSDKv2(t *testing.T) {
 	require.Equal(t, "2", out.Item["id"].(*ddbtypes.AttributeValueMemberS).Value)
 }
 
+func TestServerBatchWriteItemValidatesWriteRequests(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	const ambiguousWriteReqMsg = "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes"
+
+	t.Run("empty write request", func(t *testing.T) {
+		_, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]ddbtypes.WriteRequest{
+				"pokemons": {{}},
+			},
+		})
+		require.Error(t, err)
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Equal(t, "ValidationException", apiErr.ErrorCode())
+		require.Equal(t, ambiguousWriteReqMsg, apiErr.ErrorMessage())
+	})
+
+	t.Run("put and delete in same write request", func(t *testing.T) {
+		_, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]ddbtypes.WriteRequest{
+				"pokemons": {
+					{
+						PutRequest: &ddbtypes.PutRequest{
+							Item: map[string]ddbtypes.AttributeValue{
+								"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+							},
+						},
+						DeleteRequest: &ddbtypes.DeleteRequest{
+							Key: map[string]ddbtypes.AttributeValue{
+								"id": &ddbtypes.AttributeValueMemberS{Value: "1"},
+							},
+						},
+					},
+				},
+			},
+		})
+		require.Error(t, err)
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Equal(t, "ValidationException", apiErr.ErrorCode())
+		require.Equal(t, ambiguousWriteReqMsg, apiErr.ErrorMessage())
+	})
+
+	t.Run("too many items in one batch", func(t *testing.T) {
+		item := map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "x"},
+		}
+		reqs := make([]ddbtypes.WriteRequest, 0, 26)
+		for range 26 {
+			reqs = append(reqs, ddbtypes.WriteRequest{
+				PutRequest: &ddbtypes.PutRequest{Item: item},
+			})
+		}
+		_, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]ddbtypes.WriteRequest{"pokemons": reqs},
+		})
+		require.Error(t, err)
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Equal(t, "ValidationException", apiErr.ErrorCode())
+		require.Equal(t, "Too many items requested for the BatchWriteItem call", apiErr.ErrorMessage())
+	})
+}
+
 func TestServerUpdateItemWithSDKv2(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

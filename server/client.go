@@ -433,6 +433,52 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 	}, nil
 }
 
+const batchWriteItemRequestsLimit = 25
+
+// DynamoDB returns this message when a WriteRequest has both Put and Delete, or neither.
+var errBatchWriteRequestShape = &smithy.GenericAPIError{
+	Code:    "ValidationException",
+	Message: "Supplied AttributeValue has more than one datatypes set, must contain exactly one of the supported datatypes",
+}
+
+func validateWriteRequest(req WriteRequest) error {
+	hasPut := req.PutRequest != nil
+
+	hasDel := req.DeleteRequest != nil
+	if hasPut == hasDel {
+		return errBatchWriteRequestShape
+	}
+
+	return nil
+}
+
+func validateBatchWriteItemInput(input *BatchWriteItemInput) error {
+	if input == nil {
+		return nil
+	}
+
+	count := 0
+
+	for _, reqs := range input.RequestItems {
+		for _, req := range reqs {
+			if err := validateWriteRequest(req); err != nil {
+				return err
+			}
+
+			count++
+		}
+	}
+
+	if count > batchWriteItemRequestsLimit {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "Too many items requested for the BatchWriteItem call",
+		}
+	}
+
+	return nil
+}
+
 // BatchWriteItem runs put and delete sub-requests in order. Sub-request failures that look
 // retriable (InternalServerError, ProvisionedThroughputExceededException) are appended to
 // UnprocessedItems and processing continues, matching DynamoDB batch semantics. Any other
@@ -444,6 +490,10 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 //gocyclo:ignore
 //gocognit:ignore
 func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput) (*BatchWriteItemOutput, error) {
+	if err := validateBatchWriteItemInput(input); err != nil {
+		return nil, err
+	}
+
 	unprocessed := map[string][]WriteRequest{}
 
 	for tableName, reqs := range input.RequestItems {

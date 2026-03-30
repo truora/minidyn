@@ -1,0 +1,84 @@
+---
+description: Workflow conventions for the Minidyn project
+alwaysApply: true
+---
+
+# Workflow - Minidyn
+
+Minidyn is an in-memory Amazon DynamoDB testing library written in Go (module `github.com/truora/minidyn`).
+
+## Dependencies
+
+- **Go 1.26**
+- `github.com/aws/aws-sdk-go` (v1) — AWS SDK v1 client support
+- `github.com/aws/aws-sdk-go-v2` — AWS SDK v2 client support
+- `github.com/stretchr/testify` — test assertions
+- `github.com/google/go-cmp` — deep equality in tests
+- No external services or databases required in tests; everything runs in-memory.
+
+## File Structure
+
+```
+minidyn/
+  core/               # Table, index, key schema and shared types
+  e2e/                # Parity reference tests against real DynamoDB (do not try to fix these)
+  interpreter/        # DynamoDB expression interpreter
+    language/         # Lexer, parser, AST, evaluator, built-in functions
+  server/             # HTTP server exposing the DynamoDB JSON API
+    requests.go       # Auto-generated — do not edit manually
+    types.go          # Concrete AttributeValue used by the HTTP layer
+  aws-v1/client/      # In-memory client wrapping AWS SDK v1 (Deprecated)
+  aws-v2/client/      # In-memory client wrapping AWS SDK v2
+  types/              # Shared error and type definitions
+  tools/
+    generate_requests/ # Code-gen tool for server/requests.go
+  scripts/
+    check_coverage.sh  # Coverage enforcement script
+```
+
+- Every package **must** contain a `doc.go` file with a package-level comment.
+- `server/requests.go` is generated. Refresh it with:
+  ```bash
+  go run ./tools/generate_requests
+  ```
+  Run this whenever DynamoDB input shapes change.
+
+## Principles
+
+### Simplicity first
+Prefer the smallest change that solves the problem: fewer moving parts, plain code, and obvious structure over cleverness or premature abstraction.
+
+### TDD — Test First
+Write the failing test before writing any implementation code. For bug fixes, follow **[Debugging](#debugging)** (reproduce before fixing).
+1. Write the test.
+2. Confirm it fails.
+3. Write the minimum implementation to make it pass.
+4. Refactor.
+
+### Verification (qa-engineer)
+How and when to invoke **qa-engineer** is defined in **[Implementation flow](#implementation-flow)** (step 4). What that subagent runs is documented in `.cursor/agents/qa-engineer.md`.
+
+### Interpreter Changes
+Any change to `interpreter/language/evaluator.go` or `interpreter/language/functions.go` must be accompanied by tests in `evaluator_test.go` or `functions_test.go` respectively.
+
+### E2E Parity Tests
+**Never** try to fix the tests in the `e2e/` folder. These tests are exclusively used as a reference to verify parity with real DynamoDB behavior and should not be modified to make them pass.
+
+### Discovery
+The agent discovers available skills progressively — only read and apply a skill when it is directly relevant to the current task. Do not front-load all skills at the start of a session.
+
+### Naming Conventions
+- Skill names use **present continuous** form (e.g., `creating-table`, `updating-item`).
+
+## Implementation flow
+
+The mandatory workflow for any implementation is:
+
+1. **Design and clarify use cases** — Understand the scenario first so acceptance criteria are explicit.
+2. **Plan the implementation** — Design the work so it satisfies those use cases. For new features, define the `e2e/` parity scenarios that should cover the behavior before implementation starts, and **include code snippets in the plan** for the proposed parity tests (table setup, `RunE2E` calls, assertions or normalization as appropriate). Follow patterns in `e2e/` and `.cursor/skills/writing-minidyn-e2e-parity-tests/SKILL.md` when drafting those snippets.
+3. **Implementation** — With shared understanding of use cases and plan, implement what was agreed.
+4. **Verification** — Invoke the **qa-engineer** subagent with an explicit prompt (for example: “Use the qa-engineer subagent to verify these test cases: 1. …, 2. …”). Pass **only** the test cases that apply to the feature you implemented; do not ask it to exercise unrelated behavior or full end-to-end flows unless they are in scope. **Wait** for its detailed report before treating the task as finished.
+
+## Debugging
+
+The **agent must not** touch non-test code until a **failing reproducing test** (or minimal repro) exists. **Then** implement the fix; done when that test passes. Follow **[Implementation flow](#implementation-flow)** step 4 (**qa-engineer**) before treating the work as merge-ready.

@@ -32,7 +32,7 @@ func TestValidatePrimaryKeyMap(t *testing.T) {
 		err := hashOnly.validatePrimaryKeyMap(map[string]*types.Item{
 			"wrong": {S: new("1")},
 		})
-		require.ErrorIs(t, err, errInvalidKeyConditionCount)
+		require.ErrorIs(t, err, errMissingField)
 	})
 
 	t.Run("hash_only_extra_attr", func(t *testing.T) {
@@ -59,6 +59,15 @@ func TestValidatePrimaryKeyMap(t *testing.T) {
 			"sk": {S: new("b")},
 		})
 		require.NoError(t, err)
+	})
+
+	t.Run("composite_wrong_range_attr_name_same_len", func(t *testing.T) {
+		t.Parallel()
+		err := composite.validatePrimaryKeyMap(map[string]*types.Item{
+			"pk":    {S: new("a")},
+			"wrong": {S: new("b")},
+		})
+		require.ErrorIs(t, err, errMissingField)
 	})
 
 	t.Run("secondary_skipped", func(t *testing.T) {

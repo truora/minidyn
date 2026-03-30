@@ -1025,7 +1025,7 @@ func TestUpdateItemError(t *testing.T) {
 	}
 
 	_, err = client.UpdateItem(input)
-	c.Contains(err.Error(), "number of conditions on the keys is invalid")
+	c.Contains(err.Error(), "One of the required keys was not given a value")
 
 	ActiveForceFailure(client)
 	defer DeactiveForceFailure(client)

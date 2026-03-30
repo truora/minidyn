@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	unusedExpressionAttributeNamesMsg  = "ExpressionAttributeNames can only be specified when using expressions"
-	unusedExpressionAttributeValuesMsg = "Value provided in ExpressionAttributeValues unused in expressions"
-	invalidExpressionAttributeName     = "ExpressionAttributeNames contains invalid key"
-	invalidExpressionAttributeValue    = "ExpressionAttributeValues contains invalid key"
+	expressionAttributeNamesOnlyWithExpressionsMsg = "ExpressionAttributeNames can only be specified when using expressions"
+	unusedExpressionAttributeNamesMsg              = "Value provided in ExpressionAttributeNames unused in expressions"
+	unusedExpressionAttributeValuesMsg             = "Value provided in ExpressionAttributeValues unused in expressions"
+	invalidExpressionAttributeName                 = "ExpressionAttributeNames contains invalid key"
+	invalidExpressionAttributeValue                = "ExpressionAttributeValues contains invalid key"
 )
 
 var (
@@ -40,7 +41,12 @@ func validateExpressionAttributes(exprNames map[string]string, exprValueKeys []s
 	missingValues := getMissingSubstrs(genericExpression, exprValueKeys)
 
 	if len(missingNames) > 0 {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeNamesMsg, strings.Join(missingNames, ", "))}
+		msg := unusedExpressionAttributeNamesMsg
+		if genericExpression == "" {
+			msg = expressionAttributeNamesOnlyWithExpressionsMsg
+		}
+
+		return &smithy.GenericAPIError{Code: "ValidationException", Message: fmt.Sprintf("%s: keys: {%s}", msg, strings.Join(missingNames, ", "))}
 	}
 
 	err := validateSyntaxExpression(expressionAttributeNamesRegex, flattenNames, invalidExpressionAttributeName)

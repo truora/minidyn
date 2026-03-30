@@ -28,10 +28,19 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	conditional := p.ParseConditionalExpression()
 
 	if len(p.Errors()) != 0 {
+		detail := strings.Join(p.Errors(), "; ")
+		if input.ExpressionType == ExpressionTypeKey {
+			return false, fmt.Errorf("Invalid KeyConditionExpression: %w; %s", ErrSyntaxError, detail) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
+		}
+
 		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
 	}
 
 	if conditional.Expression == nil {
+		if input.ExpressionType == ExpressionTypeKey {
+			return false, fmt.Errorf("Invalid KeyConditionExpression: %w; empty expression", ErrSyntaxError) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
+		}
+
 		return false, fmt.Errorf("%w: empty expression", ErrSyntaxError)
 	}
 
@@ -63,6 +72,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	}
 
 	if result.Type() == language.ObjectTypeError {
+		if input.ExpressionType == ExpressionTypeKey {
+			return false, fmt.Errorf("Invalid KeyConditionExpression: %w; %s", ErrSyntaxError, result.Inspect()) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
+		}
+
 		return false, fmt.Errorf("%w: %s", ErrSyntaxError, result.Inspect())
 	}
 

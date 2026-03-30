@@ -533,7 +533,7 @@ func TestDeleteItem(t *testing.T) {
 	}
 
 	_, err = newTable.Delete(inp)
-	c.EqualError(err, `ValidationException: The number of conditions on the keys is invalid`)
+	c.EqualError(err, `ValidationException: The number of conditions on the keys is invalid; expected 2 keys, got 1`)
 }
 
 func TestDeleteIndex(t *testing.T) {

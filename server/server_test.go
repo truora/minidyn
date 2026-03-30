@@ -879,7 +879,7 @@ func TestServerGetItemUnusedExpressionAttributeNames(t *testing.T) {
 	var apiErr smithy.APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, "ValidationException", apiErr.ErrorCode())
-	require.Contains(t, apiErr.ErrorMessage(), unusedExpressionAttributeNamesMsg)
+	require.Contains(t, apiErr.ErrorMessage(), expressionAttributeNamesOnlyWithExpressionsMsg)
 }
 
 func TestServerGetItemInvalidExpressionAttributeNameKey(t *testing.T) {

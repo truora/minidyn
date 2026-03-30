@@ -118,11 +118,11 @@ func isValidKeyAttributeType(typ string) bool {
 
 func (t *Table) validateAttributeDefinition(ks keySchema, message string) error {
 	if _, ok := t.AttributesDef[ks.HashKey]; !ok {
-		return types.NewError("ValidationException", fmt.Sprintf("%sHash Key not specified in Attribute Definitions.", message), nil)
+		return types.NewError("ValidationException", fmt.Sprintf("%sHash Key not specified in Attribute Definitions.  Type unknown.", message), nil)
 	}
 
 	if _, ok := t.AttributesDef[ks.RangeKey]; ks.RangeKey != "" && !ok {
-		return types.NewError("ValidationException", fmt.Sprintf("%sRange Key not specified in Attribute Definitions.", message), nil)
+		return types.NewError("ValidationException", fmt.Sprintf("%sRange Key not specified in Attribute Definitions.  Type unknown.", message), nil)
 	}
 
 	hashType := t.AttributesDef[ks.HashKey]

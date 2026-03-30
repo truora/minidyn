@@ -359,8 +359,10 @@ func (fd *Client) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 		return nil, err
 	}
 
-	output := &dynamodb.UpdateItemOutput{
-		Attributes: mapAttributeValueToDynamodb(item),
+	output := &dynamodb.UpdateItemOutput{}
+
+	if item != nil {
+		output.Attributes = mapAttributeValueToDynamodb(item)
 	}
 
 	return output, nil

@@ -966,6 +966,60 @@ func TestUpdateItem(t *testing.T) {
 	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "water"}, item["second_type"])
 }
 
+func TestUpdateItemReturnValuesMatrix(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+
+	putAndUpdate := func(pk string, rv dynamodbtypes.ReturnValue) map[string]dynamodbtypes.AttributeValue {
+		t.Helper()
+
+		_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]dynamodbtypes.AttributeValue{
+				"id":   &dynamodbtypes.AttributeValueMemberS{Value: pk},
+				"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+				"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+			},
+		})
+		c.NoError(err)
+
+		out, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String(tableName),
+			Key: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: pk},
+			},
+			UpdateExpression: aws.String("SET second_type = :st"),
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+				":st": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
+			},
+			ReturnValues: rv,
+		})
+		c.NoError(err)
+
+		return out.Attributes
+	}
+
+	c.Nil(putAndUpdate("urv-none", dynamodbtypes.ReturnValueNone))
+
+	allOld := putAndUpdate("urv-all-old", dynamodbtypes.ReturnValueAllOld)
+	c.Len(allOld, 3)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, allOld["name"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "grass"}, allOld["type"])
+
+	updatedOld := putAndUpdate("urv-upd-old", dynamodbtypes.ReturnValueUpdatedOld)
+	c.Empty(updatedOld)
+
+	updatedNew := putAndUpdate("urv-upd-new", dynamodbtypes.ReturnValueUpdatedNew)
+	c.Len(updatedNew, 1)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, updatedNew["second_type"])
+
+	allNew := putAndUpdate("urv-all-new", dynamodbtypes.ReturnValueAllNew)
+	c.Len(allNew, 4)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, allNew["second_type"])
+}
+
 func TestUpdateItemWithConditionalExpression(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)

@@ -1809,3 +1809,668 @@ func makeBasicTable(t *testing.T, cli *dynamodb.Client, table, hashKey string) {
 	})
 	require.NoError(t, err)
 }
+
+func TestServerTransactWriteItems(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	t.Run("atomicity", func(t *testing.T) {
+		t.Run("rollback on failure", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName: aws.String("pokemons"),
+							Item: map[string]ddbtypes.AttributeValue{
+								"id":   &ddbtypes.AttributeValueMemberS{Value: "rollback-me"},
+								"name": &ddbtypes.AttributeValueMemberS{Value: "ShouldNotExist"},
+							},
+						},
+					},
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "non-existent"}},
+							ConditionExpression: aws.String("attribute_exists(id)"),
+						},
+					},
+				},
+			})
+			c.Error(err)
+
+			out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+				TableName: aws.String("pokemons"),
+				Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "rollback-me"}},
+			})
+			c.NoError(err)
+			c.Empty(out.Item)
+		})
+
+		t.Run("rollback across tables", func(t *testing.T) {
+			c := require.New(t)
+
+			makeBasicTable(t, cli, "items", "id")
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName: aws.String("items"),
+							Item: map[string]ddbtypes.AttributeValue{
+								"id": &ddbtypes.AttributeValueMemberS{Value: "should-rollback"},
+							},
+						},
+					},
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "non-existent"}},
+							ConditionExpression: aws.String("attribute_exists(id)"),
+						},
+					},
+				},
+			})
+
+			var tce *ddbtypes.TransactionCanceledException
+			c.True(errors.As(err, &tce))
+
+			out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+				TableName: aws.String("items"),
+				Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "should-rollback"}},
+			})
+			c.NoError(err)
+			c.Empty(out.Item)
+		})
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		t.Run("empty item rejected", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{{}},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+
+		t.Run("duplicate item rejected", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName: aws.String("pokemons"),
+							Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "dup"}},
+						},
+					},
+					{
+						Update: &ddbtypes.Update{
+							TableName:                 aws.String("pokemons"),
+							Key:                       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "dup"}},
+							UpdateExpression:          aws.String("SET #n = :n"),
+							ExpressionAttributeNames:  map[string]string{"#n": "name"},
+							ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":n": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"}},
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+	})
+
+	t.Run("error injection", func(t *testing.T) {
+		t.Run("emulated server error", func(t *testing.T) {
+			c := require.New(t)
+
+			s.EmulateFailure(FailureConditionInternalServerError)
+			defer s.EmulateFailure(FailureConditionNone)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName: aws.String("pokemons"),
+							Item: map[string]ddbtypes.AttributeValue{
+								"id": &ddbtypes.AttributeValueMemberS{Value: "001"},
+							},
+						},
+					},
+				},
+			})
+
+			var internalErr *ddbtypes.InternalServerError
+			c.True(errors.As(err, &internalErr))
+		})
+	})
+
+	t.Run("put", func(t *testing.T) {
+		t.Run("success", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName: aws.String("pokemons"),
+							Item: map[string]ddbtypes.AttributeValue{
+								"id":   &ddbtypes.AttributeValueMemberS{Value: "001"},
+								"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+							},
+						},
+					},
+				},
+			})
+			c.NoError(err)
+
+			out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+				TableName: aws.String("pokemons"),
+				Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+			})
+			c.NoError(err)
+			c.Equal("Bulbasaur", out.Item["name"].(*ddbtypes.AttributeValueMemberS).Value)
+		})
+
+		t.Run("non-existent table", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName: aws.String("non-existent"),
+							Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+						},
+					},
+				},
+			})
+
+			var notFound *ddbtypes.ResourceNotFoundException
+			c.True(errors.As(err, &notFound))
+		})
+
+		t.Run("unused expression attribute", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName: aws.String("pokemons"),
+							Item: map[string]ddbtypes.AttributeValue{
+								"id": &ddbtypes.AttributeValueMemberS{Value: "001"},
+							},
+							ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+								":unused": &ddbtypes.AttributeValueMemberS{Value: "x"},
+							},
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+
+		t.Run("failing condition", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "cond-put"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Mewtwo"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Put: &ddbtypes.Put{
+							TableName:           aws.String("pokemons"),
+							Item:                map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "cond-put"}},
+							ConditionExpression: aws.String("attribute_not_exists(id)"),
+						},
+					},
+				},
+			})
+
+			var tce *ddbtypes.TransactionCanceledException
+			c.True(errors.As(err, &tce))
+			c.Equal("ConditionalCheckFailed", aws.ToString(tce.CancellationReasons[0].Code))
+		})
+	})
+
+	t.Run("update", func(t *testing.T) {
+		t.Run("success", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "002"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Ivysaur"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Update: &ddbtypes.Update{
+							TableName:                 aws.String("pokemons"),
+							Key:                       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "002"}},
+							UpdateExpression:          aws.String("SET #n = :n"),
+							ExpressionAttributeNames:  map[string]string{"#n": "name"},
+							ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":n": &ddbtypes.AttributeValueMemberS{Value: "Venusaur"}},
+						},
+					},
+				},
+			})
+			c.NoError(err)
+
+			out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+				TableName: aws.String("pokemons"),
+				Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "002"}},
+			})
+			c.NoError(err)
+			c.Equal("Venusaur", out.Item["name"].(*ddbtypes.AttributeValueMemberS).Value)
+		})
+
+		t.Run("non-existent table", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Update: &ddbtypes.Update{
+							TableName:                 aws.String("non-existent"),
+							Key:                       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+							UpdateExpression:          aws.String("SET #n = :n"),
+							ExpressionAttributeNames:  map[string]string{"#n": "name"},
+							ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":n": &ddbtypes.AttributeValueMemberS{Value: "x"}},
+						},
+					},
+				},
+			})
+
+			var notFound *ddbtypes.ResourceNotFoundException
+			c.True(errors.As(err, &notFound))
+		})
+
+		t.Run("unused expression attribute", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Update: &ddbtypes.Update{
+							TableName:                aws.String("pokemons"),
+							Key:                      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+							UpdateExpression:         aws.String("SET #n = :n"),
+							ExpressionAttributeNames: map[string]string{"#n": "name"},
+							ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+								":n":      &ddbtypes.AttributeValueMemberS{Value: "Venusaur"},
+								":unused": &ddbtypes.AttributeValueMemberS{Value: "x"},
+							},
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+
+		t.Run("syntax error", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "syntax-test"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Snorlax"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Update: &ddbtypes.Update{
+							TableName:                 aws.String("pokemons"),
+							Key:                       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "syntax-test"}},
+							UpdateExpression:          aws.String("SET #n = :n SET #n = :n"),
+							ExpressionAttributeNames:  map[string]string{"#n": "name"},
+							ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":n": &ddbtypes.AttributeValueMemberS{Value: "Munchlax"}},
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+
+		t.Run("failing condition", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "cond-update"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Mew"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Update: &ddbtypes.Update{
+							TableName:                 aws.String("pokemons"),
+							Key:                       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "cond-update"}},
+							UpdateExpression:          aws.String("SET #n = :n"),
+							ConditionExpression:       aws.String("attribute_not_exists(id)"),
+							ExpressionAttributeNames:  map[string]string{"#n": "name"},
+							ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":n": &ddbtypes.AttributeValueMemberS{Value: "Mewtwo"}},
+						},
+					},
+				},
+			})
+
+			var tce *ddbtypes.TransactionCanceledException
+			c.True(errors.As(err, &tce))
+			c.Equal("ConditionalCheckFailed", aws.ToString(tce.CancellationReasons[0].Code))
+		})
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		t.Run("success", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "to-delete"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Gone"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Delete: &ddbtypes.Delete{
+							TableName: aws.String("pokemons"),
+							Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "to-delete"}},
+						},
+					},
+				},
+			})
+			c.NoError(err)
+
+			out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+				TableName: aws.String("pokemons"),
+				Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "to-delete"}},
+			})
+			c.NoError(err)
+			c.Empty(out.Item)
+		})
+
+		t.Run("non-existent table", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Delete: &ddbtypes.Delete{
+							TableName: aws.String("non-existent"),
+							Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+						},
+					},
+				},
+			})
+
+			var notFound *ddbtypes.ResourceNotFoundException
+			c.True(errors.As(err, &notFound))
+		})
+
+		t.Run("unused expression attribute", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Delete: &ddbtypes.Delete{
+							TableName:                aws.String("pokemons"),
+							Key:                      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+							ExpressionAttributeNames: map[string]string{"#unused": "name"},
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+
+		t.Run("failing condition", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "cond-delete"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Gengar"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						Delete: &ddbtypes.Delete{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "cond-delete"}},
+							ConditionExpression: aws.String("attribute_not_exists(id)"),
+						},
+					},
+				},
+			})
+
+			var tce *ddbtypes.TransactionCanceledException
+			c.True(errors.As(err, &tce))
+			c.Equal("ConditionalCheckFailed", aws.ToString(tce.CancellationReasons[0].Code))
+		})
+	})
+
+	t.Run("condition check", func(t *testing.T) {
+		t.Run("pass", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "025"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Pikachu"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "025"}},
+							ConditionExpression: aws.String("attribute_exists(id)"),
+						},
+					},
+				},
+			})
+			c.NoError(err)
+		})
+
+		t.Run("fail", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "non-existent"}},
+							ConditionExpression: aws.String("attribute_exists(id)"),
+						},
+					},
+				},
+			})
+
+			var tce *ddbtypes.TransactionCanceledException
+			c.True(errors.As(err, &tce))
+			c.Equal("ConditionalCheckFailed", aws.ToString(tce.CancellationReasons[0].Code))
+		})
+
+		t.Run("returns old item on fail", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "existing"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Squirtle"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:                           aws.String("pokemons"),
+							Key:                                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "existing"}},
+							ConditionExpression:                 aws.String("attribute_not_exists(id)"),
+							ReturnValuesOnConditionCheckFailure: ddbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+						},
+					},
+				},
+			})
+
+			var tce *ddbtypes.TransactionCanceledException
+			c.True(errors.As(err, &tce))
+
+			reason := tce.CancellationReasons[0]
+			c.Equal("ConditionalCheckFailed", aws.ToString(reason.Code))
+			c.NotEmpty(reason.Item)
+			c.Equal(&ddbtypes.AttributeValueMemberS{Value: "existing"}, reason.Item["id"])
+		})
+
+		t.Run("non-existent table", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("non-existent"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+							ConditionExpression: aws.String("attribute_exists(id)"),
+						},
+					},
+				},
+			})
+
+			var notFound *ddbtypes.ResourceNotFoundException
+			c.True(errors.As(err, &notFound))
+		})
+
+		t.Run("wrong key attributes", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"wrong_attr": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+							ConditionExpression: aws.String("attribute_exists(id)"),
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+
+		t.Run("wrong key type", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberN{Value: "1"}},
+							ConditionExpression: aws.String("attribute_exists(id)"),
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+
+		t.Run("invalid expression", func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: "expr-test"},
+					"name": &ddbtypes.AttributeValueMemberS{Value: "Jolteon"},
+				},
+			})
+			c.NoError(err)
+
+			_, err = cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{
+					{
+						ConditionCheck: &ddbtypes.ConditionCheck{
+							TableName:           aws.String("pokemons"),
+							Key:                 map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "expr-test"}},
+							ConditionExpression: aws.String("UNKNOWN_FUNCTION(id)"),
+						},
+					},
+				},
+			})
+
+			var apiErr smithy.APIError
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.ErrorCode())
+		})
+	})
+}

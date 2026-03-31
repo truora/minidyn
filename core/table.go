@@ -638,7 +638,7 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 
 		if !matched {
-			return item, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
+			return item, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
 		}
 	}
 
@@ -908,7 +908,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		}
 
 		if !matched {
-			return nil, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
+			return nil, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
 		}
 	}
 

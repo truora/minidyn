@@ -278,6 +278,82 @@ func TestE2E_TransactWrite(t *testing.T) {
 			},
 		},
 		{
+			name: "TransactDuplicateItem",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+					TransactItems: []dynamodbtypes.TransactWriteItem{
+						{Put: &dynamodbtypes.Put{
+							TableName: aws.String(parityPokemonTable),
+							Item: map[string]dynamodbtypes.AttributeValue{
+								"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+							},
+						}},
+						{Update: &dynamodbtypes.Update{
+							TableName:                 aws.String(parityPokemonTable),
+							Key:                       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+							UpdateExpression:          aws.String("SET #n = :n"),
+							ExpressionAttributeNames:  map[string]string{"#n": "name"},
+							ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":n": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}},
+						}},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "TransactPutConditionFail",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+					TransactItems: []dynamodbtypes.TransactWriteItem{
+						{Put: &dynamodbtypes.Put{
+							TableName:           aws.String(parityPokemonTable),
+							Item:                map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+							ConditionExpression: aws.String("attribute_not_exists(id)"),
+						}},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "TransactDeleteConditionFail",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+					TransactItems: []dynamodbtypes.TransactWriteItem{
+						{Delete: &dynamodbtypes.Delete{
+							TableName:           aws.String(parityPokemonTable),
+							Key:                 map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+							ConditionExpression: aws.String("attribute_not_exists(id)"),
+						}},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
 			name: "TransactUnusedExpressionAttribute",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()

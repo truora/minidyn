@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -2166,50 +2165,343 @@ func TestHandleBatchWriteRequestError(t *testing.T) {
 }
 
 func TestTransactWriteItems(t *testing.T) {
-	c := require.New(t)
-	client := NewClient()
+	t.Run("put item", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
 
-	err := ensurePokemonTable(client)
-	c.NoError(err)
+		err := ensurePokemonTable(client)
+		c.NoError(err)
 
-	transactItems := []dynamodbtypes.TransactWriteItem{
-		{
-			Update: &dynamodbtypes.Update{
-				Key: map[string]dynamodbtypes.AttributeValue{
-					"id":     &dynamodbtypes.AttributeValueMemberS{Value: "001"},
-					":ntype": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
-				},
-				TableName:        aws.String(tableName),
-				UpdateExpression: aws.String("SET second_type = :ntype"),
-				ExpressionAttributeNames: map[string]string{
-					"#id": "id",
-				},
-				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
-					":update": &dynamodbtypes.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
-					":incr": &dynamodbtypes.AttributeValueMemberN{
-						Value: "1",
-					},
-					":initial": &dynamodbtypes.AttributeValueMemberN{
-						Value: "0",
+		output, err := client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Put: &dynamodbtypes.Put{
+						TableName: aws.String(tableName),
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+							"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+							"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+						},
 					},
 				},
 			},
-		},
-	}
+		})
+		c.NoError(err)
+		c.NotNil(output)
 
-	writeItemsInput := &dynamodb.TransactWriteItemsInput{
-		TransactItems: transactItems,
-	}
+		item, err := getPokemon(client, "001")
+		c.NoError(err)
+		c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, item["name"])
+	})
 
-	output, err := client.TransactWriteItems(context.Background(), writeItemsInput)
-	c.NoError(err)
-	c.NotNil(output)
+	t.Run("update", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
 
-	ActiveForceFailure(client)
-	defer DeactiveForceFailure(client)
+		err := ensurePokemonTable(client)
+		c.NoError(err)
 
-	_, err = client.TransactWriteItems(context.Background(), writeItemsInput)
-	c.Equal(ErrForcedFailure, err)
+		err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Update: &dynamodbtypes.Update{
+						TableName:        aws.String(tableName),
+						Key:              map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+						UpdateExpression: aws.String("SET second_type = :stype"),
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+							":stype": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
+						},
+					},
+				},
+			},
+		})
+		c.NoError(err)
+
+		item, err := getPokemon(client, "001")
+		c.NoError(err)
+		c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, item["second_type"])
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Delete: &dynamodbtypes.Delete{
+						TableName: aws.String(tableName),
+						Key:       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+					},
+				},
+			},
+		})
+		c.NoError(err)
+
+		item, err := getPokemon(client, "001")
+		c.NoError(err)
+		c.Empty(item)
+	})
+
+	t.Run("condition_check_pass", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					ConditionCheck: &dynamodbtypes.ConditionCheck{
+						TableName:           aws.String(tableName),
+						Key:                 map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+						ConditionExpression: aws.String("attribute_exists(id)"),
+					},
+				},
+			},
+		})
+		c.NoError(err)
+	})
+
+	t.Run("condition_check_fail", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					ConditionCheck: &dynamodbtypes.ConditionCheck{
+						TableName:           aws.String(tableName),
+						Key:                 map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "999"}},
+						ConditionExpression: aws.String("attribute_exists(id)"),
+					},
+				},
+			},
+		})
+
+		var condErr *dynamodbtypes.ConditionalCheckFailedException
+		c.True(errors.As(err, &condErr))
+	})
+
+	t.Run("rollback on failure", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Put: &dynamodbtypes.Put{
+						TableName: aws.String(tableName),
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id":   &dynamodbtypes.AttributeValueMemberS{Value: "rollback-me"},
+							"type": &dynamodbtypes.AttributeValueMemberS{Value: "fire"},
+						},
+					},
+				},
+				{
+					ConditionCheck: &dynamodbtypes.ConditionCheck{
+						TableName:           aws.String(tableName),
+						Key:                 map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "non-existent"}},
+						ConditionExpression: aws.String("attribute_exists(id)"),
+					},
+				},
+			},
+		})
+		c.Error(err)
+
+		item, err := getPokemon(client, "rollback-me")
+		c.NoError(err)
+		c.Empty(item)
+	})
+
+	t.Run("emulated server error", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		EmulateFailure(client, FailureConditionInternalServerError)
+		defer EmulateFailure(client, FailureConditionNone)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Put: &dynamodbtypes.Put{
+						TableName: aws.String(tableName),
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						},
+					},
+				},
+			},
+		})
+
+		var internalErr *dynamodbtypes.InternalServerError
+		c.True(errors.As(err, &internalErr))
+	})
+
+	t.Run("unused expression attribute rejected", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Put: &dynamodbtypes.Put{
+						TableName: aws.String(tableName),
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						},
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+							":unused": &dynamodbtypes.AttributeValueMemberS{Value: "x"},
+						},
+					},
+				},
+			},
+		})
+
+		var apiErr smithy.APIError
+		c.True(errors.As(err, &apiErr))
+		c.Equal("ValidationException", apiErr.ErrorCode())
+	})
+
+	t.Run("empty item rejected", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{{}},
+		})
+
+		var apiErr smithy.APIError
+		c.True(errors.As(err, &apiErr))
+		c.Equal("ValidationException", apiErr.ErrorCode())
+	})
+
+	t.Run("rollback across tables", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		const secondTable = "items"
+
+		err = AddTable(context.Background(), client, secondTable, "id", "")
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Put: &dynamodbtypes.Put{
+						TableName: aws.String(secondTable),
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "should-rollback"},
+						},
+					},
+				},
+				{
+					ConditionCheck: &dynamodbtypes.ConditionCheck{
+						TableName:           aws.String(tableName),
+						Key:                 map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "non-existent"}},
+						ConditionExpression: aws.String("attribute_exists(id)"),
+					},
+				},
+			},
+		})
+
+		var condErr *dynamodbtypes.ConditionalCheckFailedException
+		c.True(errors.As(err, &condErr))
+
+		out, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
+			TableName: aws.String(secondTable),
+			Key: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: "should-rollback"},
+			},
+		})
+		c.NoError(err)
+		c.Empty(out.Item)
+	})
+
+	t.Run("condition check returns old item on fail", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+		c.NoError(err)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					ConditionCheck: &dynamodbtypes.ConditionCheck{
+						TableName:                           aws.String(tableName),
+						Key:                                 map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+						ConditionExpression:                 aws.String("attribute_not_exists(id)"),
+						ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+					},
+				},
+			},
+		})
+
+		var condErr *dynamodbtypes.ConditionalCheckFailedException
+		c.True(errors.As(err, &condErr))
+		c.NotEmpty(condErr.Item)
+		c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "001"}, condErr.Item["id"])
+	})
+
+	t.Run("force failure", func(t *testing.T) {
+		c := require.New(t)
+		client := NewClient()
+
+		err := ensurePokemonTable(client)
+		c.NoError(err)
+
+		ActiveForceFailure(client)
+		defer DeactiveForceFailure(client)
+
+		_, err = client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{
+					Put: &dynamodbtypes.Put{
+						TableName: aws.String(tableName),
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						},
+					},
+				},
+			},
+		})
+		c.Equal(ErrForcedFailure, err)
+	})
 }
 
 func TestCheckTableName(t *testing.T) {

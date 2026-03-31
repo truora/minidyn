@@ -1087,7 +1087,7 @@ func TestInterpreterMatch(t *testing.T) {
 		ExpressionType: interpreter.ExpressionTypeConditional,
 	}
 
-	matched, err := newTable.interpreterMatch(matchInput)
+	matched, err := newTable.InterpreterMatch(matchInput)
 	c.NoError(err)
 	c.True(matched)
 
@@ -1095,13 +1095,13 @@ func TestInterpreterMatch(t *testing.T) {
 		TableName: tableName,
 	}
 
-	_, err = newTable.interpreterMatch(matchInput)
+	_, err = newTable.InterpreterMatch(matchInput)
 	c.Error(err)
 
 	newTable.UseNativeInterpreter = false
 	matchInput.Expression = "bad_expression(id)"
 
-	_, err = newTable.interpreterMatch(matchInput)
+	_, err = newTable.InterpreterMatch(matchInput)
 	c.Error(err)
 }
 

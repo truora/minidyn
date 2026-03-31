@@ -335,6 +335,50 @@ func mapDynamoToTypesDeleteItemInput(input *dynamodb.DeleteItemInput) *types.Del
 	}
 }
 
+func mapDynamoToTypesTransactPut(input *dynamodbtypes.Put) *types.PutItemInput {
+	if input == nil {
+		return nil
+	}
+
+	return &types.PutItemInput{
+		ConditionExpression:       input.ConditionExpression,
+		ExpressionAttributeNames:  input.ExpressionAttributeNames,
+		ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Item:                      mapDynamoToTypesMapItem(input.Item),
+		TableName:                 input.TableName,
+	}
+}
+
+func mapDynamoToTypesTransactUpdate(input *dynamodbtypes.Update) *types.UpdateItemInput {
+	if input == nil {
+		return nil
+	}
+
+	return &types.UpdateItemInput{
+		ConditionExpression:                 input.ConditionExpression,
+		ExpressionAttributeNames:            input.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Key:                                 mapDynamoToTypesMapItem(input.Key),
+		TableName:                           input.TableName,
+		UpdateExpression:                    aws.ToString(input.UpdateExpression),
+		ReturnValuesOnConditionCheckFailure: toString(string(input.ReturnValuesOnConditionCheckFailure)),
+	}
+}
+
+func mapDynamoToTypesTransactDelete(input *dynamodbtypes.Delete) *types.DeleteItemInput {
+	if input == nil {
+		return nil
+	}
+
+	return &types.DeleteItemInput{
+		ConditionExpression:       input.ConditionExpression,
+		ExpressionAttributeNames:  mapDynamoToTypesStringMap(input.ExpressionAttributeNames),
+		ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Key:                       mapDynamoToTypesMapItem(input.Key),
+		TableName:                 input.TableName,
+	}
+}
+
 func mapDynamoToTypesExpectedAttributeValue(input dynamodbtypes.ExpectedAttributeValue) *types.ExpectedAttributeValue {
 	return &types.ExpectedAttributeValue{
 		AttributeValueList: mapDynamoToTypesSliceItem(input.AttributeValueList),

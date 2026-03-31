@@ -27,6 +27,14 @@ var sdkErrUnusedExprAttrNamesKeysRE = regexp.MustCompile(
 	`ExpressionAttributeNames can only be specified when using expressions: keys: \{[^}]+\}`,
 )
 
+// DynamoDB Local appends ": <ExpressionType> is null" to the "ExpressionAttributeValues can
+// only be specified when using expressions" message (e.g. ": ConditionExpression is null").
+// Minidyn omits this suffix because the generic validation helper is not aware of the
+// calling operation's expression type. Strip it so both sides compare equal.
+var sdkErrExprAttrValuesNullExprRE = regexp.MustCompile(
+	`(ExpressionAttributeValues can only be specified when using expressions): \w+Expression is null`,
+)
+
 // normalizeSDKErrorString makes minidyn and DynamoDB Local operation errors comparable by
 // stripping request IDs and DynamoDB-Local-specific validation suffixes.
 func normalizeSDKErrorString(s string) string {
@@ -39,6 +47,8 @@ func normalizeSDKErrorString(s string) string {
 
 	s = sdkErrUnusedExprAttrNamesKeysRE.ReplaceAllString(s,
 		"ExpressionAttributeNames can only be specified when using expressions")
+
+	s = sdkErrExprAttrValuesNullExprRE.ReplaceAllString(s, "$1")
 
 	return s
 }

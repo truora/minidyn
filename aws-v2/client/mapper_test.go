@@ -134,3 +134,11 @@ func TestMapDynamoToTypesExpectedAttributeValue(t *testing.T) {
 	keySchemaElementsOutput = mapTypesToDynamoKeySchemaElementsPointer([]*types.KeySchemaElement{{AttributeName: "test"}})
 	c.Len(keySchemaElementsOutput, 1)
 }
+
+func TestMapDynamoToTypesTransactNil(t *testing.T) {
+	c := require.New(t)
+
+	c.Nil(mapDynamoToTypesTransactPut(nil))
+	c.Nil(mapDynamoToTypesTransactUpdate(nil))
+	c.Nil(mapDynamoToTypesTransactDelete(nil))
+}

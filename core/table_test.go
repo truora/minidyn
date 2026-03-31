@@ -1087,7 +1087,7 @@ func TestInterpreterMatch(t *testing.T) {
 		ExpressionType: interpreter.ExpressionTypeConditional,
 	}
 
-	matched, err := newTable.interpreterMatch(matchInput)
+	matched, err := newTable.InterpreterMatch(matchInput)
 	c.NoError(err)
 	c.True(matched)
 
@@ -1095,13 +1095,13 @@ func TestInterpreterMatch(t *testing.T) {
 		TableName: tableName,
 	}
 
-	_, err = newTable.interpreterMatch(matchInput)
+	_, err = newTable.InterpreterMatch(matchInput)
 	c.Error(err)
 
 	newTable.UseNativeInterpreter = false
 	matchInput.Expression = "bad_expression(id)"
 
-	_, err = newTable.interpreterMatch(matchInput)
+	_, err = newTable.InterpreterMatch(matchInput)
 	c.Error(err)
 }
 
@@ -1250,4 +1250,63 @@ func TestSearchDataWithProjectionExpression(t *testing.T) {
 	c.Len(items[0], 1)
 	c.Equal("bar", *items[0]["foo"].S)
 	c.Contains(lastKey, "id")
+}
+
+func TestSnapshot(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	_, err = table.Put(&types.PutItemInput{
+		TableName: aws.String(tableName),
+		Item:      item,
+	})
+	c.NoError(err)
+
+	snap := table.Snapshot()
+
+	_, err = table.Delete(&types.DeleteItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*types.Item{
+			"id":   {S: aws.String("001")},
+			"name": {S: aws.String("Bulbasaur")},
+		},
+	})
+	c.NoError(err)
+
+	c.Empty(table.Data)
+	c.NotEmpty(snap)
+}
+
+func TestRestore(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	itemA := createPokemon(pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	_, err = table.Put(&types.PutItemInput{
+		TableName: aws.String(tableName),
+		Item:      itemA,
+	})
+	c.NoError(err)
+
+	snap := table.Snapshot()
+
+	itemB := createPokemon(pokemon{ID: "004", Type: "fire", Name: "Charmander"})
+	_, err = table.Put(&types.PutItemInput{
+		TableName: aws.String(tableName),
+		Item:      itemB,
+	})
+	c.NoError(err)
+
+	c.Len(table.Data, 2)
+
+	table.Restore(snap)
+
+	c.Len(table.Data, 1)
+	c.Contains(table.Data, "001.Bulbasaur")
+	c.NotContains(table.Data, "004.Charmander")
 }

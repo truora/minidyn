@@ -27,6 +27,20 @@ var sdkErrUnusedExprAttrNamesKeysRE = regexp.MustCompile(
 	`ExpressionAttributeNames can only be specified when using expressions: keys: \{[^}]+\}`,
 )
 
+// DynamoDB Local appends ": keys: {:...}" to the unused ExpressionAttributeValues message.
+// Minidyn emits the shorter form. Normalise to the shared prefix.
+var sdkErrUnusedExprAttrValuesKeysRE = regexp.MustCompile(
+	`(Value provided in ExpressionAttributeValues unused in expressions): keys: \{[^}]+\}`,
+)
+
+// DynamoDB Local uses "ExpressionAttributeValues can only be specified when using expressions: ..."
+// for the case where ExpressionAttributeValues is given but no expression is present.
+// Minidyn uses "Value provided in ExpressionAttributeValues unused in expressions" for the same case.
+// Normalise DynamoDB Local's phrasing to minidyn's so parity comparisons succeed.
+var sdkErrExprAttrValuesNoExprRE = regexp.MustCompile(
+	`ExpressionAttributeValues can only be specified when using expressions[^"]*`,
+)
+
 // normalizeSDKErrorString makes minidyn and DynamoDB Local operation errors comparable by
 // stripping request IDs and DynamoDB-Local-specific validation suffixes.
 func normalizeSDKErrorString(s string) string {
@@ -39,6 +53,12 @@ func normalizeSDKErrorString(s string) string {
 
 	s = sdkErrUnusedExprAttrNamesKeysRE.ReplaceAllString(s,
 		"ExpressionAttributeNames can only be specified when using expressions")
+
+	s = sdkErrUnusedExprAttrValuesKeysRE.ReplaceAllString(s,
+		"$1")
+
+	s = sdkErrExprAttrValuesNoExprRE.ReplaceAllString(s,
+		"Value provided in ExpressionAttributeValues unused in expressions")
 
 	return s
 }

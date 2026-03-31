@@ -2194,7 +2194,7 @@ func TestTransactWriteItems(t *testing.T) {
 		c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, item["name"])
 	})
 
-	t.Run("update", func(t *testing.T) {
+	t.Run("update item", func(t *testing.T) {
 		c := require.New(t)
 		client := NewClient()
 
@@ -2225,7 +2225,7 @@ func TestTransactWriteItems(t *testing.T) {
 		c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, item["second_type"])
 	})
 
-	t.Run("delete", func(t *testing.T) {
+	t.Run("delete item", func(t *testing.T) {
 		c := require.New(t)
 		client := NewClient()
 
@@ -2252,7 +2252,7 @@ func TestTransactWriteItems(t *testing.T) {
 		c.Empty(item)
 	})
 
-	t.Run("condition_check_pass", func(t *testing.T) {
+	t.Run("condition check pass", func(t *testing.T) {
 		c := require.New(t)
 		client := NewClient()
 
@@ -2276,7 +2276,7 @@ func TestTransactWriteItems(t *testing.T) {
 		c.NoError(err)
 	})
 
-	t.Run("condition_check_fail", func(t *testing.T) {
+	t.Run("condition check fail", func(t *testing.T) {
 		c := require.New(t)
 		client := NewClient()
 
@@ -2295,8 +2295,9 @@ func TestTransactWriteItems(t *testing.T) {
 			},
 		})
 
-		var condErr *dynamodbtypes.ConditionalCheckFailedException
-		c.True(errors.As(err, &condErr))
+		var tce *dynamodbtypes.TransactionCanceledException
+		c.True(errors.As(err, &tce))
+		c.Equal("ConditionalCheckFailed", aws.ToString(tce.CancellationReasons[0].Code))
 	})
 
 	t.Run("rollback on failure", func(t *testing.T) {
@@ -2436,8 +2437,8 @@ func TestTransactWriteItems(t *testing.T) {
 			},
 		})
 
-		var condErr *dynamodbtypes.ConditionalCheckFailedException
-		c.True(errors.As(err, &condErr))
+		var tce *dynamodbtypes.TransactionCanceledException
+		c.True(errors.As(err, &tce))
 
 		out, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
 			TableName: aws.String(secondTable),
@@ -2472,10 +2473,13 @@ func TestTransactWriteItems(t *testing.T) {
 			},
 		})
 
-		var condErr *dynamodbtypes.ConditionalCheckFailedException
-		c.True(errors.As(err, &condErr))
-		c.NotEmpty(condErr.Item)
-		c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "001"}, condErr.Item["id"])
+		var tce *dynamodbtypes.TransactionCanceledException
+		c.True(errors.As(err, &tce))
+
+		reason := tce.CancellationReasons[0]
+		c.Equal("ConditionalCheckFailed", aws.ToString(reason.Code))
+		c.NotEmpty(reason.Item)
+		c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "001"}, reason.Item["id"])
 	})
 
 	t.Run("force failure", func(t *testing.T) {

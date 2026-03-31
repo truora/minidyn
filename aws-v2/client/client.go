@@ -701,7 +701,9 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 		snapshots[tableName] = table.Snapshot()
 	}
 
-	for _, item := range input.TransactItems {
+	n := len(input.TransactItems)
+
+	for i, item := range input.TransactItems {
 		switch {
 		case item.Put != nil:
 			if err = validateExpressionAttributes(item.Put.ExpressionAttributeNames, item.Put.ExpressionAttributeValues, aws.ToString(item.Put.ConditionExpression)); err != nil {
@@ -713,8 +715,8 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 				return nil, mapKnownError(tErr)
 			}
 
-			if _, err = table.Put(mapDynamoToTypesTransactPut(item.Put)); err != nil {
-				return nil, mapKnownError(err)
+			if _, opErr := table.Put(mapDynamoToTypesTransactPut(item.Put)); opErr != nil {
+				return nil, newTransactionCancelledError(i, n, opErr)
 			}
 
 		case item.Update != nil:
@@ -727,13 +729,13 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 				return nil, mapKnownError(tErr)
 			}
 
-			_, err = table.Update(mapDynamoToTypesTransactUpdate(item.Update))
-			if err != nil {
-				if errors.Is(err, interpreter.ErrSyntaxError) {
-					return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+			_, opErr := table.Update(mapDynamoToTypesTransactUpdate(item.Update))
+			if opErr != nil {
+				if errors.Is(opErr, interpreter.ErrSyntaxError) {
+					return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: opErr.Error()}
 				}
 
-				return nil, mapKnownError(err)
+				return nil, newTransactionCancelledError(i, n, opErr)
 			}
 
 		case item.Delete != nil:
@@ -746,8 +748,8 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 				return nil, mapKnownError(tErr)
 			}
 
-			if _, err = table.Delete(mapDynamoToTypesTransactDelete(item.Delete)); err != nil {
-				return nil, mapKnownError(err)
+			if _, opErr := table.Delete(mapDynamoToTypesTransactDelete(item.Delete)); opErr != nil {
+				return nil, newTransactionCancelledError(i, n, opErr)
 			}
 
 		case item.ConditionCheck != nil:
@@ -802,7 +804,7 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 					checkErr.Item = stored
 				}
 
-				return nil, mapKnownError(checkErr)
+				return nil, newTransactionCancelledError(i, n, checkErr)
 			}
 
 		default:
@@ -811,6 +813,32 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 	}
 
 	return &dynamodb.TransactWriteItemsOutput{}, nil
+}
+
+func newTransactionCancelledError(i, n int, opErr error) error {
+	var ccf *mtypes.ConditionalCheckFailedException
+	if !errors.As(opErr, &ccf) {
+		return mapKnownError(opErr)
+	}
+
+	reasons := make([]types.CancellationReason, n)
+	for j := range reasons {
+		reasons[j] = types.CancellationReason{Code: aws.String("None")}
+	}
+
+	reasons[i] = types.CancellationReason{
+		Code:    aws.String("ConditionalCheckFailed"),
+		Message: aws.String(core.ErrConditionalRequestFailed.Error()),
+	}
+
+	if ccf.Item != nil {
+		reasons[i].Item = mapTypesToDynamoMapItem(ccf.Item)
+	}
+
+	return &types.TransactionCanceledException{
+		Message:             aws.String("Transaction cancelled, please refer cancellation reasons for specific reasons [ConditionalCheckFailed]"),
+		CancellationReasons: reasons,
+	}
 }
 
 func (fd *Client) getTable(tableName string) (*core.Table, error) {

@@ -112,6 +112,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err = decoder.Decode(&input); err == nil {
 			resp, err = s.client.BatchWriteItem(context.Background(), &input)
 		}
+	case "TransactWriteItems":
+		var input TransactWriteItemsInput
+		if err = decoder.Decode(&input); err == nil {
+			resp, err = s.client.TransactWriteItems(context.Background(), &input)
+		}
 	default:
 		http.Error(w, "unsupported operation", http.StatusBadRequest)
 		return
@@ -130,6 +135,46 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	var tce *ddbtypes.TransactionCanceledException
+
+	if errors.As(err, &tce) {
+		type cancellationReasonWire struct {
+			Code    string                     `json:"Code"`
+			Message string                     `json:"Message,omitempty"`
+			Item    map[string]*AttributeValue `json:"Item,omitempty"`
+		}
+
+		type tceBody struct {
+			Type                string                   `json:"__type"`
+			Message             string                   `json:"message"`
+			CancellationReasons []cancellationReasonWire `json:"CancellationReasons"`
+		}
+
+		wireReasons := make([]cancellationReasonWire, len(tce.CancellationReasons))
+		for i, r := range tce.CancellationReasons {
+			wireReasons[i] = cancellationReasonWire{
+				Code:    aws.ToString(r.Code),
+				Message: aws.ToString(r.Message),
+			}
+
+			if len(r.Item) > 0 {
+				wireReasons[i].Item = mapDDBAttributeMapToWire(r.Item)
+			}
+		}
+
+		body := tceBody{
+			Type:                "TransactionCanceledException",
+			Message:             aws.ToString(tce.Message),
+			CancellationReasons: wireReasons,
+		}
+
+		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(body)
+
+		return
+	}
+
 	var ccf *ddbtypes.ConditionalCheckFailedException
 
 	if errors.As(err, &ccf) {

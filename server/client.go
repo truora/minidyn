@@ -534,9 +534,61 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 	return &BatchWriteItemOutput{UnprocessedItems: unprocessed}, nil
 }
 
+func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {
+	snapshots := map[string]core.TableSnapshot{}
+	seenKeys := make(map[string]struct{}, len(items))
+
+	for _, item := range items {
+		var tableName string
+		var rawKeyMap map[string]*AttributeValue
+
+		switch {
+		case item.Put != nil:
+			tableName, rawKeyMap = aws.ToString(item.Put.TableName), item.Put.Item
+		case item.Update != nil:
+			tableName, rawKeyMap = aws.ToString(item.Update.TableName), item.Update.Key
+		case item.Delete != nil:
+			tableName, rawKeyMap = aws.ToString(item.Delete.TableName), item.Delete.Key
+		case item.ConditionCheck != nil:
+			tableName, rawKeyMap = aws.ToString(item.ConditionCheck.TableName), item.ConditionCheck.Key
+		}
+
+		if tableName == "" {
+			continue
+		}
+
+		if _, alreadySnapped := snapshots[tableName]; !alreadySnapped {
+			table, err := c.getTable(tableName)
+			if err != nil {
+				return nil, mapKnownError(err)
+			}
+
+			snapshots[tableName] = table.Snapshot()
+		}
+
+		table := c.tables[tableName]
+		internalKeyMap := mapAttributeValueMapToTypes(rawKeyMap)
+
+		if key, err := table.KeySchema.GetKey(table.AttributesDef, internalKeyMap); err == nil {
+			id := tableName + "|" + key
+
+			if _, exists := seenKeys[id]; exists {
+				return nil, &smithy.GenericAPIError{
+					Code:    "ValidationException",
+					Message: "Transaction request cannot include multiple operations on one item",
+				}
+			}
+
+			seenKeys[id] = struct{}{}
+		}
+	}
+
+	return snapshots, nil
+}
+
 // TransactWriteItems executes a set of Put, Update, Delete, and ConditionCheck operations atomically.
 // If any operation fails the entire transaction is  rolled back via table snapshots captured before execution begins.
-func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteItemsInput) (_ *TransactWriteItemsOutput, err error) {
+func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteItemsInput) (*TransactWriteItemsOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -544,172 +596,178 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 		return nil, c.forceFailureErr
 	}
 
-	snapshots := map[string]core.TableSnapshot{}
+	snapshots, err := c.prepareTransact(input.TransactItems)
+	if err != nil {
+		return nil, err
+	}
+
+	var execErr error
 
 	defer func() {
-		if err != nil {
+		if execErr != nil {
 			for name, snap := range snapshots {
 				c.tables[name].Restore(snap)
 			}
 		}
 	}()
 
-	for _, item := range input.TransactItems {
-		var tableName string
-
-		switch {
-		case item.Put != nil:
-			tableName = aws.ToString(item.Put.TableName)
-		case item.Update != nil:
-			tableName = aws.ToString(item.Update.TableName)
-		case item.Delete != nil:
-			tableName = aws.ToString(item.Delete.TableName)
-		case item.ConditionCheck != nil:
-			tableName = aws.ToString(item.ConditionCheck.TableName)
-		}
-
-		if _, alreadySnapped := snapshots[tableName]; tableName == "" || alreadySnapped {
-			continue
-		}
-
-		table, tErr := c.getTable(tableName)
-		if tErr != nil {
-			return nil, mapKnownError(tErr)
-		}
-
-		snapshots[tableName] = table.Snapshot()
-	}
-
 	n := len(input.TransactItems)
 
 	for i, item := range input.TransactItems {
-		switch {
-		case item.Put != nil:
-			if err = validateExpressionAttributes(item.Put.ExpressionAttributeNames, keysFromAttributeValueMap(item.Put.ExpressionAttributeValues), aws.ToString(item.Put.ConditionExpression)); err != nil {
-				return nil, err
-			}
-
-			table, tErr := c.getTable(aws.ToString(item.Put.TableName))
-			if tErr != nil {
-				return nil, mapKnownError(tErr)
-			}
-
-			if _, opErr := table.Put(&types.PutItemInput{
-				TableName:                 item.Put.TableName,
-				ConditionExpression:       item.Put.ConditionExpression,
-				ExpressionAttributeNames:  item.Put.ExpressionAttributeNames,
-				ExpressionAttributeValues: mapAttributeValueMapToTypes(item.Put.ExpressionAttributeValues),
-				Item:                      mapAttributeValueMapToTypes(item.Put.Item),
-			}); opErr != nil {
-				return nil, newServerTransactionCancelledError(i, n, opErr)
-			}
-
-		case item.Update != nil:
-			if err = validateExpressionAttributes(item.Update.ExpressionAttributeNames, keysFromAttributeValueMap(item.Update.ExpressionAttributeValues), aws.ToString(item.Update.UpdateExpression), aws.ToString(item.Update.ConditionExpression)); err != nil {
-				return nil, err
-			}
-
-			table, tErr := c.getTable(aws.ToString(item.Update.TableName))
-			if tErr != nil {
-				return nil, mapKnownError(tErr)
-			}
-
-			_, opErr := table.Update(&types.UpdateItemInput{
-				TableName:                           item.Update.TableName,
-				ConditionExpression:                 item.Update.ConditionExpression,
-				ExpressionAttributeNames:            item.Update.ExpressionAttributeNames,
-				ExpressionAttributeValues:           mapAttributeValueMapToTypes(item.Update.ExpressionAttributeValues),
-				Key:                                 mapAttributeValueMapToTypes(item.Update.Key),
-				UpdateExpression:                    aws.ToString(item.Update.UpdateExpression),
-				ReturnValuesOnConditionCheckFailure: toStringPtr(string(item.Update.ReturnValuesOnConditionCheckFailure)),
-			})
-			if opErr != nil {
-				if errors.Is(opErr, interpreter.ErrSyntaxError) {
-					return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: opErr.Error()}
-				}
-
-				return nil, newServerTransactionCancelledError(i, n, opErr)
-			}
-
-		case item.Delete != nil:
-			if err = validateExpressionAttributes(item.Delete.ExpressionAttributeNames, keysFromAttributeValueMap(item.Delete.ExpressionAttributeValues), aws.ToString(item.Delete.ConditionExpression)); err != nil {
-				return nil, err
-			}
-
-			table, tErr := c.getTable(aws.ToString(item.Delete.TableName))
-			if tErr != nil {
-				return nil, mapKnownError(tErr)
-			}
-
-			if _, opErr := table.Delete(&types.DeleteItemInput{
-				TableName:                 item.Delete.TableName,
-				ConditionExpression:       item.Delete.ConditionExpression,
-				ExpressionAttributeNames:  toStringPtrMap(item.Delete.ExpressionAttributeNames),
-				ExpressionAttributeValues: mapAttributeValueMapToTypes(item.Delete.ExpressionAttributeValues),
-				Key:                       mapAttributeValueMapToTypes(item.Delete.Key),
-			}); opErr != nil {
-				return nil, newServerTransactionCancelledError(i, n, opErr)
-			}
-
-		case item.ConditionCheck != nil:
-			if err = validateExpressionAttributes(item.ConditionCheck.ExpressionAttributeNames, keysFromAttributeValueMap(item.ConditionCheck.ExpressionAttributeValues), aws.ToString(item.ConditionCheck.ConditionExpression)); err != nil {
-				return nil, err
-			}
-
-			table, tErr := c.getTable(aws.ToString(item.ConditionCheck.TableName))
-			if tErr != nil {
-				return nil, mapKnownError(tErr)
-			}
-
-			keyMap := mapAttributeValueMapToTypes(item.ConditionCheck.Key)
-			if vErr := types.ValidateItemMap(keyMap); vErr != nil {
-				return nil, mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
-			}
-
-			if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-				return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-			}
-
-			key, kErr := table.KeySchema.GetKey(table.AttributesDef, keyMap)
-			if kErr != nil {
-				return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: kErr.Error()}
-			}
-
-			stored := table.Data[key]
-			if stored == nil {
-				stored = map[string]*types.Item{}
-			}
-
-			matched, mErr := table.InterpreterMatch(interpreter.MatchInput{
-				TableName:      table.Name,
-				Expression:     aws.ToString(item.ConditionCheck.ConditionExpression),
-				ExpressionType: interpreter.ExpressionTypeConditional,
-				Item:           stored,
-				Aliases:        item.ConditionCheck.ExpressionAttributeNames,
-				Attributes:     mapAttributeValueMapToTypes(item.ConditionCheck.ExpressionAttributeValues),
-			})
-			if mErr != nil {
-				return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: mErr.Error()}
-			}
-
-			if !matched {
-				checkErr := &types.ConditionalCheckFailedException{
-					MessageText: core.ErrConditionalRequestFailed.Error(),
-				}
-
-				if item.ConditionCheck.ReturnValuesOnConditionCheckFailure == ddbtypes.ReturnValuesOnConditionCheckFailureAllOld {
-					checkErr.Item = stored
-				}
-
-				return nil, newServerTransactionCancelledError(i, n, checkErr)
-			}
-
-		default:
-			return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: "transaction item must include one of Put, Update, Delete, or ConditionCheck"}
+		execErr = c.runTransactItem(i, n, item)
+		if execErr != nil {
+			return nil, execErr
 		}
 	}
 
 	return &TransactWriteItemsOutput{}, nil
+}
+
+func (c *Client) runTransactItem(i, n int, item TransactWriteItem) error {
+	switch {
+	case item.Put != nil:
+		return c.runTransactPut(i, n, item.Put)
+	case item.Update != nil:
+		return c.runTransactUpdate(i, n, item.Update)
+	case item.Delete != nil:
+		return c.runTransactDelete(i, n, item.Delete)
+	case item.ConditionCheck != nil:
+		return c.runTransactConditionCheck(i, n, item.ConditionCheck)
+	default:
+		return &smithy.GenericAPIError{Code: "ValidationException", Message: "transaction item must include one of Put, Update, Delete, or ConditionCheck"}
+	}
+}
+
+func (c *Client) runTransactPut(i, n int, put *Put) error {
+	if vErr := validateExpressionAttributes(put.ExpressionAttributeNames, keysFromAttributeValueMap(put.ExpressionAttributeValues), aws.ToString(put.ConditionExpression)); vErr != nil {
+		return vErr
+	}
+
+	table, tErr := c.getTable(aws.ToString(put.TableName))
+	if tErr != nil {
+		return mapKnownError(tErr)
+	}
+
+	if _, opErr := table.Put(&types.PutItemInput{
+		TableName:                 put.TableName,
+		ConditionExpression:       put.ConditionExpression,
+		ExpressionAttributeNames:  put.ExpressionAttributeNames,
+		ExpressionAttributeValues: mapAttributeValueMapToTypes(put.ExpressionAttributeValues),
+		Item:                      mapAttributeValueMapToTypes(put.Item),
+	}); opErr != nil {
+		return newServerTransactionCancelledError(i, n, opErr)
+	}
+
+	return nil
+}
+
+func (c *Client) runTransactUpdate(i, n int, update *Update) error {
+	if vErr := validateExpressionAttributes(update.ExpressionAttributeNames, keysFromAttributeValueMap(update.ExpressionAttributeValues), aws.ToString(update.UpdateExpression), aws.ToString(update.ConditionExpression)); vErr != nil {
+		return vErr
+	}
+
+	table, tErr := c.getTable(aws.ToString(update.TableName))
+	if tErr != nil {
+		return mapKnownError(tErr)
+	}
+
+	_, opErr := table.Update(&types.UpdateItemInput{
+		TableName:                           update.TableName,
+		ConditionExpression:                 update.ConditionExpression,
+		ExpressionAttributeNames:            update.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(update.ExpressionAttributeValues),
+		Key:                                 mapAttributeValueMapToTypes(update.Key),
+		UpdateExpression:                    aws.ToString(update.UpdateExpression),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(update.ReturnValuesOnConditionCheckFailure)),
+	})
+	if opErr != nil {
+		if errors.Is(opErr, interpreter.ErrSyntaxError) {
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: opErr.Error()}
+		}
+
+		return newServerTransactionCancelledError(i, n, opErr)
+	}
+
+	return nil
+}
+
+func (c *Client) runTransactDelete(i, n int, del *Delete) error {
+	if vErr := validateExpressionAttributes(del.ExpressionAttributeNames, keysFromAttributeValueMap(del.ExpressionAttributeValues), aws.ToString(del.ConditionExpression)); vErr != nil {
+		return vErr
+	}
+
+	table, tErr := c.getTable(aws.ToString(del.TableName))
+	if tErr != nil {
+		return mapKnownError(tErr)
+	}
+
+	if _, opErr := table.Delete(&types.DeleteItemInput{
+		TableName:                 del.TableName,
+		ConditionExpression:       del.ConditionExpression,
+		ExpressionAttributeNames:  toStringPtrMap(del.ExpressionAttributeNames),
+		ExpressionAttributeValues: mapAttributeValueMapToTypes(del.ExpressionAttributeValues),
+		Key:                       mapAttributeValueMapToTypes(del.Key),
+	}); opErr != nil {
+		return newServerTransactionCancelledError(i, n, opErr)
+	}
+
+	return nil
+}
+
+func (c *Client) runTransactConditionCheck(i, n int, check *ConditionCheck) error {
+	if vErr := validateExpressionAttributes(check.ExpressionAttributeNames, keysFromAttributeValueMap(check.ExpressionAttributeValues), aws.ToString(check.ConditionExpression)); vErr != nil {
+		return vErr
+	}
+
+	table, tErr := c.getTable(aws.ToString(check.TableName))
+	if tErr != nil {
+		return mapKnownError(tErr)
+	}
+
+	keyMap := mapAttributeValueMapToTypes(check.Key)
+	if vErr := types.ValidateItemMap(keyMap); vErr != nil {
+		return mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
+	}
+
+	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
+		return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
+	}
+
+	key, kErr := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	if kErr != nil {
+		return &smithy.GenericAPIError{Code: "ValidationException", Message: kErr.Error()}
+	}
+
+	stored := table.Data[key]
+	if stored == nil {
+		stored = map[string]*types.Item{}
+	}
+
+	matched, mErr := table.InterpreterMatch(interpreter.MatchInput{
+		TableName:      table.Name,
+		Expression:     aws.ToString(check.ConditionExpression),
+		ExpressionType: interpreter.ExpressionTypeConditional,
+		Item:           stored,
+		Aliases:        check.ExpressionAttributeNames,
+		Attributes:     mapAttributeValueMapToTypes(check.ExpressionAttributeValues),
+	})
+	if mErr != nil {
+		return &smithy.GenericAPIError{Code: "ValidationException", Message: mErr.Error()}
+	}
+
+	if !matched {
+		checkErr := &types.ConditionalCheckFailedException{
+			MessageText: core.ErrConditionalRequestFailed.Error(),
+		}
+
+		if check.ReturnValuesOnConditionCheckFailure == ddbtypes.ReturnValuesOnConditionCheckFailureAllOld {
+			checkErr.Item = stored
+		}
+
+		return newServerTransactionCancelledError(i, n, checkErr)
+	}
+
+	return nil
 }
 
 func newServerTransactionCancelledError(i, n int, opErr error) error {

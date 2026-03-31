@@ -135,9 +135,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	var tce *ddbtypes.TransactionCanceledException
-
-	if errors.As(err, &tce) {
+	if tce, ok := errors.AsType[*ddbtypes.TransactionCanceledException](err); ok {
 		type cancellationReasonWire struct {
 			Code    string                     `json:"Code"`
 			Message string                     `json:"Message,omitempty"`
@@ -175,9 +173,7 @@ func writeError(w http.ResponseWriter, err error) {
 		return
 	}
 
-	var ccf *ddbtypes.ConditionalCheckFailedException
-
-	if errors.As(err, &ccf) {
+	if ccf, ok := errors.AsType[*ddbtypes.ConditionalCheckFailedException](err); ok {
 		type ccfBody struct {
 			Type    string                     `json:"__type"`
 			Message string                     `json:"message"`

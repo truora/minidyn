@@ -1,6 +1,7 @@
 package core
 
 import (
+	"maps"
 	"sort"
 
 	"github.com/truora/minidyn/types"
@@ -38,6 +39,26 @@ func newIndex(t *Table, typ indexType, ks keySchema) *index {
 func (i *index) Clear() {
 	i.sortedKeys = []string{}
 	i.refs = map[string]string{}
+}
+
+type indexSnapshot struct {
+	sortedKeys []string
+	refs       map[string]string
+}
+
+func (i *index) snapshot() indexSnapshot {
+	keys := make([]string, len(i.sortedKeys))
+	copy(keys, i.sortedKeys)
+
+	refs := make(map[string]string, len(i.refs))
+	maps.Copy(refs, i.refs)
+
+	return indexSnapshot{sortedKeys: keys, refs: refs}
+}
+
+func (i *index) restore(s indexSnapshot) {
+	i.sortedKeys = s.sortedKeys
+	i.refs = s.refs
 }
 
 func (i *index) putData(key string, item map[string]*types.Item) error {

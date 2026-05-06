@@ -469,7 +469,8 @@ func (t *Table) getLastKey(item map[string]*types.Item, limit, count, scanned, k
 	return key
 }
 
-func (t *Table) interpreterMatch(input interpreter.MatchInput) (bool, error) {
+// InterpreterMatch evaluates a match expression against an item
+func (t *Table) InterpreterMatch(input interpreter.MatchInput) (bool, error) {
 	if t.UseNativeInterpreter {
 		matched, err := t.NativeInterpreter.Match(input)
 		if err == nil {
@@ -492,7 +493,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 	if input.KeyConditionExpression != "" {
 		var err error
 
-		matched, err = t.interpreterMatch(interpreter.MatchInput{
+		matched, err = t.InterpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
 			Expression:     input.KeyConditionExpression,
 			ExpressionType: interpreter.ExpressionTypeKey,
@@ -508,7 +509,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 
 	if input.FilterExpression != "" {
 		if matched {
-			m, err := t.interpreterMatch(interpreter.MatchInput{
+			m, err := t.InterpreterMatch(interpreter.MatchInput{
 				TableName:      t.Name,
 				Expression:     input.FilterExpression,
 				ExpressionType: interpreter.ExpressionTypeFilter,
@@ -527,7 +528,7 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 	if input.ConditionExpression != nil && *input.ConditionExpression != "" {
 		var err error
 
-		matched, err = t.interpreterMatch(interpreter.MatchInput{
+		matched, err = t.InterpreterMatch(interpreter.MatchInput{
 			TableName:      t.Name,
 			Expression:     *input.ConditionExpression,
 			ExpressionType: interpreter.ExpressionTypeConditional,
@@ -569,6 +570,43 @@ func (t *Table) Clear() {
 	t.Data = map[string]map[string]*types.Item{}
 }
 
+// TableSnapshot captures a point-in-time copy of mutable table state for transactional rollback
+type TableSnapshot struct {
+	data       map[string]map[string]*types.Item
+	sortedKeys []string
+	indexes    map[string]indexSnapshot
+}
+
+// Snapshot returns a deep copy of the table's mutable state
+func (t *Table) Snapshot() TableSnapshot {
+	data := make(map[string]map[string]*types.Item, len(t.Data))
+	for k, v := range t.Data {
+		data[k] = deepCopyItemMap(v)
+	}
+
+	keys := make([]string, len(t.SortedKeys))
+	copy(keys, t.SortedKeys)
+
+	indexes := make(map[string]indexSnapshot, len(t.Indexes))
+	for name, idx := range t.Indexes {
+		indexes[name] = idx.snapshot()
+	}
+
+	return TableSnapshot{data: data, sortedKeys: keys, indexes: indexes}
+}
+
+// Restore replaces the table's mutable state with a previously taken snapshot
+func (t *Table) Restore(s TableSnapshot) {
+	t.Data = s.data
+	t.SortedKeys = s.sortedKeys
+
+	for name, idx := range t.Indexes {
+		if snap, ok := s.indexes[name]; ok {
+			idx.restore(snap)
+		}
+	}
+}
+
 // Put puts items into table
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) { //nolint:gocognit // conditional write, key resolution, GSI updates
 	if err := types.ValidateItemMap(input.Item); err != nil {
@@ -600,7 +638,7 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 
 		if !matched {
-			return item, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
+			return item, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
 		}
 	}
 
@@ -870,7 +908,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		}
 
 		if !matched {
-			return nil, types.NewError("ConditionalCheckFailedException", ErrConditionalRequestFailed.Error(), nil)
+			return nil, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
 		}
 	}
 

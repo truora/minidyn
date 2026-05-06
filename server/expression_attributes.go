@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/aws/smithy-go"
@@ -12,11 +13,12 @@ import (
 )
 
 const (
-	expressionAttributeNamesOnlyWithExpressionsMsg = "ExpressionAttributeNames can only be specified when using expressions"
-	unusedExpressionAttributeNamesMsg              = "Value provided in ExpressionAttributeNames unused in expressions"
-	unusedExpressionAttributeValuesMsg             = "Value provided in ExpressionAttributeValues unused in expressions"
-	invalidExpressionAttributeName                 = "ExpressionAttributeNames contains invalid key"
-	invalidExpressionAttributeValue                = "ExpressionAttributeValues contains invalid key"
+	expressionAttributeNamesOnlyWithExpressionsMsg  = "ExpressionAttributeNames can only be specified when using expressions"
+	expressionAttributeValuesOnlyWithExpressionsMsg = "ExpressionAttributeValues can only be specified when using expressions"
+	unusedExpressionAttributeNamesMsg               = "Value provided in ExpressionAttributeNames unused in expressions"
+	unusedExpressionAttributeValuesMsg              = "Value provided in ExpressionAttributeValues unused in expressions"
+	invalidExpressionAttributeName                  = "ExpressionAttributeNames contains invalid key"
+	invalidExpressionAttributeValue                 = "ExpressionAttributeValues contains invalid key"
 )
 
 var (
@@ -41,6 +43,8 @@ func validateExpressionAttributes(exprNames map[string]string, exprValueKeys []s
 	missingValues := getMissingSubstrs(genericExpression, exprValueKeys)
 
 	if len(missingNames) > 0 {
+		sort.Strings(missingNames)
+
 		msg := unusedExpressionAttributeNamesMsg
 		if genericExpression == "" {
 			msg = expressionAttributeNamesOnlyWithExpressionsMsg
@@ -55,6 +59,12 @@ func validateExpressionAttributes(exprNames map[string]string, exprValueKeys []s
 	}
 
 	if len(missingValues) > 0 {
+		if genericExpression == "" {
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: expressionAttributeValuesOnlyWithExpressionsMsg}
+		}
+
+		sort.Strings(missingValues)
+
 		return &smithy.GenericAPIError{Code: "ValidationException", Message: fmt.Sprintf("%s: keys: {%s}", unusedExpressionAttributeValuesMsg, strings.Join(missingValues, ", "))}
 	}
 

@@ -1,12 +1,7 @@
 // Package types contains general types to use in core and interpreter
 package types
 
-import (
-	"fmt"
-
-	"github.com/aws/aws-sdk-go/aws/awsutil"
-	"github.com/aws/aws-sdk-go/private/protocol"
-)
+import "fmt"
 
 // Item describes the DynamoDB item structure
 type Item struct {
@@ -177,17 +172,29 @@ type LocalSecondaryIndexDescription struct {
 	Projection     *Projection        `type:"structure"`
 }
 
+// ResponseMetadata holds HTTP response metadata for modeled API errors.
+type ResponseMetadata struct {
+	StatusCode int
+	RequestID  string
+}
+
 // ConditionalCheckFailedException a condition specified in the operation could not be evaluated.
 type ConditionalCheckFailedException struct {
-	_            struct{}                  `type:"structure"`
-	RespMetadata protocol.ResponseMetadata `json:"-" xml:"-"`
-	MessageText  string                    `locationName:"message" type:"string"`
-	Item         map[string]*Item          `type:"map"`
+	_            struct{}         `type:"structure"`
+	RespMetadata ResponseMetadata `json:"-" xml:"-"`
+	MessageText  string           `locationName:"message" type:"string"`
+	Item         map[string]*Item `type:"map"`
 }
 
 // String returns the string representation
 func (s ConditionalCheckFailedException) String() string {
-	return awsutil.Prettify(s)
+	return fmt.Sprintf(
+		"ConditionalCheckFailedException{RespMetadata:{StatusCode:%d RequestID:%s} MessageText:%q Item:%+v}",
+		s.RespMetadata.StatusCode,
+		s.RespMetadata.RequestID,
+		s.MessageText,
+		s.Item,
+	)
 }
 
 // GoString returns the string representation

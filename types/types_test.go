@@ -3,7 +3,6 @@ package types
 import (
 	"testing"
 
-	"github.com/aws/aws-sdk-go/private/protocol"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,7 +11,7 @@ func TestConditionalCheckFailedExceptionMethods(t *testing.T) {
 
 	exVal := ConditionalCheckFailedException{
 		MessageText: "condition was not met",
-		RespMetadata: protocol.ResponseMetadata{
+		RespMetadata: ResponseMetadata{
 			StatusCode: 400,
 			RequestID:  "req-abc",
 		},

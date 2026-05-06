@@ -216,3 +216,75 @@ func TestMapDeleteAndUpdateGSI_nonNil(t *testing.T) {
 	require.Equal(t, int64(1), upd.ProvisionedThroughput.ReadCapacityUnits)
 	require.Equal(t, int64(2), upd.ProvisionedThroughput.WriteCapacityUnits)
 }
+
+func TestMapDDBAttributeValueToWire_allMembers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil", func(t *testing.T) {
+		t.Parallel()
+		require.Nil(t, mapDDBAttributeValueToWire(nil))
+	})
+
+	t.Run("scalars_and_sets", func(t *testing.T) {
+		t.Parallel()
+
+		got := mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberS{Value: "s"})
+		require.Equal(t, aws.String("s"), got.S)
+
+		got = mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberN{Value: "9"})
+		require.Equal(t, aws.String("9"), got.N)
+
+		got = mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberB{Value: []byte{1, 2}})
+		require.Equal(t, []byte{1, 2}, got.B)
+
+		got = mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberBOOL{Value: true})
+		require.Equal(t, aws.Bool(true), got.BOOL)
+
+		got = mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberBS{Value: [][]byte{{3}}})
+		require.Equal(t, [][]byte{{3}}, got.BS)
+
+		got = mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberNS{Value: []string{"1", "2"}})
+		require.Len(t, got.NS, 2)
+		require.Equal(t, "1", aws.ToString(got.NS[0]))
+
+		got = mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberSS{Value: []string{"a", "b"}})
+		require.Len(t, got.SS, 2)
+		require.Equal(t, "a", aws.ToString(got.SS[0]))
+
+		got = mapDDBAttributeValueToWire(&ddbtypes.AttributeValueMemberNULL{Value: true})
+		require.Equal(t, aws.Bool(true), got.NULL)
+	})
+
+	t.Run("map_and_list_nested", func(t *testing.T) {
+		t.Parallel()
+
+		in := &ddbtypes.AttributeValueMemberM{
+			Value: map[string]ddbtypes.AttributeValue{
+				"k": &ddbtypes.AttributeValueMemberS{Value: "v"},
+				"l": &ddbtypes.AttributeValueMemberL{
+					Value: []ddbtypes.AttributeValue{
+						&ddbtypes.AttributeValueMemberNULL{Value: false},
+					},
+				},
+			},
+		}
+
+		got := mapDDBAttributeValueToWire(in)
+		require.NotNil(t, got.M)
+		require.Equal(t, aws.String("v"), got.M["k"].S)
+		require.Len(t, got.M["l"].L, 1)
+		require.Equal(t, aws.Bool(false), got.M["l"].L[0].NULL)
+	})
+
+	t.Run("attribute_map_roundtrip_key", func(t *testing.T) {
+		t.Parallel()
+
+		in := map[string]ddbtypes.AttributeValue{
+			"x": &ddbtypes.AttributeValueMemberS{Value: "z"},
+		}
+
+		out := mapDDBAttributeMapToWire(in)
+		require.Len(t, out, 1)
+		require.Equal(t, aws.String("z"), out["x"].S)
+	})
+}

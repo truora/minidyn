@@ -37,6 +37,7 @@ function parse_coverage {
     return $exit_code
 }
 
+exit_code=0
 for pkg in $pkgs_to_test
 do
     echo "# Checking $pkg"
@@ -50,11 +51,12 @@ do
     go test -gcflags=all=-d=checkptr=0 -race -cover -coverprofile=$coverage_file -timeout=$timeout -short $pkg &> $test_file
 
     parse_test
-    exit_code=$?
+    if [[ $? != 0 ]]; then
+        exit_code=1
+    fi
 
     parse_coverage
-    
-    if [[ $? == 1 ]]; then
+    if [[ $? != 0 ]]; then
         exit_code=1
     fi
 

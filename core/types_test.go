@@ -177,3 +177,78 @@ func BenchmarkMapToDynamoDBType(b *testing.B) {
 		c.Equal("L", r)
 	}
 }
+
+func TestCloneBoolPtr(t *testing.T) {
+	c := require.New(t)
+
+	c.Nil(cloneBoolPtr(nil))
+
+	tr := true
+	out := cloneBoolPtr(&tr)
+	c.NotNil(out)
+	c.True(*out)
+
+	f := false
+	outF := cloneBoolPtr(&f)
+	c.NotNil(outF)
+	c.False(*outF)
+}
+
+func TestDeepCopyStringPtrSliceAndByteSliceSlice(t *testing.T) {
+	c := require.New(t)
+
+	c.Nil(deepCopyStringPtrSlice(nil))
+	c.Nil(deepCopyStringPtrSlice([]*string{}))
+
+	a1, a2 := "a", "b"
+	src := []*string{&a1, nil, &a2}
+	cp := deepCopyStringPtrSlice(src)
+	c.Len(cp, 3)
+	c.Equal(&a1, src[0])
+	c.NotSame(src[0], cp[0])
+	c.Equal(*src[0], *cp[0])
+	c.Nil(cp[1])
+	c.Equal(*src[2], *cp[2])
+
+	c.Nil(deepCopyByteSliceSlice(nil))
+	c.Nil(deepCopyByteSliceSlice([][]byte{}))
+
+	raw := [][]byte{{1, 2}, {3, 4}}
+	bcp := deepCopyByteSliceSlice(raw)
+	c.Len(bcp, 2)
+	c.Equal(raw[0], bcp[0])
+	c.NotSame(&raw[0][0], &bcp[0][0])
+}
+
+func TestDeepCopyTypesItem_nestedAndScalars(t *testing.T) {
+	c := require.New(t)
+
+	c.Nil(deepCopyTypesItem(nil))
+
+	sub := "nested"
+	tr := true
+	f := false
+	it := &types.Item{
+		BOOL: &tr,
+		NULL: &f,
+		S:    new("s"),
+		N:    new("1"),
+		B:    []byte{9},
+		BS:   [][]byte{{1}},
+		SS:   []*string{new("x")},
+		NS:   []*string{new("1")},
+		L: []*types.Item{
+			{S: new("leaf")},
+		},
+		M: map[string]*types.Item{
+			"sub": {S: &sub},
+		},
+	}
+
+	got := deepCopyTypesItem(it)
+	c.NotSame(it, got)
+	c.NotSame(it.M["sub"], got.M["sub"])
+	c.Equal(types.StringValue(it.S), types.StringValue(got.S))
+	c.Equal(sub, types.StringValue(got.M["sub"].S))
+	c.Equal(types.StringValue(it.L[0].S), types.StringValue(got.L[0].S))
+}

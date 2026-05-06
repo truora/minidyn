@@ -1184,9 +1184,28 @@ func TestGSIUpdateMovesSecondaryIndexKey(t *testing.T) {
 	})
 	c.NoError(err)
 
-	idx := table.Indexes[idxName]
-	pk := table.SortedKeys[0]
-	c.Equal("alpha", idx.refs[pk])
+	queryBySeg := func(seg string) []map[string]*types.Item {
+		t.Helper()
+
+		items, _, qerr := table.SearchData(QueryInput{
+			Index:                  idxName,
+			KeyConditionExpression: "#s = :s",
+			Aliases:                map[string]string{"#s": "seg"},
+			ExpressionAttributeValues: map[string]*types.Item{
+				":s": {S: &seg},
+			},
+			ScanIndexForward: true,
+		})
+		c.NoError(qerr)
+
+		return items
+	}
+
+	matched := queryBySeg(aVal)
+	c.Len(matched, 1)
+	c.Equal(idVal, *matched[0]["id"].S)
+	c.Equal(aVal, *matched[0]["seg"].S)
+	c.Empty(queryBySeg(bVal))
 
 	_, err = table.Update(&types.UpdateItemInput{
 		TableName: aws.String(table.Name),
@@ -1200,7 +1219,11 @@ func TestGSIUpdateMovesSecondaryIndexKey(t *testing.T) {
 	})
 	c.NoError(err)
 
-	c.Equal("beta", idx.refs[pk])
+	matched = queryBySeg(bVal)
+	c.Len(matched, 1)
+	c.Equal(idVal, *matched[0]["id"].S)
+	c.Equal(bVal, *matched[0]["seg"].S)
+	c.Empty(queryBySeg(aVal))
 }
 
 func TestMatchKey_errorsAndFilterBranches(t *testing.T) {
@@ -1323,39 +1346,57 @@ func TestDelete_conditionalCheckFailedAndExpressionValues(t *testing.T) {
 	})
 	c.NoError(err)
 
-	dupA, dupB := "x", "x"
-	_, err = table.Delete(&types.DeleteItemInput{
-		TableName: aws.String(table.Name),
-		Key:       primaryKeyFromPokemonItem(item),
-		ExpressionAttributeValues: map[string]*types.Item{
-			":bad": {SS: []*string{&dupA, &dupB}},
-		},
-	})
-	c.Error(err)
+	t.Run("duplicate_set_values_returns_validation_exception", func(t *testing.T) {
+		t.Parallel()
 
-	var apiErr types.Error
-	c.True(errors.As(err, &apiErr))
-	c.Equal("ValidationException", apiErr.Code())
+		req := require.New(t)
 
-	cond := "attribute_exists(nonexistent)"
-	_, err = table.Delete(&types.DeleteItemInput{
-		TableName:                 aws.String(table.Name),
-		Key:                       primaryKeyFromPokemonItem(item),
-		ConditionExpression:       &cond,
-		ExpressionAttributeValues: map[string]*types.Item{},
+		dupA, dupB := "x", "x"
+		_, derr := table.Delete(&types.DeleteItemInput{
+			TableName: aws.String(table.Name),
+			Key:       primaryKeyFromPokemonItem(item),
+			ExpressionAttributeValues: map[string]*types.Item{
+				":bad": {SS: []*string{&dupA, &dupB}},
+			},
+		})
+		req.Error(derr)
+
+		var apiErr types.Error
+		req.True(errors.As(derr, &apiErr))
+		req.Equal("ValidationException", apiErr.Code())
 	})
 
-	var checkErr *types.ConditionalCheckFailedException
-	c.True(errors.As(err, &checkErr))
+	t.Run("failing_condition_returns_conditional_check_failed", func(t *testing.T) {
+		t.Parallel()
 
-	_, err = table.Delete(&types.DeleteItemInput{
-		TableName: aws.String(table.Name),
-		Key: map[string]*types.Item{
-			"id":   {S: aws.String("missing")},
-			"name": {S: aws.String("nobody")},
-		},
+		req := require.New(t)
+
+		cond := "attribute_exists(nonexistent)"
+		_, derr := table.Delete(&types.DeleteItemInput{
+			TableName:                 aws.String(table.Name),
+			Key:                       primaryKeyFromPokemonItem(item),
+			ConditionExpression:       &cond,
+			ExpressionAttributeValues: map[string]*types.Item{},
+		})
+
+		var checkErr *types.ConditionalCheckFailedException
+		req.True(errors.As(derr, &checkErr))
 	})
-	c.NoError(err)
+
+	t.Run("delete_missing_item_succeeds", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		_, derr := table.Delete(&types.DeleteItemInput{
+			TableName: aws.String(table.Name),
+			Key: map[string]*types.Item{
+				"id":   {S: aws.String("missing")},
+				"name": {S: aws.String("nobody")},
+			},
+		})
+		req.NoError(derr)
+	})
 }
 
 func TestSetAttributeDefinition(t *testing.T) {

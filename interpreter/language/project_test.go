@@ -127,11 +127,6 @@ func TestExtractPath_listIndex_nonNumericIdentifierEval(t *testing.T) {
 	}
 }
 
-//go:fix inline
-func ptrString(s string) *string {
-	return new(s)
-}
-
 func TestExtractPathFromIndex_unsupportedIndexType(t *testing.T) {
 	t.Parallel()
 

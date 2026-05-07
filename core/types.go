@@ -15,7 +15,7 @@ var (
 	errMissingField = errors.New("One of the required keys was not given a value") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
 	// ErrConditionalRequestFailed when the conditional write is not meet
-	ErrConditionalRequestFailed = errors.New("Conditional request failed") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+	ErrConditionalRequestFailed = errors.New("The conditional request failed") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
 	// ErrInvalidAtrributeValue when the attributte value is invalid
 	ErrInvalidAtrributeValue = errors.New("Invalid attribute value type") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors

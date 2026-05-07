@@ -139,15 +139,8 @@ func contains(args ...Object) Object {
 func objectSize(args ...Object) Object {
 	path := args[0]
 
-	switch path.Type() {
-	case ObjectTypeString:
-		str, _ := path.(*String)
-
-		return &Number{Value: float64(len(str.Value))}
-	case ObjectTypeBinary:
-		bin, _ := path.(*Binary)
-
-		return &Number{Value: float64(len(bin.Value))}
+	if sizable, ok := path.(SizableObject); ok {
+		return &Number{Value: float64(sizable.Size())}
 	}
 
 	return newError("type not supported: size %s", path.Type())

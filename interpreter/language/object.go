@@ -83,6 +83,12 @@ type ContainerObject interface {
 	CanContain(objType ObjectType) bool
 }
 
+// SizableObject is the abstraction of objects that support the size() function.
+type SizableObject interface {
+	Object
+	Size() int64
+}
+
 // AppendableObject abstraction of the objects that can add other objects
 type AppendableObject interface {
 	Object
@@ -196,6 +202,11 @@ func (b *Binary) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeBinary
 }
 
+// Size returns the number of bytes in the binary (DynamoDB size for B).
+func (b *Binary) Size() int64 {
+	return int64(len(b.Value))
+}
+
 // Null is the representation of nil values
 type Null struct {
 	IsUndefined bool
@@ -263,6 +274,11 @@ func (s *String) ToDynamoDB() types.Item {
 // CanContain whether or not the string can contain the objType
 func (s *String) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeString
+}
+
+// Size returns the length of the string in UTF-8 bytes (DynamoDB size for S).
+func (s *String) Size() int64 {
+	return int64(len(s.Value))
 }
 
 // Map is the representation of map
@@ -334,6 +350,11 @@ func (m *Map) Get(field string) Object {
 	}
 
 	return obj
+}
+
+// Size returns the number of top-level entries in the map (DynamoDB size for M).
+func (m *Map) Size() int64 {
+	return int64(len(m.Value))
 }
 
 // List is the representation of list
@@ -442,6 +463,11 @@ func (l *List) CanContain(objType ObjectType) bool {
 	return true
 }
 
+// Size returns the number of elements in the list (DynamoDB size for L).
+func (l *List) Size() int64 {
+	return int64(len(l.Value))
+}
+
 // Add if the obj adds the value to the list
 func (l *List) Add(obj Object) Object {
 	if obj.Type() == ObjectTypeList {
@@ -531,6 +557,11 @@ func (ss *StringSet) ToDynamoDB() types.Item {
 // CanContain whether or not the string set can contain the objType
 func (ss *StringSet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeString || objType == ObjectTypeStringSet
+}
+
+// Size returns the number of elements in the set (DynamoDB size for SS).
+func (ss *StringSet) Size() int64 {
+	return int64(len(ss.Value))
 }
 
 // Add if the obj is an string it adds the value to Set
@@ -666,6 +697,11 @@ func (bs *BinarySet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeBinary || objType == ObjectTypeBinarySet
 }
 
+// Size returns the number of elements in the set (DynamoDB size for BS).
+func (bs *BinarySet) Size() int64 {
+	return int64(len(bs.Value))
+}
+
 // Delete if the obj is an binary it removes the value from the Set
 func (bs *BinarySet) Delete(obj Object) Object {
 	switch obj.Type() {
@@ -763,6 +799,11 @@ func (ns *NumberSet) ToDynamoDB() types.Item {
 	}
 
 	return attr
+}
+
+// Size returns the number of elements in the set (DynamoDB size for NS).
+func (ns *NumberSet) Size() int64 {
+	return int64(len(ns.Value))
 }
 
 // Contains returns if the collection contains the object

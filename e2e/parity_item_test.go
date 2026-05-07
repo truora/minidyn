@@ -303,6 +303,75 @@ func TestE2E_Item(t *testing.T) {
 			},
 		},
 		{
+			name: "PutItemConditionExpressionSizeListAndSet",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				item := parityMarshalPokemon(t, parityPokemon{
+					ID:    "001",
+					Type:  "grass",
+					Name:  "Bulbasaur",
+					Moves: []string{"Tackle", "Growl"},
+					Local: []string{"Pallet Town", "Route 1"},
+				})
+
+				// Map (M), NumberSet (NS), and BinarySet (BS): exercise size() for parity with List (L) and StringSet (SS) above.
+				item["stats"] = &dynamodbtypes.AttributeValueMemberM{
+					Value: map[string]dynamodbtypes.AttributeValue{
+						"hp":  &dynamodbtypes.AttributeValueMemberN{Value: "45"},
+						"atk": &dynamodbtypes.AttributeValueMemberN{Value: "49"},
+						"def": &dynamodbtypes.AttributeValueMemberN{Value: "49"},
+					},
+				}
+				item["ivs"] = &dynamodbtypes.AttributeValueMemberNS{
+					Value: []string{"31", "20"},
+				}
+				item["tags_bin"] = &dynamodbtypes.AttributeValueMemberBS{
+					Value: [][]byte{{0x01, 0xaa}, {0x02, 0xbb}},
+				}
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					Item:      item,
+					TableName: aws.String(parityPokemonTable),
+				})
+				require.NoError(t, err)
+
+				_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+					Item:      item,
+					TableName: aws.String(parityPokemonTable),
+					ConditionExpression: aws.String(
+						"size(moves) = :ssSize AND size(#local) = :listSize AND size(stats) = :mapSize AND size(ivs) = :nsSize AND size(tags_bin) = :bsSize",
+					),
+					ExpressionAttributeNames: map[string]string{
+						"#local": "local",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":ssSize":   &dynamodbtypes.AttributeValueMemberN{Value: "2"},
+						":listSize": &dynamodbtypes.AttributeValueMemberN{Value: "2"},
+						":mapSize":  &dynamodbtypes.AttributeValueMemberN{Value: "3"},
+						":nsSize":   &dynamodbtypes.AttributeValueMemberN{Value: "2"},
+						":bsSize":   &dynamodbtypes.AttributeValueMemberN{Value: "2"},
+					},
+				})
+				require.NoError(t, err)
+
+				_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+					Item:                item,
+					TableName:           aws.String(parityPokemonTable),
+					ConditionExpression: aws.String("size(moves) = :invalidSize"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":invalidSize": &dynamodbtypes.AttributeValueMemberN{Value: "5"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
 			name: "PutItemUnusedExpressionAttributeValues",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()

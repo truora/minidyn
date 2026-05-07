@@ -50,7 +50,7 @@ Used for `Match` with `ExpressionTypeConditional`, `ExpressionTypeFilter`, or `E
 | `attribute_type(path, type)` | y | Second argument is a DynamoDB type token (`S`, `N`, `L`, …). |
 | `begins_with(path, substr)` | y | Path: **S** or **B**; substr must match (string or binary). |
 | `contains(path, operand)` | y | Path: **S**, **B**, **L**, **SS**, **BS**, or **NS** (not **M**). Operand type must match `contains` rules for that container. |
-| `size(path)` | partial | Only **S** and **B** paths return a length. Real DynamoDB also defines `size` for sets and lists; that behavior is **not** implemented here. |
+| `size(path)` | y | **S** (UTF-8 byte length), **B** (byte length), **M** (number of entries), **L** (number of elements), **SS** / **NS** / **BS** (number of elements in the set). |
 
 ---
 

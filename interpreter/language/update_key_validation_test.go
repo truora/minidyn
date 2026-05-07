@@ -21,6 +21,20 @@ func assertPrimaryKeyUpdateError(t *testing.T, err error, wantSubstr string) {
 	}
 }
 
+func TestUpdateActionRootAttributeName_dispatch(t *testing.T) {
+	t.Parallel()
+
+	root, ok := updateActionRootAttributeName(&Identifier{Value: "attr"}, nil)
+	if !ok || root != "attr" {
+		t.Fatalf("got root=%q ok=%v", root, ok)
+	}
+
+	_, ok = updateActionRootAttributeName(&PrefixExpression{}, nil)
+	if ok {
+		t.Fatal("expected unsupported expression to yield ok=false")
+	}
+}
+
 func TestValidateUpdateExpressionDoesNotTargetPrimaryKey(t *testing.T) {
 	t.Parallel()
 

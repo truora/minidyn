@@ -1132,6 +1132,273 @@ func TestMatchKey(t *testing.T) {
 	c.NotNil(expresionType)
 }
 
+func TestValidatePrimaryKeyMap_TableMethod(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable("pk_test")
+	table.AttributesDef = map[string]string{"id": "S"}
+	table.KeySchema = keySchema{"id", "", false}
+
+	err := table.ValidatePrimaryKeyMap(map[string]*types.Item{})
+	c.Error(err)
+	c.Contains(err.Error(), "invalid")
+
+	err = table.ValidatePrimaryKeyMap(map[string]*types.Item{"id": {S: aws.String("1")}})
+	c.NoError(err)
+}
+
+func TestGSIUpdateMovesSecondaryIndexKey(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable("gsi_move")
+	table.AttributesDef = map[string]string{"id": "S", "seg": "S"}
+	table.KeySchema = keySchema{"id", "", false}
+	table.LangInterpreter = interpreter.Language{}
+
+	idxName := "by_seg"
+	allStr := "ALL"
+
+	err := table.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
+		ProvisionedThroughput: &types.ProvisionedThroughput{
+			ReadCapacityUnits:  1,
+			WriteCapacityUnits: 1,
+		},
+		IndexName: &idxName,
+		KeySchema: []*types.KeySchemaElement{
+			{AttributeName: "seg", KeyType: "HASH"},
+		},
+		Projection: &types.Projection{ProjectionType: &allStr},
+	}})
+	c.NoError(err)
+
+	idVal := "1"
+	aVal := "alpha"
+	bVal := "beta"
+
+	_, err = table.Put(&types.PutItemInput{
+		TableName: aws.String(table.Name),
+		Item: map[string]*types.Item{
+			"id":  {S: &idVal},
+			"seg": {S: &aVal},
+		},
+	})
+	c.NoError(err)
+
+	queryBySeg := func(seg string) []map[string]*types.Item {
+		t.Helper()
+
+		items, _, qerr := table.SearchData(QueryInput{
+			Index:                  idxName,
+			KeyConditionExpression: "#s = :s",
+			Aliases:                map[string]string{"#s": "seg"},
+			ExpressionAttributeValues: map[string]*types.Item{
+				":s": {S: &seg},
+			},
+			ScanIndexForward: true,
+		})
+		c.NoError(qerr)
+
+		return items
+	}
+
+	matched := queryBySeg(aVal)
+	c.Len(matched, 1)
+	c.Equal(idVal, *matched[0]["id"].S)
+	c.Equal(aVal, *matched[0]["seg"].S)
+	c.Empty(queryBySeg(bVal))
+
+	_, err = table.Update(&types.UpdateItemInput{
+		TableName: aws.String(table.Name),
+		Key: map[string]*types.Item{
+			"id": {S: &idVal},
+		},
+		UpdateExpression: "SET seg = :b",
+		ExpressionAttributeValues: map[string]*types.Item{
+			":b": {S: &bVal},
+		},
+	})
+	c.NoError(err)
+
+	matched = queryBySeg(bVal)
+	c.Len(matched, 1)
+	c.Equal(idVal, *matched[0]["id"].S)
+	c.Equal(bVal, *matched[0]["seg"].S)
+	c.Empty(queryBySeg(aVal))
+}
+
+func TestMatchKey_errorsAndFilterBranches(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+
+	t.Run("KeyConditionExpression_syntax_error", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		_, _, err := table.matchKey(QueryInput{
+			KeyConditionExpression: ")))",
+			ExpressionAttributeValues: map[string]*types.Item{
+				":id": {S: new("001")},
+			},
+		}, item)
+		req.Error(err)
+	})
+
+	t.Run("FilterExpression_error", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		_, _, err := table.matchKey(QueryInput{
+			KeyConditionExpression: "#id = :id",
+			FilterExpression:       ")))",
+			Aliases: map[string]string{
+				"#id": "id",
+			},
+			ExpressionAttributeValues: map[string]*types.Item{
+				":id": {S: new("001")},
+			},
+		}, item)
+		req.Error(err)
+	})
+
+	t.Run("ConditionExpression_error", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		_, _, err := table.matchKey(QueryInput{
+			ConditionExpression: aws.String(")))"),
+			ExpressionAttributeValues: map[string]*types.Item{
+				":id": {S: new("001")},
+			},
+		}, item)
+		req.Error(err)
+	})
+
+	t.Run("Filter_skipped_when_key_unmatched", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		exprType, matched, err := table.matchKey(QueryInput{
+			KeyConditionExpression: "#id = :id",
+			FilterExpression:       "#id = :id",
+			Aliases: map[string]string{
+				"#id": "id",
+			},
+			ExpressionAttributeValues: map[string]*types.Item{
+				":id": {S: new("999")},
+			},
+		}, item)
+		req.NoError(err)
+		req.False(matched)
+		req.Equal(interpreter.ExpressionTypeFilter, exprType)
+	})
+}
+
+func TestSearchData_projectionExpressionError(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable("proj_err")
+	table.AttributesDef = map[string]string{"id": "S"}
+	table.KeySchema = keySchema{"id", "", false}
+	table.LangInterpreter = interpreter.Language{}
+
+	_, err := table.Put(&types.PutItemInput{
+		TableName: aws.String("proj_err"),
+		Item: map[string]*types.Item{
+			"id": {S: aws.String("1")},
+		},
+	})
+	c.NoError(err)
+
+	_, _, err = table.SearchData(QueryInput{
+		Scan:                 true,
+		ProjectionExpression: "@@@",
+	})
+	c.Error(err)
+}
+
+func TestDelete_conditionalCheckFailedAndExpressionValues(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	})
+
+	_, err = table.Put(&types.PutItemInput{
+		Item:      item,
+		TableName: aws.String(table.Name),
+	})
+	c.NoError(err)
+
+	t.Run("duplicate_set_values_returns_validation_exception", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		dupA, dupB := "x", "x"
+		_, derr := table.Delete(&types.DeleteItemInput{
+			TableName: aws.String(table.Name),
+			Key:       primaryKeyFromPokemonItem(item),
+			ExpressionAttributeValues: map[string]*types.Item{
+				":bad": {SS: []*string{&dupA, &dupB}},
+			},
+		})
+		req.Error(derr)
+
+		var apiErr types.Error
+		req.True(errors.As(derr, &apiErr))
+		req.Equal("ValidationException", apiErr.Code())
+	})
+
+	t.Run("failing_condition_returns_conditional_check_failed", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		cond := "attribute_exists(nonexistent)"
+		_, derr := table.Delete(&types.DeleteItemInput{
+			TableName:                 aws.String(table.Name),
+			Key:                       primaryKeyFromPokemonItem(item),
+			ConditionExpression:       &cond,
+			ExpressionAttributeValues: map[string]*types.Item{},
+		})
+
+		var checkErr *types.ConditionalCheckFailedException
+		req.True(errors.As(derr, &checkErr))
+	})
+
+	t.Run("delete_missing_item_succeeds", func(t *testing.T) {
+		t.Parallel()
+
+		req := require.New(t)
+
+		_, derr := table.Delete(&types.DeleteItemInput{
+			TableName: aws.String(table.Name),
+			Key: map[string]*types.Item{
+				"id":   {S: aws.String("missing")},
+				"name": {S: aws.String("nobody")},
+			},
+		})
+		req.NoError(derr)
+	})
+}
+
 func TestSetAttributeDefinition(t *testing.T) {
 	c := require.New(t)
 

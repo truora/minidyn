@@ -10,7 +10,6 @@ Minidyn is an in-memory Amazon DynamoDB testing library written in Go (module `g
 ## Dependencies
 
 - **Go 1.26**
-- `github.com/aws/aws-sdk-go` (v1) — AWS SDK v1 client support
 - `github.com/aws/aws-sdk-go-v2` — AWS SDK v2 client support
 - `github.com/stretchr/testify` — test assertions
 - `github.com/google/go-cmp` — deep equality in tests
@@ -27,7 +26,6 @@ minidyn/
   server/             # HTTP server exposing the DynamoDB JSON API
     requests.go       # Auto-generated — do not edit manually
     types.go          # Concrete AttributeValue used by the HTTP layer
-  aws-v1/client/      # In-memory client wrapping AWS SDK v1 (Deprecated)
   aws-v2/client/      # In-memory client wrapping AWS SDK v2
   types/              # Shared error and type definitions
   tools/

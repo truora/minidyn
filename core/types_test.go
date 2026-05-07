@@ -177,3 +177,116 @@ func BenchmarkMapToDynamoDBType(b *testing.B) {
 		c.Equal("L", r)
 	}
 }
+
+func TestCloneBoolPtr(t *testing.T) {
+	c := require.New(t)
+
+	c.Nil(cloneBoolPtr(nil))
+
+	tr := true
+	out := cloneBoolPtr(&tr)
+	c.NotNil(out)
+	c.True(*out)
+
+	f := false
+	outF := cloneBoolPtr(&f)
+	c.NotNil(outF)
+	c.False(*outF)
+}
+
+func TestDeepCopyStringPtrSliceAndByteSliceSlice(t *testing.T) {
+	c := require.New(t)
+
+	c.Nil(deepCopyStringPtrSlice(nil))
+	c.Nil(deepCopyStringPtrSlice([]*string{}))
+
+	a1, a2 := "a", "b"
+	src := []*string{&a1, nil, &a2}
+	cp := deepCopyStringPtrSlice(src)
+	c.Len(cp, 3)
+	c.Equal(&a1, src[0])
+	c.NotSame(src[0], cp[0])
+	c.Equal(*src[0], *cp[0])
+	c.Nil(cp[1])
+	c.Equal(*src[2], *cp[2])
+
+	c.Nil(deepCopyByteSliceSlice(nil))
+	c.Nil(deepCopyByteSliceSlice([][]byte{}))
+
+	raw := [][]byte{{1, 2}, {3, 4}}
+	bcp := deepCopyByteSliceSlice(raw)
+	c.Len(bcp, 2)
+	c.Equal(raw[0], bcp[0])
+	c.NotSame(&raw[0][0], &bcp[0][0])
+}
+
+func TestDeepCopyTypesItem_scalars(t *testing.T) {
+	c := require.New(t)
+
+	c.Nil(deepCopyTypesItem(nil))
+
+	tr := true
+	f := false
+	it := &types.Item{
+		BOOL: &tr,
+		NULL: &f,
+		S:    new("s"),
+		N:    new("1"),
+	}
+
+	got := deepCopyTypesItem(it)
+	c.NotSame(it, got)
+
+	c.NotSame(it.BOOL, got.BOOL)
+	c.Equal(*it.BOOL, *got.BOOL)
+
+	c.NotSame(it.NULL, got.NULL)
+	c.Equal(*it.NULL, *got.NULL)
+
+	c.NotSame(it.S, got.S)
+	c.Equal(*it.S, *got.S)
+
+	c.NotSame(it.N, got.N)
+	c.Equal(*it.N, *got.N)
+}
+
+func TestDeepCopyTypesItem_collections(t *testing.T) {
+	c := require.New(t)
+
+	sub := "nested"
+	it := &types.Item{
+		B:  []byte{9},
+		BS: [][]byte{{1}},
+		SS: []*string{new("x")},
+		NS: []*string{new("1")},
+		L: []*types.Item{
+			{S: new("leaf")},
+		},
+		M: map[string]*types.Item{
+			"sub": {S: &sub},
+		},
+	}
+
+	got := deepCopyTypesItem(it)
+	c.NotSame(it, got)
+	c.NotSame(it.L[0], got.L[0])
+	c.NotSame(it.M["sub"], got.M["sub"])
+
+	it.B[0] = 0
+	c.Equal(byte(9), got.B[0])
+
+	it.BS[0][0] = 0
+	c.Equal(byte(1), got.BS[0][0])
+
+	*it.SS[0] = "MUTATED"
+	c.Equal("x", *got.SS[0])
+
+	*it.NS[0] = "999"
+	c.Equal("1", *got.NS[0])
+
+	*it.L[0].S = "MUTATED"
+	c.Equal("leaf", *got.L[0].S)
+
+	*it.M["sub"].S = "MUTATED"
+	c.Equal("nested", *got.M["sub"].S)
+}

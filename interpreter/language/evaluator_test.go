@@ -1033,6 +1033,24 @@ func TestEvalBooleanInfixExpressionUndefinedOrNil(t *testing.T) {
 	testEvalBooleanInfixUndefinedOrNil(t, "nil_right", TRUE, nil)
 }
 
+func TestIsUndefinedObject(t *testing.T) {
+	if !IsUndefinedObject(nil) {
+		t.Fatal("nil should be undefined")
+	}
+
+	if !IsUndefinedObject(UNDEFINED) {
+		t.Fatal("UNDEFINED sentinel should be undefined")
+	}
+
+	if IsUndefinedObject(&Null{IsUndefined: false}) {
+		t.Fatal("NULL dynamodb value is not undefined sentinel")
+	}
+
+	if IsUndefinedObject(TRUE) {
+		t.Fatal("boolean is not undefined")
+	}
+}
+
 func TestEvalBooleanInfixExpressionLeftNotBoolean(t *testing.T) {
 	got := evalBooleanInfixExpression("AND", &Number{Value: 1}, TRUE)
 	want := newError("left operand is not boolean: N")

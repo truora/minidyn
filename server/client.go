@@ -434,7 +434,10 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 	}, nil
 }
 
-const batchWriteItemRequestsLimit = 25
+const (
+	batchWriteItemRequestsLimit = 25
+	batchGetItemRequestsLimit   = 100
+)
 
 // DynamoDB returns this message when a WriteRequest has both Put and Delete, or neither.
 var errBatchWriteRequestShape = &smithy.GenericAPIError{
@@ -480,6 +483,16 @@ func validateBatchWriteItemInput(input *BatchWriteItemInput) error {
 	return nil
 }
 
+func isRetriableBatchSubrequestError(err error) bool {
+	if _, ok := errors.AsType[*ddbtypes.InternalServerError](err); ok {
+		return true
+	}
+
+	_, ok := errors.AsType[*ddbtypes.ProvisionedThroughputExceededException](err)
+
+	return ok
+}
+
 // BatchWriteItem runs put and delete sub-requests in order. Sub-request failures that look
 // retriable (InternalServerError, ProvisionedThroughputExceededException) are appended to
 // UnprocessedItems and processing continues, matching DynamoDB batch semantics. Any other
@@ -487,9 +500,6 @@ func validateBatchWriteItemInput(input *BatchWriteItemInput) error {
 //
 // With EmulateFailure(FailureConditionInternalServerError), each sub-request fails that way,
 // so those writes appear as unprocessed until you call EmulateFailure(FailureConditionNone).
-//
-//gocyclo:ignore
-//gocognit:ignore
 func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput) (*BatchWriteItemOutput, error) {
 	if err := validateBatchWriteItemInput(input); err != nil {
 		return nil, err
@@ -515,15 +525,9 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 			}
 
 			if err != nil {
-				var oe smithy.APIError
-				if errors.As(err, &oe) {
-					var is500 *ddbtypes.InternalServerError
-					var isThrottled *ddbtypes.ProvisionedThroughputExceededException
-
-					if errors.As(err, &is500) || errors.As(err, &isThrottled) {
-						unprocessed[tableName] = append(unprocessed[tableName], req)
-						continue
-					}
+				if isRetriableBatchSubrequestError(err) {
+					unprocessed[tableName] = append(unprocessed[tableName], req)
+					continue
 				}
 
 				return nil, err
@@ -532,6 +536,97 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 	}
 
 	return &BatchWriteItemOutput{UnprocessedItems: unprocessed}, nil
+}
+
+func validateBatchGetItemInput(input *BatchGetItemInput) error {
+	if input == nil {
+		return nil
+	}
+
+	count := 0
+
+	for _, reqs := range input.RequestItems {
+		count += len(reqs.Keys)
+	}
+
+	if count == 0 {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "1 validation error detected: Value '{}' at 'requestItems' failed to satisfy constraint: Member must have length greater than or equal to 1",
+		}
+	}
+
+	if count > batchGetItemRequestsLimit {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "Too many items requested for the BatchGetItem call",
+		}
+	}
+
+	return nil
+}
+
+// BatchGetItem retrieves multiple items across one or more tables. Validation errors
+// (invalid key schema, malformed AttributeValues, or missing tables) fail the whole batch.
+// Retriable per-key failures (InternalServerError, ProvisionedThroughputExceededException)
+// are reported via UnprocessedKeys, mirroring DynamoDB batch semantics.
+func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*BatchGetItemOutput, error) {
+	if err := validateBatchGetItemInput(input); err != nil {
+		return nil, err
+	}
+
+	responses := map[string][]map[string]*AttributeValue{}
+	unprocessed := map[string]KeysAndAttributes{}
+
+	for tableName, reqs := range input.RequestItems {
+		tableResponses, unprocessedKeys, err := c.batchGetItemForTable(ctx, tableName, reqs)
+		if err != nil {
+			return nil, err
+		}
+
+		responses[tableName] = tableResponses
+
+		if len(unprocessedKeys) > 0 {
+			tableUnprocessed := reqs
+			tableUnprocessed.Keys = unprocessedKeys
+			unprocessed[tableName] = tableUnprocessed
+		}
+	}
+
+	return &BatchGetItemOutput{Responses: responses, UnprocessedKeys: unprocessed}, nil
+}
+
+func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes) ([]map[string]*AttributeValue, []map[string]*AttributeValue, error) {
+	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
+		return nil, nil, err
+	}
+
+	responses := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
+	unprocessedKeys := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
+
+	for _, key := range reqs.Keys {
+		item, err := c.GetItem(ctx, &GetItemInput{
+			TableName:                aws.String(tableName),
+			Key:                      key,
+			ConsistentRead:           reqs.ConsistentRead,
+			ExpressionAttributeNames: reqs.ExpressionAttributeNames,
+			ProjectionExpression:     reqs.ProjectionExpression,
+		})
+		if err != nil {
+			if isRetriableBatchSubrequestError(err) {
+				unprocessedKeys = append(unprocessedKeys, key)
+				continue
+			}
+
+			return nil, nil, err
+		}
+
+		if len(item.Item) > 0 {
+			responses = append(responses, item.Item)
+		}
+	}
+
+	return responses, unprocessedKeys, nil
 }
 
 func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {
@@ -815,8 +910,8 @@ func mapKnownError(err error) error {
 		return nil
 	}
 
-	var intErr types.Error
-	if !errors.As(err, &intErr) {
+	intErr, ok := errors.AsType[types.Error](err)
+	if !ok {
 		return err
 	}
 
@@ -826,8 +921,7 @@ func mapKnownError(err error) error {
 			Message: aws.String(intErr.Message()),
 		}
 
-		var conditionalErr *types.ConditionalCheckFailedException
-		if errors.As(err, &conditionalErr) {
+		if conditionalErr, ok := errors.AsType[*types.ConditionalCheckFailedException](err); ok {
 			checkErr.Item = mapTypesMapToDDBAttributeValue(conditionalErr.Item)
 		}
 

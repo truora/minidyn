@@ -372,6 +372,7 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		ExclusiveStartKey:         mapAttributeValueMapToTypes(input.ExclusiveStartKey),
 		KeyConditionExpression:    aws.ToString(input.KeyConditionExpression),
 		FilterExpression:          aws.ToString(input.FilterExpression),
+		ProjectionExpression:      aws.ToString(input.ProjectionExpression),
 		Limit:                     int64(aws.ToInt32(input.Limit)),
 		ScanIndexForward:          aws.ToBool(input.ScanIndexForward),
 	})
@@ -417,6 +418,7 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		Aliases:                   input.ExpressionAttributeNames,
 		ExclusiveStartKey:         mapAttributeValueMapToTypes(input.ExclusiveStartKey),
 		FilterExpression:          aws.ToString(input.FilterExpression),
+		ProjectionExpression:      aws.ToString(input.ProjectionExpression),
 		Limit:                     int64(aws.ToInt32(input.Limit)),
 		Scan:                      true,
 		ScanIndexForward:          true,

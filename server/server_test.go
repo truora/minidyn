@@ -513,6 +513,233 @@ func TestServerBatchWriteItemValidatesWriteRequests(t *testing.T) {
 	})
 }
 
+func TestServerBatchGetItemWithSDKv2(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	for _, id := range []string{"1", "2", "3"} {
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id":   &ddbtypes.AttributeValueMemberS{Value: id},
+				"name": &ddbtypes.AttributeValueMemberS{Value: "p-" + id},
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	out, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{
+			"pokemons": {
+				Keys: []map[string]ddbtypes.AttributeValue{
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "2"}},
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "missing"}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Responses["pokemons"], 2)
+	require.Empty(t, out.UnprocessedKeys)
+}
+
+func TestServerBatchGetItemAcrossTables(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	makeBasicTable(t, cli, "trainers", "id")
+
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "1"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("trainers"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "ash"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "Ash Ketchum"},
+		},
+	})
+	require.NoError(t, err)
+
+	out, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{
+			"pokemons": {
+				Keys: []map[string]ddbtypes.AttributeValue{
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+				},
+			},
+			"trainers": {
+				Keys: []map[string]ddbtypes.AttributeValue{
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "ash"}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Empty(t, out.UnprocessedKeys)
+
+	require.Len(t, out.Responses, 2)
+	require.Contains(t, out.Responses, "pokemons")
+	require.Contains(t, out.Responses, "trainers")
+
+	require.Len(t, out.Responses["pokemons"], 1)
+	require.Equal(t, "1", out.Responses["pokemons"][0]["id"].(*ddbtypes.AttributeValueMemberS).Value)
+	require.Equal(t, "Bulbasaur", out.Responses["pokemons"][0]["name"].(*ddbtypes.AttributeValueMemberS).Value)
+
+	require.Len(t, out.Responses["trainers"], 1)
+	require.Equal(t, "ash", out.Responses["trainers"][0]["id"].(*ddbtypes.AttributeValueMemberS).Value)
+	require.Equal(t, "Ash Ketchum", out.Responses["trainers"][0]["name"].(*ddbtypes.AttributeValueMemberS).Value)
+}
+
+func TestServerBatchGetItemValidationException(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	t.Run("invalid key attribute", func(t *testing.T) {
+		_, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+			RequestItems: map[string]ddbtypes.KeysAndAttributes{
+				"pokemons": {
+					Keys: []map[string]ddbtypes.AttributeValue{
+						{"wrong": &ddbtypes.AttributeValueMemberS{Value: "x"}},
+					},
+				},
+			},
+		})
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Equal(t, "ValidationException", apiErr.ErrorCode())
+	})
+
+	t.Run("empty request items", func(t *testing.T) {
+		_, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+			RequestItems: map[string]ddbtypes.KeysAndAttributes{},
+		})
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Equal(t, "ValidationException", apiErr.ErrorCode())
+		require.Equal(t, "1 validation error detected: Value '{}' at 'requestItems' failed to satisfy constraint: Member must have length greater than or equal to 1", apiErr.ErrorMessage())
+	})
+
+	t.Run("all tables have empty keys", func(t *testing.T) {
+		_, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+			RequestItems: map[string]ddbtypes.KeysAndAttributes{
+				"pokemons": {Keys: []map[string]ddbtypes.AttributeValue{}},
+			},
+		})
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Equal(t, "ValidationException", apiErr.ErrorCode())
+		require.Equal(t, "1 validation error detected: Value '{}' at 'requestItems' failed to satisfy constraint: Member must have length greater than or equal to 1", apiErr.ErrorMessage())
+	})
+
+	t.Run("too many keys", func(t *testing.T) {
+		keys := make([]map[string]ddbtypes.AttributeValue, 0, 101)
+		for range 101 {
+			keys = append(keys, map[string]ddbtypes.AttributeValue{
+				"id": &ddbtypes.AttributeValueMemberS{Value: "x"},
+			})
+		}
+
+		_, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+			RequestItems: map[string]ddbtypes.KeysAndAttributes{"pokemons": {Keys: keys}},
+		})
+		var apiErr smithy.APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Equal(t, "ValidationException", apiErr.ErrorCode())
+		require.Equal(t, "Too many items requested for the BatchGetItem call", apiErr.ErrorMessage())
+	})
+
+	t.Run("missing table", func(t *testing.T) {
+		_, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+			RequestItems: map[string]ddbtypes.KeysAndAttributes{
+				"nope": {
+					Keys: []map[string]ddbtypes.AttributeValue{
+						{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+					},
+				},
+			},
+		})
+		var notFound *ddbtypes.ResourceNotFoundException
+		require.ErrorAs(t, err, &notFound)
+	})
+}
+
+func TestServerBatchGetItemUnprocessedOnEmulatedInternalError(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	s.EmulateFailure(FailureConditionInternalServerError)
+
+	out, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{
+			"pokemons": {
+				Keys: []map[string]ddbtypes.AttributeValue{
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "a"}},
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "b"}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.UnprocessedKeys["pokemons"].Keys, 2)
+	require.Empty(t, out.Responses["pokemons"])
+}
+
+func TestServerBatchGetItemWithProjection(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "1"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+			"lvl":  &ddbtypes.AttributeValueMemberN{Value: "5"},
+		},
+	})
+	require.NoError(t, err)
+
+	out, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{
+			"pokemons": {
+				Keys: []map[string]ddbtypes.AttributeValue{
+					{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+				},
+				ProjectionExpression:     aws.String("#n"),
+				ExpressionAttributeNames: map[string]string{"#n": "name"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Responses["pokemons"], 1)
+	item := out.Responses["pokemons"][0]
+	require.Equal(t, "Bulbasaur", item["name"].(*ddbtypes.AttributeValueMemberS).Value)
+	_, hasID := item["id"]
+	require.False(t, hasID)
+}
+
 func TestServerUpdateItemWithSDKv2(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

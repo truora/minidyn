@@ -709,9 +709,8 @@ func toString(str string) *string {
 }
 
 func mapKnownError(err error) error {
-	var intErr types.Error
-
-	if !errors.As(err, &intErr) {
+	intErr, ok := errors.AsType[types.Error](err)
+	if !ok {
 		return err
 	}
 
@@ -721,8 +720,7 @@ func mapKnownError(err error) error {
 			Message: aws.String(intErr.Message()),
 		}
 
-		var conditionalErr *types.ConditionalCheckFailedException
-		if errors.As(err, &conditionalErr) {
+		if conditionalErr, ok := errors.AsType[*types.ConditionalCheckFailedException](err); ok {
 			checkErr.Item = mapTypesToDynamoMapItem(conditionalErr.Item)
 		}
 

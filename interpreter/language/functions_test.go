@@ -179,14 +179,44 @@ func TestObjectSize(t *testing.T) {
 
 	size := objectSize(&str)
 	if size.Inspect() != expected {
-		t.Fatalf("size dismatch expected=%s, actual=%s", expected, size.Inspect())
+		t.Fatalf("size mismatch expected=%s, actual=%s", expected, size.Inspect())
 	}
 
 	bin := Binary{Value: []byte{'h', 'e', 'l', 'l', 'o'}}
 
 	size = objectSize(&bin)
 	if size.Inspect() != expected {
-		t.Fatalf("size dismatch expected=%s, actual=%s", expected, size.Inspect())
+		t.Fatalf("size mismatch expected=%s, actual=%s", expected, size.Inspect())
+	}
+
+	list := &List{Value: []Object{&String{Value: "a"}, &String{Value: "b"}}}
+	size = objectSize(list)
+	if size.Inspect() != "2" {
+		t.Fatalf("list size expected=2, actual=%s", size.Inspect())
+	}
+
+	m := &Map{Value: map[string]Object{"k": &String{Value: "v"}}}
+	size = objectSize(m)
+	if size.Inspect() != "1" {
+		t.Fatalf("map size expected=1, actual=%s", size.Inspect())
+	}
+
+	ss := &StringSet{Value: map[string]bool{"a": true, "b": true}}
+	size = objectSize(ss)
+	if size.Inspect() != "2" {
+		t.Fatalf("string set size expected=2, actual=%s", size.Inspect())
+	}
+
+	ns := &NumberSet{Value: map[float64]bool{1: true, 2: true}}
+	size = objectSize(ns)
+	if size.Inspect() != "2" {
+		t.Fatalf("number set size expected=2, actual=%s", size.Inspect())
+	}
+
+	bs := &BinarySet{Value: [][]byte{{1}, {2}}}
+	size = objectSize(bs)
+	if size.Inspect() != "2" {
+		t.Fatalf("binary set size expected=2, actual=%s", size.Inspect())
 	}
 
 	size = objectSize(TRUE)

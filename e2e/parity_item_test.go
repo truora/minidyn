@@ -65,37 +65,26 @@ func TestE2E_Item(t *testing.T) {
 			name: "PutAndGetBatchItem",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
-				t.Skip("skipping PutAndGetBatchItem test until we implement it")
 				ctx := context.Background()
 
 				parityCreatePokemonTable(ctx, t, client)
 
-				opt := func(o *attributevalue.EncoderOptions) {
-					o.TagKey = "json"
-				}
-
-				item, err := attributevalue.MarshalMapWithOptions(parityPokemon{
-					ID:   "001",
-					Type: "grass",
-					Name: "Bulbasaur",
-				}, opt)
-				require.NoError(t, err)
-
-				_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
-					Item:      item,
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					Item: parityMarshalPokemon(t, parityPokemon{
+						ID:   "001",
+						Type: "grass",
+						Name: "Bulbasaur",
+					}),
 					TableName: aws.String(parityPokemonTable),
 				})
 				require.NoError(t, err)
 
-				item, err = attributevalue.MarshalMapWithOptions(parityPokemon{
-					ID:   "002",
-					Type: "fire",
-					Name: "Sharmander",
-				}, opt)
-				require.NoError(t, err)
-
 				_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
-					Item:      item,
+					Item: parityMarshalPokemon(t, parityPokemon{
+						ID:   "002",
+						Type: "fire",
+						Name: "Sharmander",
+					}),
 					TableName: aws.String(parityPokemonTable),
 				})
 				require.NoError(t, err)
@@ -106,7 +95,6 @@ func TestE2E_Item(t *testing.T) {
 							Keys: []map[string]dynamodbtypes.AttributeValue{
 								{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
 								{"id": &dynamodbtypes.AttributeValueMemberS{Value: "002"}},
-								{"t1": &dynamodbtypes.AttributeValueMemberS{Value: "003"}},
 								{"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"}},
 							},
 						},
@@ -118,6 +106,29 @@ func TestE2E_Item(t *testing.T) {
 					paritySortedBatchGetIDs(out, parityPokemonTable),
 					paritySortedUnprocessedKeySignatures(out, parityPokemonTable),
 				}
+			},
+		},
+		{
+			name: "BatchGetItemValidationException",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				_, err := client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{
+					RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+						parityPokemonTable: {
+							Keys: []map[string]dynamodbtypes.AttributeValue{
+								{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+								{"t1": &dynamodbtypes.AttributeValueMemberS{Value: "003"}},
+							},
+						},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
 			},
 		},
 		{

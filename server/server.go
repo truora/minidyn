@@ -112,6 +112,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err = decoder.Decode(&input); err == nil {
 			resp, err = s.client.BatchWriteItem(context.Background(), &input)
 		}
+	case "BatchGetItem":
+		var input BatchGetItemInput
+		if err = decoder.Decode(&input); err == nil {
+			resp, err = s.client.BatchGetItem(context.Background(), &input)
+		}
 	case "TransactWriteItems":
 		var input TransactWriteItemsInput
 		if err = decoder.Decode(&input); err == nil {

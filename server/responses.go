@@ -64,5 +64,11 @@ type BatchWriteItemOutput struct {
 	UnprocessedItems map[string][]WriteRequest `json:"UnprocessedItems,omitempty"`
 }
 
+// BatchGetItemOutput mirrors DynamoDB BatchGetItemOutput.
+type BatchGetItemOutput struct {
+	Responses       map[string][]map[string]*AttributeValue `json:"Responses,omitempty"`
+	UnprocessedKeys map[string]KeysAndAttributes            `json:"UnprocessedKeys,omitempty"`
+}
+
 // TransactWriteItemsOutput mirrors DynamoDB TransactWriteItemsOutput.
 type TransactWriteItemsOutput struct{}

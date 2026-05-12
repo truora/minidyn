@@ -632,20 +632,22 @@ func executeGetRequest(ctx context.Context, fd *Client, getInput *dynamodb.GetIt
 	return response.Item, nil
 }
 
+func isRetriableBatchWriteSubrequestError(err error) bool {
+	if _, ok := errors.AsType[*types.InternalServerError](err); ok {
+		return true
+	}
+
+	_, ok := errors.AsType[*types.ProvisionedThroughputExceededException](err)
+
+	return ok
+}
+
 func handleBatchWriteRequestError(table string, req types.WriteRequest, unprocessed map[string][]types.WriteRequest, err error) error {
 	if err == nil {
 		return nil
 	}
 
-	var oe smithy.APIError
-	if !errors.As(err, &oe) {
-		return err
-	}
-
-	var errInternalServer *types.InternalServerError
-	var errProvisionedThroughputExceededException *types.ProvisionedThroughputExceededException
-
-	if !errors.As(err, &errInternalServer) && !errors.As(err, &errProvisionedThroughputExceededException) {
+	if !isRetriableBatchWriteSubrequestError(err) {
 		return err
 	}
 

@@ -8,6 +8,36 @@ Amazon DynamoDB testing library written in Go.
 * Run DynamoDB tests in a CI without external dependencies.
 * Identify errors caused by DynamoDB restrictions.
 
+## Installation
+
+### As a Go module dependency
+
+Requires **Go 1.26** or newer (see `go.mod`). From your project root:
+
+```bash
+go get github.com/truora/minidyn@latest
+```
+
+Pin a specific version or pseudo-version instead of `@latest` if your policy requires it. `go get` updates `go.mod` (and `go.sum`); run `go mod tidy` after you remove imports or upgrade other modules.
+
+Import the packages you use, for example:
+
+```go
+import "github.com/truora/minidyn"
+
+import miniserver "github.com/truora/minidyn/server" // optional: HTTP DynamoDB API
+```
+
+### From a clone of this repository
+
+To work on minidyn itself, clone the repo, then build or test from the root (no separate install step):
+
+```bash
+git clone https://github.com/truora/minidyn.git
+cd minidyn
+go test ./...
+```
+
 ## Usage
 
 ### In-memory client (existing)
@@ -83,52 +113,12 @@ ddb := dynamodb.NewFromConfig(cfg)
 // use ddb as usual: CreateTable, PutItem, Query, etc.
 ```
 
-Supported operations in HTTP mode include CreateTable, DescribeTable, UpdateTable, DeleteTable, PutItem, GetItem, UpdateItem, DeleteItem, Query, Scan, and BatchWriteItem.
+## Supported Operations and Features
 
-## Language interpreter
+For a detailed list of supported DynamoDB operations, types, and expressions, please refer to the documentation:
 
-This library has an interpreter implementation for the DynamoDB Expressions.
-
-### Conditional Expressions
-
-#### Types
-
-| Name      | Type     | Short | Supported? |
-| --------- | -------- | ----- | ---------- |
-| Number    | scalar   | N     | y          |
-| String    | scalar   | S     | y          |
-| Binary    | scalar   | B     | y          |
-| Bool      | scalar   | BOOL  | y          |
-| Null      | scalar   | NULL  | y          |
-| List      | document | L     | y          |
-| Map       | document | M     | y          |
-| StringSet | set      | SS    | y          |
-| NumberSet | set      | NS    | y          |
-| BinarySet | set      | BS    | y          |
-
-#### Expressions
-
-|                                              | Syntax                                                                              | Supported? |
-| -------------------------------------------- | ----------------------------------------------------------------------------------- | ---------- |
-| operand comparator operand                   | = <> < <= > and >=                                                                  | y          |
-| operand BETWEEN operand AND operand          | N,S,B                                                                               | y          |
-| operand IN ( operand (',' operand (, ...) )) |                                                                                     | y          |
-| function                                     | attribute_exists, attribute_not_exists, attribute_type, begins_with, contains, size | y          |
-| condition AND condition                      |                                                                                     | y          |
-| condition OR condition                       |                                                                                     | y          |
-| NOT condition                                |                                                                                     | y          |
-
-### Update Expressions
-
-#### Expressions
-
-|          | Syntax                       | Supported? |
-| -------- | ---------------------------- | ---------- |
-| SET      | SET action [, action] ...    | y          |
-| REMOVE   | REMOVE action [, action] ... | y          |
-| ADD      | ADD action [, action] ...    | y          |
-| DELETE   | DELETE action [, action] ... | y          |
-| function | list_append, if_not_exists   | y          |
+* [Supported Operations](docs/operations.md)
+* [Language Interpreter Support](docs/interpreter.md)
 
 ## Developer notes
 

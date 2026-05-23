@@ -181,8 +181,8 @@ func parityWaitUntilGSIActive(ctx context.Context, t *testing.T, client *dynamod
 				continue
 			}
 
-			// Minidyn DescribeTable omits IndexStatus; DynamoDB Local reports CREATING then ACTIVE.
-			if g.IndexStatus == dynamodbtypes.IndexStatusActive || g.IndexStatus == "" {
+			// Minidyn E2E server opts into a short activation delay; wait until ACTIVE.
+			if g.IndexStatus == dynamodbtypes.IndexStatusActive {
 				return
 			}
 		}

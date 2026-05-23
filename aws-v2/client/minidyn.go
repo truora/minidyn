@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -123,6 +124,16 @@ func AddIndex(ctx context.Context, client FakeClient, tableName, indexName, part
 	_, err := client.UpdateTable(ctx, input)
 
 	return err
+}
+
+// SetIndexActivationDelay configures how long newly created GSIs report CREATING before ACTIVE.
+func SetIndexActivationDelay(client FakeClient, delay time.Duration) {
+	fakeClient, ok := client.(*Client)
+	if !ok {
+		panic("SetIndexActivationDelay: invalid client type")
+	}
+
+	fakeClient.setIndexActivationDelay(delay)
 }
 
 // ClearTable removes all data from a specific table

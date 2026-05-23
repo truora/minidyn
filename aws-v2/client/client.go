@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -63,6 +64,7 @@ type Client struct {
 	nativeInterpreter     *interpreter.Native
 	useNativeInterpreter  bool
 	forceFailureErr       error
+	indexActivationDelay  time.Duration
 }
 
 // NewClient initializes dynamodb client with a mock
@@ -104,6 +106,17 @@ func (fd *Client) setFailureCondition(condition FailureCondition) {
 	fd.forceFailureErr = emulatingErrors[condition]
 }
 
+func (fd *Client) setIndexActivationDelay(delay time.Duration) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	fd.indexActivationDelay = delay
+
+	for _, table := range fd.tables {
+		table.IndexActivationDelay = delay
+	}
+}
+
 // SetInterpreter assigns a native interpreter
 func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 	native, ok := i.(*interpreter.Native)
@@ -136,6 +149,7 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 	newTable.NativeInterpreter = *fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
 	newTable.LangInterpreter = *fd.langInterpreter
+	newTable.IndexActivationDelay = fd.indexActivationDelay
 
 	if err := newTable.CreatePrimaryIndex(mapDynamoToTypesCreateTableInput(input)); err != nil {
 		return nil, mapKnownError(err)

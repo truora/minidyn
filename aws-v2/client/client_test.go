@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -531,6 +532,77 @@ func TestUpdateTable(t *testing.T) {
 
 	_, err = client.UpdateTable(context.Background(), input)
 	c.Equal("ResourceNotFoundException: Requested resource not found", err.Error())
+}
+
+func createTestGlobalSecondaryIndex(t *testing.T, client FakeClient, indexName string) {
+	t.Helper()
+
+	_, err := client.UpdateTable(context.Background(), &dynamodb.UpdateTableInput{
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("type"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{
+			{
+				Create: &dynamodbtypes.CreateGlobalSecondaryIndexAction{
+					IndexName: aws.String(indexName),
+					KeySchema: []dynamodbtypes.KeySchemaElement{
+						{AttributeName: aws.String("type"), KeyType: dynamodbtypes.KeyTypeHash},
+						{AttributeName: aws.String("id"), KeyType: dynamodbtypes.KeyTypeRange},
+					},
+					Projection: &dynamodbtypes.Projection{
+						ProjectionType: dynamodbtypes.ProjectionTypeAll,
+					},
+				},
+			},
+		},
+		TableName: aws.String(tableName),
+	})
+	require.NoError(t, err)
+}
+
+func describeGlobalSecondaryIndexStatus(t *testing.T, client FakeClient, indexName string) dynamodbtypes.IndexStatus {
+	t.Helper()
+
+	out, err := client.DescribeTable(context.Background(), &dynamodb.DescribeTableInput{
+		TableName: aws.String(tableName),
+	})
+	require.NoError(t, err)
+
+	for _, g := range out.Table.GlobalSecondaryIndexes {
+		if aws.ToString(g.IndexName) == indexName {
+			return g.IndexStatus
+		}
+	}
+
+	t.Fatalf("GSI %q not found on table %q", indexName, tableName)
+
+	return ""
+}
+
+func TestUpdateTableReportsGSIActiveByDefault(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+	createTestGlobalSecondaryIndex(t, client, "status-index")
+
+	c.Equal(dynamodbtypes.IndexStatusActive, describeGlobalSecondaryIndexStatus(t, client, "status-index"))
+}
+
+func TestSetIndexActivationDelayReportsGSIStatusTransition(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	SetIndexActivationDelay(client, 5*time.Millisecond)
+	c.NoError(ensurePokemonTable(client))
+	createTestGlobalSecondaryIndex(t, client, "delayed-index")
+
+	c.Equal(dynamodbtypes.IndexStatusCreating, describeGlobalSecondaryIndexStatus(t, client, "delayed-index"))
+
+	time.Sleep(10 * time.Millisecond)
+
+	c.Equal(dynamodbtypes.IndexStatusActive, describeGlobalSecondaryIndexStatus(t, client, "delayed-index"))
 }
 
 func TestPutAndGetItem(t *testing.T) {

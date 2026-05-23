@@ -1023,6 +1023,75 @@ func TestServerDescribeAndUpdateTableWithSDKv2(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func createServerTestGlobalSecondaryIndex(t *testing.T, cli *dynamodb.Client, table, indexName string) {
+	t.Helper()
+
+	_, err := cli.UpdateTable(context.Background(), &dynamodb.UpdateTableInput{
+		TableName: aws.String(table),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("type"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexUpdates: []ddbtypes.GlobalSecondaryIndexUpdate{
+			{Create: &ddbtypes.CreateGlobalSecondaryIndexAction{
+				IndexName: aws.String(indexName),
+				KeySchema: []ddbtypes.KeySchemaElement{
+					{AttributeName: aws.String("type"), KeyType: ddbtypes.KeyTypeHash},
+				},
+				Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+			}},
+		},
+	})
+	require.NoError(t, err)
+}
+
+func describeServerGlobalSecondaryIndexStatus(t *testing.T, cli *dynamodb.Client, table, indexName string) ddbtypes.IndexStatus {
+	t.Helper()
+
+	out, err := cli.DescribeTable(context.Background(), &dynamodb.DescribeTableInput{
+		TableName: aws.String(table),
+	})
+	require.NoError(t, err)
+
+	for _, g := range out.Table.GlobalSecondaryIndexes {
+		if aws.ToString(g.IndexName) == indexName {
+			return g.IndexStatus
+		}
+	}
+
+	t.Fatalf("GSI %q not found on table %q", indexName, table)
+
+	return ""
+}
+
+func TestServerDescribeTableIncludesGSIStatus(t *testing.T) {
+	srv := NewServer()
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+	createServerTestGlobalSecondaryIndex(t, cli, "pokemons", "by-type")
+
+	require.Equal(t, ddbtypes.IndexStatusActive, describeServerGlobalSecondaryIndexStatus(t, cli, "pokemons", "by-type"))
+}
+
+func TestServerSetIndexActivationDelayReportsGSIStatusTransition(t *testing.T) {
+	srv := NewServer()
+	srv.SetIndexActivationDelay(5 * time.Millisecond)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+	createServerTestGlobalSecondaryIndex(t, cli, "pokemons", "delayed-index")
+
+	require.Equal(t, ddbtypes.IndexStatusCreating, describeServerGlobalSecondaryIndexStatus(t, cli, "pokemons", "delayed-index"))
+
+	time.Sleep(10 * time.Millisecond)
+
+	require.Equal(t, ddbtypes.IndexStatusActive, describeServerGlobalSecondaryIndexStatus(t, cli, "pokemons", "delayed-index"))
+}
+
 func TestServerAddLSIWithSDKv2(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

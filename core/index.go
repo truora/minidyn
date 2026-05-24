@@ -19,7 +19,7 @@ type index struct {
 	sortedKeys []string
 	sortedRefs [][2]string // used for searching
 	typ        indexType
-	projection *types.Projection // TODO use projection in queries
+	projection *types.Projection
 	Table      *Table
 	refs       map[string]string
 }
@@ -59,6 +59,55 @@ func (i *index) snapshot() indexSnapshot {
 func (i *index) restore(s indexSnapshot) {
 	i.sortedKeys = s.sortedKeys
 	i.refs = s.refs
+}
+
+// ProjectItem returns the attributes visible through this index's projection (ALL, KEYS_ONLY, INCLUDE).
+// For ALL or unknown types, it returns a full shallow copy of the item.
+func (i *index) ProjectItem(item map[string]*types.Item) map[string]*types.Item {
+	if i == nil || i.projection == nil {
+		return copyItem(item)
+	}
+
+	pt := ""
+	if i.projection.ProjectionType != nil {
+		pt = *i.projection.ProjectionType
+	}
+
+	switch pt {
+	case "", "ALL":
+		return copyItem(item)
+	case "KEYS_ONLY":
+		return i.projectKeysOnly(item)
+	case "INCLUDE":
+		return i.projectInclude(item)
+	default:
+		return copyItem(item)
+	}
+}
+
+func (i *index) projectKeysOnly(item map[string]*types.Item) map[string]*types.Item {
+	out := make(map[string]*types.Item)
+	maps.Copy(out, i.Table.KeySchema.getKeyItem(item))
+	maps.Copy(out, i.keySchema.getKeyItem(item))
+
+	return out
+}
+
+func (i *index) projectInclude(item map[string]*types.Item) map[string]*types.Item {
+	out := i.projectKeysOnly(item)
+
+	for _, namePtr := range i.projection.NonKeyAttributes {
+		if namePtr == nil {
+			continue
+		}
+
+		name := *namePtr
+		if v, ok := item[name]; ok {
+			out[name] = v
+		}
+	}
+
+	return out
 }
 
 func (i *index) putData(key string, item map[string]*types.Item) error {

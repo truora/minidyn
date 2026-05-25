@@ -23,47 +23,68 @@ func TestFunctionInspect(t *testing.T) {
 }
 
 func TestAttributeExists(t *testing.T) {
-	str := &String{Value: "hello"}
-
-	exists := attributeExists(str)
-	if exists.Type() == ObjectTypeBoolean && exists.Inspect() == "TRUE" {
-		t.Fatal("value should be true")
+	cases := map[string]struct {
+		path     Object
+		expected Object
+	}{
+		"string_attribute":  {&String{Value: "hello"}, TRUE},
+		"explicit_null":     {&Null{}, TRUE},
+		"missing_attribute": {UNDEFINED, FALSE},
+		"nil_path":          {nil, FALSE},
 	}
 
-	exists = attributeExists(str)
-	if exists.Type() == ObjectTypeBoolean && exists.Inspect() == "FALSE" {
-		t.Fatal("value should be false")
+	for name, tc := range cases {
+		got := attributeExists(tc.path)
+		if got != tc.expected {
+			t.Fatalf("%s: expected=%s got=%s", name, tc.expected.Inspect(), got.Inspect())
+		}
 	}
 }
 
 func TestAttributeNotExists(t *testing.T) {
-	str := &String{Value: "hello"}
-
-	exists := attributeNotExists(str)
-	if exists.Type() == ObjectTypeBoolean && exists.Inspect() != "false" {
-		t.Fatal("value should be false")
+	cases := map[string]struct {
+		path     Object
+		expected Object
+	}{
+		"string_attribute":  {&String{Value: "hello"}, FALSE},
+		"explicit_null":     {&Null{}, FALSE},
+		"missing_attribute": {UNDEFINED, TRUE},
+		"nil_path":          {nil, TRUE},
 	}
 
-	exists = attributeNotExists(UNDEFINED)
-	if exists.Type() == ObjectTypeBoolean && exists.Inspect() != "true" {
-		t.Fatal("value should be true")
+	for name, tc := range cases {
+		got := attributeNotExists(tc.path)
+		if got != tc.expected {
+			t.Fatalf("%s: expected=%s got=%s", name, tc.expected.Inspect(), got.Inspect())
+		}
 	}
 }
 
 func TestAttributeType(t *testing.T) {
-	str := &String{Value: "hello"}
-	expected := &String{Value: "S"}
-
-	isExpectedType := attributeType(str, expected)
-	if isExpectedType.Type() == ObjectTypeBoolean && isExpectedType.Inspect() != "true" {
-		t.Fatal("value should be true")
+	cases := map[string]struct {
+		path     Object
+		typeArg  Object
+		expected Object
+	}{
+		"string_matches_S":            {&String{Value: "hello"}, &String{Value: "S"}, TRUE},
+		"string_does_not_match":       {&String{Value: "hello"}, &String{Value: "N"}, FALSE},
+		"null_value_matches_NULL":     {&Null{}, &String{Value: "NULL"}, TRUE},
+		"missing_does_not_match_NULL": {UNDEFINED, &String{Value: "NULL"}, FALSE},
+		"missing_does_not_match_S":    {UNDEFINED, &String{Value: "S"}, FALSE},
 	}
 
-	expected = &String{Value: "TYPE"}
-	isExpectedType = attributeType(str, expected)
+	for name, tc := range cases {
+		got := attributeType(tc.path, tc.typeArg)
+		if got != tc.expected {
+			t.Fatalf("%s: expected=%s got=%s", name, tc.expected.Inspect(), got.Inspect())
+		}
+	}
 
-	if isExpectedType.Type() != ObjectTypeError || isExpectedType.Inspect() != "ERROR: invalid type TYPE" {
-		t.Fatalf("expect invalid type error, got=%s %s", isExpectedType.Type(), isExpectedType.Inspect())
+	invalidType := &String{Value: "TYPE"}
+	got := attributeType(&String{Value: "hello"}, invalidType)
+
+	if got.Type() != ObjectTypeError || got.Inspect() != "ERROR: invalid type TYPE" {
+		t.Fatalf("expect invalid type error, got=%s %s", got.Type(), got.Inspect())
 	}
 }
 

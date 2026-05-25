@@ -230,17 +230,17 @@ func TestEvalFunctions(t *testing.T) {
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*types.Item{
-		":s":       {S: new("HELLO WORLD!")},
-		":sSize":   {N: new("12")},
-		":type":    {S: new("S")},
+		":s":        {S: new("HELLO WORLD!")},
+		":sSize":    {N: new("12")},
+		":type":     {S: new("S")},
 		":nullType": {S: new("NULL")},
-		":nilVal":  {NULL: &boolTrue},
-		":bin":     {B: []byte{10, 10, 10}},
-		":binSize": {N: new("3")},
-		":prefix":  {S: new("HELLO")},
-		":subtext": {S: new("ELL")},
-		":element": {S: new("a")},
-		":num":     {N: new("1")},
+		":nilVal":   {NULL: &boolTrue},
+		":bin":      {B: []byte{10, 10, 10}},
+		":binSize":  {N: new("3")},
+		":prefix":   {S: new("HELLO")},
+		":subtext":  {S: new("ELL")},
+		":element":  {S: new("a")},
+		":num":      {N: new("1")},
 		":list": {
 			L: []*types.Item{
 				{S: new("a")},

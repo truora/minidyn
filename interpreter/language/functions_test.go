@@ -66,9 +66,9 @@ func TestAttributeType(t *testing.T) {
 		typeArg  Object
 		expected Object
 	}{
-		"string_matches_S":      {&String{Value: "hello"}, &String{Value: "S"}, TRUE},
-		"string_does_not_match": {&String{Value: "hello"}, &String{Value: "N"}, FALSE},
-		"null_value_matches_NULL": {&Null{}, &String{Value: "NULL"}, TRUE},
+		"string_matches_S":            {&String{Value: "hello"}, &String{Value: "S"}, TRUE},
+		"string_does_not_match":       {&String{Value: "hello"}, &String{Value: "N"}, FALSE},
+		"null_value_matches_NULL":     {&Null{}, &String{Value: "NULL"}, TRUE},
 		"missing_does_not_match_NULL": {UNDEFINED, &String{Value: "NULL"}, FALSE},
 		"missing_does_not_match_S":    {UNDEFINED, &String{Value: "S"}, FALSE},
 	}

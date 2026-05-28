@@ -989,6 +989,123 @@ func TestE2E_Item(t *testing.T) {
 			},
 		},
 		{
+			name: "NullAttributeExistsAndTypeAndIfNotExists",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				item := parityMarshalPokemon(t, parityPokemon{
+					ID:   "001",
+					Type: "grass",
+					Name: "Bulbasaur",
+				})
+				// Attribute that exists with NULL type — distinct from "attribute missing entirely".
+				item["evolves_into"] = &dynamodbtypes.AttributeValueMemberNULL{Value: true}
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					Item:      item,
+					TableName: aws.String(parityPokemonTable),
+				})
+				require.NoError(t, err)
+
+				results := []any{}
+
+				// attribute_exists on a NULL-typed attribute → satisfied (item exists with NULL value).
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					ConditionExpression: aws.String("attribute_exists(evolves_into)"),
+					UpdateExpression:    aws.String("SET #lvl = :lvl"),
+					ExpressionAttributeNames: map[string]string{
+						"#lvl": "lvl",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":lvl": &dynamodbtypes.AttributeValueMemberN{Value: "5"},
+					},
+				})
+				results = append(results, err == nil)
+
+				// attribute_not_exists on a NULL-typed attribute → fails (attribute is present).
+				var ccf *dynamodbtypes.ConditionalCheckFailedException
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					ConditionExpression: aws.String("attribute_not_exists(evolves_into)"),
+					UpdateExpression:    aws.String("SET #lvl = :lvl"),
+					ExpressionAttributeNames: map[string]string{
+						"#lvl": "lvl",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":lvl": &dynamodbtypes.AttributeValueMemberN{Value: "6"},
+					},
+				})
+				results = append(results, errors.As(err, &ccf))
+
+				// attribute_type(_, "NULL") on a NULL-typed attribute → satisfied.
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					ConditionExpression: aws.String("attribute_type(evolves_into, :nullType)"),
+					UpdateExpression:    aws.String("SET #lvl = :lvl"),
+					ExpressionAttributeNames: map[string]string{
+						"#lvl": "lvl",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":nullType": &dynamodbtypes.AttributeValueMemberS{Value: "NULL"},
+						":lvl":      &dynamodbtypes.AttributeValueMemberN{Value: "7"},
+					},
+				})
+				results = append(results, err == nil)
+
+				// attribute_type(missing_attr, "NULL") → fails (the attribute is absent, not NULL-typed).
+				ccf = nil
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					ConditionExpression: aws.String("attribute_type(missing_attr, :nullType)"),
+					UpdateExpression:    aws.String("SET #lvl = :lvl"),
+					ExpressionAttributeNames: map[string]string{
+						"#lvl": "lvl",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":nullType": &dynamodbtypes.AttributeValueMemberS{Value: "NULL"},
+						":lvl":      &dynamodbtypes.AttributeValueMemberN{Value: "8"},
+					},
+				})
+				results = append(results, errors.As(err, &ccf))
+
+				// if_not_exists on a NULL-typed attribute → preserves the existing NULL value
+				// rather than substituting the fallback string.
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression: aws.String("SET evolves_into = if_not_exists(evolves_into, :fallback)"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":fallback": &dynamodbtypes.AttributeValueMemberS{Value: "Ivysaur"},
+					},
+				})
+				require.NoError(t, err)
+
+				final := parityGetPokemon(ctx, t, client, "001")
+				_, stillNull := final["evolves_into"].(*dynamodbtypes.AttributeValueMemberNULL)
+				results = append(results, stillNull)
+
+				return results
+			},
+		},
+		{
 			name: "DeleteItemWithReturnValues",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()

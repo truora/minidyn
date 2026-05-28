@@ -1519,6 +1519,83 @@ func TestSearchDataWithProjectionExpression(t *testing.T) {
 	c.Contains(lastKey, "id")
 }
 
+func TestSearchData_secondaryIndexProjectionKeysOnlyAndInclude(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable("idxproj")
+	table.BillingMode = aws.String("PAY_PER_REQUEST")
+	table.AttributesDef = map[string]string{"id": "S", "gsi_pk": "S", "title": "S", "extra": "S"}
+	table.LangInterpreter = interpreter.Language{}
+
+	err := table.CreatePrimaryIndex(&types.CreateTableInput{
+		KeySchema: []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}},
+	})
+	c.NoError(err)
+
+	keysOnly := "keys-only"
+	includeIdx := "include-idx"
+
+	err = table.AddGlobalIndexes([]*types.GlobalSecondaryIndex{
+		{
+			IndexName: &keysOnly,
+			KeySchema: []*types.KeySchemaElement{{AttributeName: "gsi_pk", KeyType: "HASH"}},
+			Projection: &types.Projection{
+				ProjectionType: aws.String("KEYS_ONLY"),
+			},
+		},
+		{
+			IndexName: &includeIdx,
+			KeySchema: []*types.KeySchemaElement{{AttributeName: "gsi_pk", KeyType: "HASH"}},
+			Projection: &types.Projection{
+				ProjectionType:   aws.String("INCLUDE"),
+				NonKeyAttributes: []*string{aws.String("title")},
+			},
+		},
+	})
+	c.NoError(err)
+
+	_, err = table.Put(&types.PutItemInput{
+		TableName: aws.String("idxproj"),
+		Item: map[string]*types.Item{
+			"id":     {S: aws.String("1")},
+			"gsi_pk": {S: aws.String("g1")},
+			"title":  {S: aws.String("t1")},
+			"extra":  {S: aws.String("x")},
+		},
+	})
+	c.NoError(err)
+
+	items, _, err := table.SearchData(QueryInput{
+		Index:                  keysOnly,
+		KeyConditionExpression: "gsi_pk = :g",
+		ExpressionAttributeValues: map[string]*types.Item{
+			":g": {S: aws.String("g1")},
+		},
+		Limit:            10,
+		ScanIndexForward: true,
+	})
+	c.NoError(err)
+	c.Len(items, 1)
+	c.Contains(items[0], "id")
+	c.Contains(items[0], "gsi_pk")
+	c.NotContains(items[0], "title")
+	c.NotContains(items[0], "extra")
+
+	items2, _, err := table.SearchData(QueryInput{
+		Index:                  includeIdx,
+		KeyConditionExpression: "gsi_pk = :g",
+		ExpressionAttributeValues: map[string]*types.Item{
+			":g": {S: aws.String("g1")},
+		},
+		Limit:            10,
+		ScanIndexForward: true,
+	})
+	c.NoError(err)
+	c.Len(items2, 1)
+	c.Contains(items2[0], "title")
+	c.NotContains(items2[0], "extra")
+}
+
 func TestSnapshot(t *testing.T) {
 	c := require.New(t)
 

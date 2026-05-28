@@ -213,7 +213,9 @@ func TestEvalFunctions(t *testing.T) {
 		{"size(:bin) = :binSize", TRUE},
 		{"attribute_exists(:n)", FALSE},
 		{"attribute_exists(h.notFound)", FALSE},
+		{"attribute_exists(:nilVal)", TRUE},
 		{"attribute_not_exists(:n)", TRUE},
+		{"attribute_not_exists(:nilVal)", FALSE},
 		{"begins_with(:s, :prefix)", TRUE},
 		{"contains(:s, :subtext)", TRUE},
 		{"contains(:list, :element)", TRUE},
@@ -221,20 +223,24 @@ func TestEvalFunctions(t *testing.T) {
 		{"contains(:binSet, :bin)", TRUE},
 		{"contains(:numSet, :num)", TRUE},
 		{"attribute_type(:s, :type)", TRUE},
+		{"attribute_type(:nilVal, :nullType)", TRUE},
+		{"attribute_type(:n, :nullType)", FALSE},
 	}
 
 	env := NewEnvironment()
 
 	err := env.AddAttributes(map[string]*types.Item{
-		":s":       {S: new("HELLO WORLD!")},
-		":sSize":   {N: new("12")},
-		":type":    {S: new("S")},
-		":bin":     {B: []byte{10, 10, 10}},
-		":binSize": {N: new("3")},
-		":prefix":  {S: new("HELLO")},
-		":subtext": {S: new("ELL")},
-		":element": {S: new("a")},
-		":num":     {N: new("1")},
+		":s":        {S: new("HELLO WORLD!")},
+		":sSize":    {N: new("12")},
+		":type":     {S: new("S")},
+		":nullType": {S: new("NULL")},
+		":nilVal":   {NULL: &boolTrue},
+		":bin":      {B: []byte{10, 10, 10}},
+		":binSize":  {N: new("3")},
+		":prefix":   {S: new("HELLO")},
+		":subtext":  {S: new("ELL")},
+		":element":  {S: new("a")},
+		":num":      {N: new("1")},
 		":list": {
 			L: []*types.Item{
 				{S: new("a")},

@@ -342,7 +342,7 @@ func prepareSearch(input *QueryInput, index *index, k, startKey string) (string,
 	return "", false
 }
 
-func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool, error) {
+func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string, idx *index) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool, error) {
 	storedItem, ok := t.Data[pk]
 
 	lastMatchExpressionType, matched, err := t.matchKey(*input, storedItem)
@@ -356,10 +356,15 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 		return fullCopy, fullCopy, lastMatchExpressionType, false, nil
 	}
 
+	baseItem := storedItem
+	if idx != nil {
+		baseItem = idx.ProjectItem(storedItem)
+	}
+
 	if input.ProjectionExpression != "" {
 		projected, err := t.LangInterpreter.Project(interpreter.ProjectInput{
 			Expression: input.ProjectionExpression,
-			Item:       storedItem,
+			Item:       baseItem,
 			Aliases:    input.Aliases,
 		})
 		if err != nil {
@@ -367,6 +372,10 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string) (
 		}
 
 		return projected, fullCopy, lastMatchExpressionType, true, nil
+	}
+
+	if idx != nil {
+		return baseItem, fullCopy, lastMatchExpressionType, true, nil
 	}
 
 	return fullCopy, fullCopy, lastMatchExpressionType, true, nil
@@ -429,7 +438,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 			continue
 		}
 
-		item, keyItem, expressionType, matched, gerr := t.getMatchedItemAndCount(&input, pk, startKey)
+		item, keyItem, expressionType, matched, gerr := t.getMatchedItemAndCount(&input, pk, startKey, index)
 		if gerr != nil {
 			return nil, nil, types.NewError("ValidationException", gerr.Error(), nil)
 		}

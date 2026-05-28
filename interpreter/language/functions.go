@@ -69,13 +69,13 @@ var functions = map[string]*Function{
 func attributeExists(args ...Object) Object {
 	path := args[0]
 
-	return nativeBoolToBooleanObject(path.Type() != ObjectTypeNull)
+	return nativeBoolToBooleanObject(!isUndefined(path))
 }
 
 func attributeNotExists(args ...Object) Object {
 	path := args[0]
 
-	return nativeBoolToBooleanObject(path.Type() == ObjectTypeNull)
+	return nativeBoolToBooleanObject(isUndefined(path))
 }
 
 func attributeType(args ...Object) Object {
@@ -86,6 +86,10 @@ func attributeType(args ...Object) Object {
 		strObj, _ := typ.(*String)
 		if !dynamodbTypes[ObjectType(strObj.Value)] {
 			return newError("invalid type %s", strObj.Value)
+		}
+
+		if isUndefined(path) {
+			return FALSE
 		}
 
 		return nativeBoolToBooleanObject(path.Type() == ObjectType(strObj.Value))
@@ -149,7 +153,7 @@ func objectSize(args ...Object) Object {
 func ifNotExists(args ...Object) Object {
 	obj := args[0]
 
-	if obj == nil || obj.Type() == ObjectTypeNull {
+	if isUndefined(obj) {
 		return args[1]
 	}
 

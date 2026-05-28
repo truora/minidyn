@@ -358,9 +358,10 @@ func mapTypesGSI(in []types.GlobalSecondaryIndexDescription) []ddbtypes.GlobalSe
 	for i, g := range in {
 		gCopy := g
 		out[i] = ddbtypes.GlobalSecondaryIndexDescription{
-			IndexName: gCopy.IndexName,
-			ItemCount: aws.Int64(gCopy.ItemCount),
-			KeySchema: mapTypesKeySchema(gCopy.KeySchema),
+			IndexName:   gCopy.IndexName,
+			ItemCount:   aws.Int64(gCopy.ItemCount),
+			KeySchema:   mapTypesKeySchema(gCopy.KeySchema),
+			IndexStatus: ddbtypes.IndexStatus(aws.ToString(gCopy.IndexStatus)),
 			Projection: &ddbtypes.Projection{
 				NonKeyAttributes: fromStringPtrs(gCopy.Projection.NonKeyAttributes),
 				ProjectionType:   ddbtypes.ProjectionType(aws.ToString(gCopy.Projection.ProjectionType)),

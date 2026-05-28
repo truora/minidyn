@@ -28,10 +28,12 @@ const dynamoDBLocalImage = "amazon/dynamodb-local:latest"
 func setupMinidynClient(t *testing.T) *dynamodb.Client {
 	t.Helper()
 
-	srv := httptest.NewServer(server.NewServer())
-	t.Cleanup(srv.Close)
+	srv := server.NewServer()
+	srv.SetIndexActivationDelay(5 * time.Millisecond)
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
 
-	return newSDKClient(t, srv.URL)
+	return newSDKClient(t, ts.URL)
 }
 
 // setupDynamoDBLocalClient starts amazon/dynamodb-local in Docker and returns

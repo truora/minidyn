@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -46,6 +47,15 @@ func (s *Server) EmulateFailure(condition FailureCondition) {
 	}
 
 	s.client.setFailureCondition(emulatingErrors[condition])
+}
+
+// SetIndexActivationDelay configures how long newly created GSIs report CREATING before ACTIVE.
+func (s *Server) SetIndexActivationDelay(delay time.Duration) {
+	if s == nil || s.client == nil {
+		return
+	}
+
+	s.client.setIndexActivationDelay(delay)
 }
 
 // ClearTable removes all data from a table and its indexes using the in-memory client.

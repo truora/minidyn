@@ -5,11 +5,14 @@ import (
 	"maps"
 	"reflect"
 	"sort"
+	"time"
 
 	"github.com/truora/minidyn/interpreter"
 	"github.com/truora/minidyn/interpreter/language"
 	"github.com/truora/minidyn/types"
 )
+
+const defaultIndexActivationDelay = 0
 
 // QueryInput struct to represent a query input
 type QueryInput struct {
@@ -39,16 +42,18 @@ type Table struct {
 	UseNativeInterpreter bool
 	NativeInterpreter    interpreter.Native
 	LangInterpreter      interpreter.Language
+	IndexActivationDelay time.Duration
 }
 
 // NewTable creates a new Table
 func NewTable(name string) *Table {
 	return &Table{
-		Name:          name,
-		Indexes:       map[string]*index{},
-		AttributesDef: map[string]string{},
-		SortedKeys:    []string{},
-		Data:          map[string]map[string]*types.Item{},
+		Name:                 name,
+		Indexes:              map[string]*index{},
+		AttributesDef:        map[string]string{},
+		SortedKeys:           []string{},
+		Data:                 map[string]map[string]*types.Item{},
+		IndexActivationDelay: defaultIndexActivationDelay,
 	}
 }
 
@@ -216,6 +221,7 @@ func (t *Table) addGlobalIndex(gsiInput *types.GlobalSecondaryIndex) error {
 		return err
 	}
 
+	i.createdAt = time.Now()
 	t.Indexes[*gsiInput.IndexName] = i
 
 	return nil
@@ -974,11 +980,17 @@ func (t *Table) IndexesDescription() ([]types.GlobalSecondaryIndexDescription, [
 		switch index.typ {
 		case indexTypeGlobal:
 			{
+				status := "ACTIVE"
+				if t.IndexActivationDelay > 0 && time.Since(index.createdAt) < t.IndexActivationDelay {
+					status = "CREATING"
+				}
+
 				gsi = append(gsi, types.GlobalSecondaryIndexDescription{
-					IndexName:  &indexName,
-					ItemCount:  count,
-					KeySchema:  schema,
-					Projection: index.projection,
+					IndexName:   &indexName,
+					ItemCount:   count,
+					KeySchema:   schema,
+					Projection:  index.projection,
+					IndexStatus: &status,
 				})
 			}
 		case indexTypeLocal:

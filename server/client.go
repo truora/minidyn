@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -21,6 +22,7 @@ type Client struct {
 	nativeInterpreter    *interpreter.Native
 	useNativeInterpreter bool
 	forceFailureErr      error
+	indexActivationDelay time.Duration
 }
 
 // NewClient creates a new in-memory DynamoDB-compatible client used by the HTTP server.
@@ -35,6 +37,17 @@ func NewClient() *Client {
 
 func (c *Client) setFailureCondition(err error) {
 	c.forceFailureErr = err
+}
+
+func (c *Client) setIndexActivationDelay(delay time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.indexActivationDelay = delay
+
+	for _, table := range c.tables {
+		table.IndexActivationDelay = delay
+	}
 }
 
 // Table helpers
@@ -60,6 +73,7 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 	table.NativeInterpreter = *c.nativeInterpreter
 	table.UseNativeInterpreter = c.useNativeInterpreter
 	table.LangInterpreter = *c.langInterpreter
+	table.IndexActivationDelay = c.indexActivationDelay
 
 	if err := table.CreatePrimaryIndex(&types.CreateTableInput{
 		KeySchema:             mapKeySchema(input.KeySchema),

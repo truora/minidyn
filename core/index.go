@@ -3,6 +3,7 @@ package core
 import (
 	"maps"
 	"sort"
+	"time"
 
 	"github.com/truora/minidyn/types"
 )
@@ -22,6 +23,7 @@ type index struct {
 	projection *types.Projection
 	Table      *Table
 	refs       map[string]string
+	createdAt  time.Time
 }
 
 func newIndex(t *Table, typ indexType, ks keySchema) *index {

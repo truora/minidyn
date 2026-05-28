@@ -12,6 +12,7 @@ Minidyn aims to accurately mock DynamoDB behavior for local testing. However, it
 - `PutItem`
 - `Query`
 - `Scan`
+- `TransactGetItems`
 - `TransactWriteItems`
 - `UpdateItem`
 - `UpdateTable`
@@ -33,7 +34,6 @@ Minidyn aims to accurately mock DynamoDB behavior for local testing. However, it
 Operations related to administrative, backup, streaming, and global table features are generally not supported. Some common unsupported operations include:
 
 - **Item Operations**:
-  - `TransactGetItems`
   - `ExecuteStatement`, `BatchExecuteStatement` (PartiQL)
 
 - **Table & Tagging Operations**:

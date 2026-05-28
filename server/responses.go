@@ -72,3 +72,13 @@ type BatchGetItemOutput struct {
 
 // TransactWriteItemsOutput mirrors DynamoDB TransactWriteItemsOutput.
 type TransactWriteItemsOutput struct{}
+
+// ItemResponse mirrors DynamoDB ItemResponse.
+type ItemResponse struct {
+	Item map[string]*AttributeValue `json:"Item,omitempty"`
+}
+
+// TransactGetItemsOutput mirrors DynamoDB TransactGetItemsOutput.
+type TransactGetItemsOutput struct {
+	Responses []ItemResponse `json:"Responses,omitempty"`
+}

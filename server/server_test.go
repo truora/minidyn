@@ -2770,3 +2770,237 @@ func TestServerTransactWriteItems(t *testing.T) {
 		})
 	})
 }
+
+func TestServerTransactGetItems(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	t.Run("single item", func(t *testing.T) {
+		c := require.New(t)
+
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id":   &ddbtypes.AttributeValueMemberS{Value: "001"},
+				"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+			},
+		})
+		c.NoError(err)
+
+		out, err := cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{
+					TableName: aws.String("pokemons"),
+					Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+				}},
+			},
+		})
+		c.NoError(err)
+		c.Len(out.Responses, 1)
+		c.Equal("001", out.Responses[0].Item["id"].(*ddbtypes.AttributeValueMemberS).Value)
+		c.Equal("Bulbasaur", out.Responses[0].Item["name"].(*ddbtypes.AttributeValueMemberS).Value)
+	})
+
+	t.Run("preserves order", func(t *testing.T) {
+		c := require.New(t)
+
+		for _, p := range []struct{ id, name string }{
+			{"001", "Bulbasaur"},
+			{"002", "Charmander"},
+		} {
+			_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("pokemons"),
+				Item: map[string]ddbtypes.AttributeValue{
+					"id":   &ddbtypes.AttributeValueMemberS{Value: p.id},
+					"name": &ddbtypes.AttributeValueMemberS{Value: p.name},
+				},
+			})
+			c.NoError(err)
+		}
+
+		out, err := cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{TableName: aws.String("pokemons"), Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "002"}}}},
+				{Get: &ddbtypes.Get{TableName: aws.String("pokemons"), Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}}}},
+			},
+		})
+		c.NoError(err)
+		c.Len(out.Responses, 2)
+		c.Equal("002", out.Responses[0].Item["id"].(*ddbtypes.AttributeValueMemberS).Value)
+		c.Equal("001", out.Responses[1].Item["id"].(*ddbtypes.AttributeValueMemberS).Value)
+	})
+
+	t.Run("missing item", func(t *testing.T) {
+		c := require.New(t)
+
+		out, err := cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{TableName: aws.String("pokemons"), Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "999"}}}},
+			},
+		})
+		c.NoError(err)
+		c.Len(out.Responses, 1)
+		c.Empty(out.Responses[0].Item)
+	})
+
+	t.Run("projection expression", func(t *testing.T) {
+		c := require.New(t)
+
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id":   &ddbtypes.AttributeValueMemberS{Value: "001"},
+				"name": &ddbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+			},
+		})
+		c.NoError(err)
+
+		out, err := cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{
+					TableName:                aws.String("pokemons"),
+					Key:                      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+					ProjectionExpression:     aws.String("#n"),
+					ExpressionAttributeNames: map[string]string{"#n": "name"},
+				}},
+			},
+		})
+		c.NoError(err)
+		c.Len(out.Responses, 1)
+		c.Len(out.Responses[0].Item, 1)
+		c.Equal("Bulbasaur", out.Responses[0].Item["name"].(*ddbtypes.AttributeValueMemberS).Value)
+	})
+
+	t.Run("duplicate item rejected", func(t *testing.T) {
+		c := require.New(t)
+
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id": &ddbtypes.AttributeValueMemberS{Value: "001"},
+			},
+		})
+		c.NoError(err)
+
+		_, err = cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{TableName: aws.String("pokemons"), Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}}}},
+				{Get: &ddbtypes.Get{TableName: aws.String("pokemons"), Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}}}},
+			},
+		})
+
+		var apiErr smithy.APIError
+		c.True(errors.As(err, &apiErr))
+		c.Equal("ValidationException", apiErr.ErrorCode())
+	})
+
+	t.Run("empty table name rejected", func(t *testing.T) {
+		c := require.New(t)
+
+		_, err := cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{
+					TableName: aws.String(""),
+					Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+				}},
+			},
+		})
+
+		var apiErr smithy.APIError
+		c.True(errors.As(err, &apiErr))
+		c.Equal("ValidationException", apiErr.ErrorCode())
+	})
+
+	t.Run("invalid key rejected", func(t *testing.T) {
+		c := require.New(t)
+
+		_, err := cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{
+					TableName: aws.String("pokemons"),
+					Key:       map[string]ddbtypes.AttributeValue{"t1": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+				}},
+			},
+		})
+
+		var apiErr smithy.APIError
+		c.True(errors.As(err, &apiErr))
+		c.Equal("ValidationException", apiErr.ErrorCode())
+	})
+
+	t.Run("invalid key before duplicate check", func(t *testing.T) {
+		c := require.New(t)
+
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id": &ddbtypes.AttributeValueMemberS{Value: "001"},
+			},
+		})
+		c.NoError(err)
+
+		_, err = cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{
+					TableName: aws.String("pokemons"),
+					Key:       map[string]ddbtypes.AttributeValue{"t1": &ddbtypes.AttributeValueMemberS{Value: "001"}},
+				}},
+				{Get: &ddbtypes.Get{TableName: aws.String("pokemons"), Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}}}},
+				{Get: &ddbtypes.Get{TableName: aws.String("pokemons"), Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}}}},
+			},
+		})
+
+		var apiErr smithy.APIError
+		c.True(errors.As(err, &apiErr))
+		c.Equal("ValidationException", apiErr.ErrorCode())
+		c.NotContains(apiErr.ErrorMessage(), "multiple operations on one item")
+	})
+
+	t.Run("cross table", func(t *testing.T) {
+		c := require.New(t)
+
+		makeBasicTable(t, cli, "orders", "id")
+		makeBasicTable(t, cli, "inventory", "id")
+
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("orders"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id":     &ddbtypes.AttributeValueMemberS{Value: "1"},
+				"status": &ddbtypes.AttributeValueMemberS{Value: "shipped"},
+			},
+		})
+		c.NoError(err)
+
+		_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("inventory"),
+			Item: map[string]ddbtypes.AttributeValue{
+				"id":  &ddbtypes.AttributeValueMemberS{Value: "1"},
+				"qty": &ddbtypes.AttributeValueMemberN{Value: "10"},
+			},
+		})
+		c.NoError(err)
+
+		out, err := cli.TransactGetItems(context.Background(), &dynamodb.TransactGetItemsInput{
+			TransactItems: []ddbtypes.TransactGetItem{
+				{Get: &ddbtypes.Get{
+					TableName: aws.String("orders"),
+					Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+				}},
+				{Get: &ddbtypes.Get{
+					TableName: aws.String("inventory"),
+					Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+				}},
+			},
+		})
+		c.NoError(err)
+		c.Len(out.Responses, 2)
+		c.Equal("shipped", out.Responses[0].Item["status"].(*ddbtypes.AttributeValueMemberS).Value)
+		c.Equal("10", out.Responses[1].Item["qty"].(*ddbtypes.AttributeValueMemberN).Value)
+	})
+}

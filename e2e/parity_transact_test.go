@@ -387,3 +387,188 @@ func TestE2E_TransactWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestE2E_TransactGet(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(t *testing.T, client *dynamodb.Client) any
+	}{
+		{
+			name: "TransactGetSingleItem",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				out, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+					TransactItems: []dynamodbtypes.TransactGetItem{
+						{Get: &dynamodbtypes.Get{
+							TableName: aws.String(parityPokemonTable),
+							Key:       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+						}},
+					},
+				})
+				require.NoError(t, err)
+
+				return out.Responses[0].Item
+			},
+		},
+		{
+			name: "TransactGetPreservesOrder",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "002", Type: "fire", Name: "Charmander"})
+
+				out, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+					TransactItems: []dynamodbtypes.TransactGetItem{
+						{Get: &dynamodbtypes.Get{TableName: aws.String(parityPokemonTable), Key: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "002"}}}},
+						{Get: &dynamodbtypes.Get{TableName: aws.String(parityPokemonTable), Key: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}}}},
+					},
+				})
+				require.NoError(t, err)
+
+				return []any{out.Responses[0].Item["id"], out.Responses[1].Item["id"]}
+			},
+		},
+		{
+			name: "TransactGetMissingItem",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				out, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+					TransactItems: []dynamodbtypes.TransactGetItem{
+						{Get: &dynamodbtypes.Get{TableName: aws.String(parityPokemonTable), Key: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "999"}}}},
+					},
+				})
+				require.NoError(t, err)
+
+				return []any{len(out.Responses), len(out.Responses[0].Item)}
+			},
+		},
+		{
+			name: "TransactGetProjectionExpression",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				out, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+					TransactItems: []dynamodbtypes.TransactGetItem{
+						{Get: &dynamodbtypes.Get{
+							TableName:                aws.String(parityPokemonTable),
+							Key:                      map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+							ProjectionExpression:     aws.String("#n"),
+							ExpressionAttributeNames: map[string]string{"#n": "name"},
+						}},
+					},
+				})
+				require.NoError(t, err)
+
+				return out.Responses[0].Item
+			},
+		},
+		{
+			name: "TransactGetDuplicateItem",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+					TransactItems: []dynamodbtypes.TransactGetItem{
+						{Get: &dynamodbtypes.Get{TableName: aws.String(parityPokemonTable), Key: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}}}},
+						{Get: &dynamodbtypes.Get{TableName: aws.String(parityPokemonTable), Key: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}}}},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "TransactGetCrossTables",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				const ordersTable = "orders"
+				const inventoryTable = "inventory"
+
+				for _, spec := range []struct {
+					name, hashKey string
+				}{
+					{ordersTable, "id"},
+					{inventoryTable, "id"},
+				} {
+					_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+						TableName: aws.String(spec.name),
+						KeySchema: []dynamodbtypes.KeySchemaElement{
+							{AttributeName: aws.String(spec.hashKey), KeyType: dynamodbtypes.KeyTypeHash},
+						},
+						AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
+							{AttributeName: aws.String(spec.hashKey), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+						},
+						BillingMode: dynamodbtypes.BillingModePayPerRequest,
+					})
+					require.NoError(t, err)
+				}
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(ordersTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":     &dynamodbtypes.AttributeValueMemberS{Value: "1"},
+						"status": &dynamodbtypes.AttributeValueMemberS{Value: "shipped"},
+					},
+				})
+				require.NoError(t, err)
+
+				_, err = client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(inventoryTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":  &dynamodbtypes.AttributeValueMemberS{Value: "1"},
+						"qty": &dynamodbtypes.AttributeValueMemberN{Value: "10"},
+					},
+				})
+				require.NoError(t, err)
+
+				out, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+					TransactItems: []dynamodbtypes.TransactGetItem{
+						{Get: &dynamodbtypes.Get{
+							TableName: aws.String(ordersTable),
+							Key:       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "1"}},
+						}},
+						{Get: &dynamodbtypes.Get{
+							TableName: aws.String(inventoryTable),
+							Key:       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "1"}},
+						}},
+					},
+				})
+				require.NoError(t, err)
+
+				return []any{
+					out.Responses[0].Item["status"],
+					out.Responses[1].Item["qty"],
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RunE2E(t, tt.fn)
+		})
+	}
+}

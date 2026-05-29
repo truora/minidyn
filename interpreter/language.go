@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -181,7 +182,11 @@ func (li *Language) Update(input UpdateInput) error {
 	result := language.EvalUpdate(update, env)
 
 	if result.Type() == language.ObjectTypeError {
-		return fmt.Errorf("%w: %s", ErrSyntaxError, result.Inspect())
+		if errObj, ok := result.(*language.Error); ok {
+			return errors.New(errObj.Message)
+		}
+
+		return errors.New(result.Inspect())
 	}
 
 	env.Apply(input.Item, aliases, attributes)

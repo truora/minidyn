@@ -948,19 +948,39 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"SET h.bar = :one",
-			"index assignation for \"NULL\" type is not supported",
+			"The document path provided in the update expression is invalid for update; field id: h; path: bar",
 		},
 		{
 			"SET notFound.bar = :one",
-			"index assignation for \"NULL\" type is not supported",
+			"The document path provided in the update expression is invalid for update; field id: notFound; path: bar",
+		},
+		{
+			"SET :val.bar = :one",
+			"The document path provided in the update expression is invalid for update; field id: :val; path: bar",
+		},
+		{
+			"SET notFound[0] = :one",
+			"The document path provided in the update expression is invalid for update; field id: notFound; path: 0",
+		},
+		{
+			"SET info.a.b = :one",
+			"The document path provided in the update expression is invalid for update; field id: info; path: a.b",
+		},
+		{
+			"SET entry_list[0].a.b = :one",
+			"The document path provided in the update expression is invalid for update; field id: entry_list; path: 0.a.b",
+		},
+		{
+			"SET wrapper.label[0] = :one",
+			"The document path provided in the update expression is invalid for update; field id: wrapper; path: label.0",
 		},
 		{
 			"ADD :voidVal :one",
-			"an operand in the update expression has an incorrect data type",
+			"An operand in the update expression has an incorrect data type",
 		},
 		{
 			"SET :x[1] = :one",
-			"index operator not supported for \"BOOL\"",
+			"The document path provided in the update expression is invalid for update; field id: :x; path: 1",
 		},
 		{
 			"SET :list[:x] = :val",
@@ -976,7 +996,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"DELETE :x :list",
-			"an operand in the update expression has an incorrect data type",
+			"An operand in the update expression has an incorrect data type",
 		},
 		{
 			"DELETE :list sizze(:x)",
@@ -995,6 +1015,13 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 				"a": {BOOL: &boolTrue},
 			},
 		},
+		"info": {M: map[string]*types.Item{}},
+		"entry_list": {L: []*types.Item{
+			{M: map[string]*types.Item{}},
+		}},
+		"wrapper": {M: map[string]*types.Item{
+			"label": {S: new("text")},
+		}},
 		":voidVal": {
 			NULL: &boolTrue,
 		},

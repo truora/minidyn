@@ -1106,6 +1106,281 @@ func TestE2E_Item(t *testing.T) {
 			},
 		},
 		{
+			name: "UpdateSetNestedMissingParent",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression: aws.String("SET notFound.bar = :one"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateSetNestedScalarParent",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression:         aws.String("SET #n.bar = :one"),
+					ExpressionAttributeNames: map[string]string{"#n": "name"},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateSetNestedListMissingParent",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression: aws.String("SET notFound[0] = :one"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateSetNestedListScalarParent",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression:         aws.String("SET #n[0] = :one"),
+					ExpressionAttributeNames: map[string]string{"#n": "name"},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateSetDeepIntermediateMissing",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+						"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+						"info": &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}},
+					},
+				})
+				require.NoError(t, err)
+
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression: aws.String("SET info.a.b = :one"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateSetMixedListMapDeepMissing",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+						"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+						"entry_list": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{
+							&dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}},
+						}},
+					},
+				})
+				require.NoError(t, err)
+
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression:         aws.String("SET #lst[0].a.b = :one"),
+					ExpressionAttributeNames: map[string]string{"#lst": "entry_list"},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateSetMixedMapListOnScalar",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+						"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+						"wrapper": &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{
+							"label": &dynamodbtypes.AttributeValueMemberS{Value: "text"},
+						}},
+					},
+				})
+				require.NoError(t, err)
+
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression:         aws.String("SET #wrap.label[0] = :one"),
+					ExpressionAttributeNames: map[string]string{"#wrap": "wrapper"},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateAddWrongOperandType",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression:         aws.String("ADD #n :one"),
+					ExpressionAttributeNames: map[string]string{"#n": "name"},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "UpdateSetNestedIntoExistingMap",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id":   &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+						"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+						"info": &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{
+							"x": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+						}},
+					},
+				})
+				require.NoError(t, err)
+
+				_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression: aws.String("SET info.y = :one"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "2"},
+					},
+				})
+				require.NoError(t, err)
+
+				item := parityGetPokemon(ctx, t, client, "001")
+				info, ok := item["info"].(*dynamodbtypes.AttributeValueMemberM)
+				require.True(t, ok)
+
+				return info.Value
+			},
+		},
+		{
 			name: "DeleteItemWithReturnValues",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()

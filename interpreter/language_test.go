@@ -135,11 +135,12 @@ func TestLanguageMatch_keyConditionSyntaxErrorPrefix(t *testing.T) {
 }
 
 type updateTestCase struct {
-	name        string
-	input       UpdateInput
-	output      map[string]*types.Item
-	expectedErr error
-	pending     bool
+	name           string
+	input          UpdateInput
+	output         map[string]*types.Item
+	expectedErr    error
+	expectedErrMsg string
+	pending        bool
 }
 
 func updateTestCaseVerify(tc updateTestCase, t *testing.T) {
@@ -150,6 +151,14 @@ func updateTestCaseVerify(tc updateTestCase, t *testing.T) {
 	interpeter := Language{}
 
 	err := interpeter.Update(tc.input)
+	if tc.expectedErrMsg != "" {
+		if err == nil || err.Error() != tc.expectedErrMsg {
+			t.Errorf("%q failed with unexpected error; expected=%q, got=%v", tc.input.Expression, tc.expectedErrMsg, err)
+		}
+
+		return
+	}
+
 	if tc.expectedErr != nil {
 		if !errors.Is(err, tc.expectedErr) {
 			t.Errorf("%q failed with unexpected error; expected=%v, got=%v", tc.input.Expression, tc.expectedErr, err)
@@ -194,7 +203,7 @@ func TestLanguageUpdate(t *testing.T) {
 			},
 		},
 		{
-			name: "syntax error",
+			name: "runtime validation error",
 			input: UpdateInput{
 				TableName:  "test",
 				Expression: "SET",
@@ -209,7 +218,7 @@ func TestLanguageUpdate(t *testing.T) {
 					},
 				},
 			},
-			expectedErr: ErrSyntaxError,
+			expectedErrMsg: "SET expression must have at least one action",
 		},
 		{
 			name: "typo",

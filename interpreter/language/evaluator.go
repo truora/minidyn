@@ -57,8 +57,17 @@ func EvalUpdate(n Node, env *Environment) Object {
 	return newError("unsupported expression: %s", n.String())
 }
 
+const invalidDocumentPathMessage = "The document path provided in the update expression is invalid for update"
+
 func newError(format string, a ...any) *Error {
 	return &Error{Message: fmt.Sprintf(format, a...)}
+}
+
+func newInvalidDocumentPathError(fieldID, path string) *Error {
+	return newError(
+		"%s; field id: %s; path: %s",
+		invalidDocumentPathMessage, fieldID, path,
+	)
 }
 
 func isError(obj Object) bool {
@@ -411,7 +420,7 @@ func evalIdentifier(node *Identifier, env *Environment, toplevel bool) Object {
 }
 
 func evalIndex(node *IndexExpression, env *Environment) Object {
-	positions, o, errObj := evalIndexPositions(node, env)
+	positions, o, errObj := evalIndexPositions(node, env, false)
 	if isError(errObj) {
 		return errObj
 	}
@@ -431,9 +440,49 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 }
 
 type indexAccessor struct {
-	kind     ObjectType
-	val      any
-	operator Token
+	kind       ObjectType
+	val        any
+	operator   Token
+	fieldID    string
+	pathSuffix string
+}
+
+func indexFieldID(id *Identifier, env *Environment) string {
+	if alias, ok := env.Aliases[id.Value]; ok {
+		return alias
+	}
+
+	return id.Value
+}
+
+func (i indexAccessor) indexName() string {
+	switch i.kind {
+	case ObjectTypeMap:
+		if s, ok := i.val.(string); ok {
+			return s
+		}
+	case ObjectTypeList:
+		if n, ok := i.val.(int64); ok {
+			return strconv.FormatInt(n, 10)
+		}
+	}
+
+	return ""
+}
+
+// documentPathSuffix formats index segments after the root attribute (root-first,
+// dot-separated). positions are innermost-first from evalIndexPositions.
+func documentPathSuffix(positions []indexAccessor) string {
+	if len(positions) == 0 {
+		return ""
+	}
+
+	parts := make([]string, len(positions))
+	for i, pos := range positions {
+		parts[len(positions)-1-i] = pos.indexName()
+	}
+
+	return strings.Join(parts, ".")
 }
 
 func (i indexAccessor) Get(container Object) Object {
@@ -486,13 +535,32 @@ func (i indexAccessor) Set(container, val Object) Object {
 		return UNDEFINED
 	}
 
-	return newError("index assignation for %q type is not supported", container.Type())
+	return newInvalidDocumentPathError(i.fieldID, i.pathSuffix)
 }
 
-func handleIndexIdentifier(n Expression, env *Environment, positions []indexAccessor) ([]indexAccessor, Object, Object) {
+func handleIndexIdentifier(n Expression, env *Environment, positions []indexAccessor, assign bool) ([]indexAccessor, Object, Object) {
 	obj, errObj := evalIndexObj(n, env)
 	if isError(errObj) {
+		if assign {
+			fieldID := ""
+			if id, ok := n.(*Identifier); ok {
+				fieldID = indexFieldID(id, env)
+			}
+
+			return nil, nil, newInvalidDocumentPathError(fieldID, documentPathSuffix(positions))
+		}
+
 		return nil, nil, errObj
+	}
+
+	if id, ok := n.(*Identifier); ok {
+		fieldID := indexFieldID(id, env)
+		suffix := documentPathSuffix(positions)
+
+		for j := range positions {
+			positions[j].fieldID = fieldID
+			positions[j].pathSuffix = suffix
+		}
 	}
 
 	return positions, obj, nil
@@ -518,14 +586,14 @@ func (i indexAccessor) Remove(container Object) Object {
 	return newError("index removal for %q type is not supported", container.Type())
 }
 
-func evalIndexPositions(n Expression, env *Environment) ([]indexAccessor, Object, Object) {
+func evalIndexPositions(n Expression, env *Environment, assign bool) ([]indexAccessor, Object, Object) {
 	positions := []indexAccessor{}
 	exp := n
 
 	for {
 		switch node := exp.(type) {
 		case *Identifier:
-			return handleIndexIdentifier(exp, env, positions)
+			return handleIndexIdentifier(exp, env, positions, assign)
 		case *IndexExpression:
 			identifier, ok := node.Index.(*Identifier)
 			if !ok {
@@ -882,7 +950,7 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 
 		addObj, ok := obj.(AppendableObject)
 		if !ok {
-			return newError("an operand in the update expression has an incorrect data type")
+			return newError("An operand in the update expression has an incorrect data type")
 		}
 
 		return addObj.Add(val)
@@ -912,7 +980,7 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 
 		addObj, ok := obj.(DetachableObject)
 		if !ok {
-			return newError("an operand in the update expression has an incorrect data type")
+			return newError("An operand in the update expression has an incorrect data type")
 		}
 
 		return addObj.Delete(val)
@@ -937,7 +1005,7 @@ func evalActionRemove(node *ActionExpression, env *Environment) Object {
 
 	indexField, ok := node.Left.(*IndexExpression)
 	if ok {
-		positions, o, errObj := evalIndexPositions(indexField, env)
+		positions, o, errObj := evalIndexPositions(indexField, env, false)
 		if isError(errObj) {
 			return errObj
 		}
@@ -1002,7 +1070,7 @@ func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
 }
 
 func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object {
-	positions, o, errObj := evalIndexPositions(n, env)
+	positions, o, errObj := evalIndexPositions(n, env, true)
 	if isError(errObj) {
 		return errObj
 	}

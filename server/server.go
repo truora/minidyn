@@ -122,6 +122,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err = decoder.Decode(&input); err == nil {
 			resp, err = s.client.TransactWriteItems(context.Background(), &input)
 		}
+	case "TransactGetItems":
+		var input TransactGetItemsInput
+		if err = decoder.Decode(&input); err == nil {
+			resp, err = s.client.TransactGetItems(context.Background(), &input)
+		}
 	default:
 		http.Error(w, "unsupported operation", http.StatusBadRequest)
 		return

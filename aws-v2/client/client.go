@@ -22,6 +22,7 @@ import (
 
 const (
 	batchRequestsLimit                              = 25
+	batchGetItemRequestsLimit                       = 100
 	unusedExpressionAttributeNamesMsg               = "Value provided in ExpressionAttributeNames unused in expressions"
 	unusedExpressionAttributeValuesMsg              = "Value provided in ExpressionAttributeValues unused in expressions"
 	expressionAttributeValuesOnlyWithExpressionsMsg = "ExpressionAttributeValues can only be specified when using expressions"
@@ -53,6 +54,7 @@ type FakeClient interface {
 	BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error)
 	BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error)
 	TransactWriteItems(ctx context.Context, input *dynamodb.TransactWriteItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
+	TransactGetItems(ctx context.Context, input *dynamodb.TransactGetItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactGetItemsOutput, error)
 }
 
 // Client define a mock struct to be used
@@ -760,6 +762,111 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 	}
 
 	return &dynamodb.TransactWriteItemsOutput{}, nil
+}
+
+func validateTransactGetItemsInput(fd *Client, input *dynamodb.TransactGetItemsInput) error {
+	if input == nil {
+		return nil
+	}
+
+	count := len(input.TransactItems)
+	if count == 0 {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "1 validation error detected: Value '{}' at 'transactItems' failed to satisfy constraint: Member must have length greater than or equal to 1",
+		}
+	}
+
+	if count > batchGetItemRequestsLimit {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "Too many items requested for the TransactGetItems call",
+		}
+	}
+
+	seenKeys := make(map[string]struct{}, count)
+
+	for _, item := range input.TransactItems {
+		if item.Get == nil {
+			return &smithy.GenericAPIError{
+				Code:    "ValidationException",
+				Message: "transaction item must include Get",
+			}
+		}
+
+		get := item.Get
+
+		tableName := aws.ToString(get.TableName)
+		if tableName == "" {
+			return &smithy.GenericAPIError{
+				Code:    "ValidationException",
+				Message: "TableName must not be null",
+			}
+		}
+
+		table, err := fd.getTable(tableName)
+		if err != nil {
+			return mapKnownError(err)
+		}
+
+		internalKeyMap := mapDynamoToTypesMapItem(get.Key)
+		if vErr := mtypes.ValidateItemMap(internalKeyMap); vErr != nil {
+			return mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
+		}
+
+		if keyErr := table.ValidatePrimaryKeyMap(internalKeyMap); keyErr != nil {
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
+		}
+
+		key, err := table.KeySchema.GetKey(table.AttributesDef, internalKeyMap)
+		if err != nil {
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+		}
+
+		id := tableName + "|" + key
+
+		if _, exists := seenKeys[id]; exists {
+			return &smithy.GenericAPIError{
+				Code:    "ValidationException",
+				Message: "Transaction request cannot include multiple operations on one item",
+			}
+		}
+
+		seenKeys[id] = struct{}{}
+	}
+
+	return nil
+}
+
+// TransactGetItems mock response for dynamodb.
+func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.TransactGetItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactGetItemsOutput, error) {
+	if fd.forceFailureErr != nil {
+		return nil, fd.forceFailureErr
+	}
+
+	if err := validateTransactGetItemsInput(fd, input); err != nil {
+		return nil, err
+	}
+
+	responses := make([]types.ItemResponse, 0, len(input.TransactItems))
+
+	for _, item := range input.TransactItems {
+		get := item.Get
+
+		out, err := fd.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName:                get.TableName,
+			Key:                      get.Key,
+			ExpressionAttributeNames: get.ExpressionAttributeNames,
+			ProjectionExpression:     get.ProjectionExpression,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		responses = append(responses, types.ItemResponse{Item: out.Item})
+	}
+
+	return &dynamodb.TransactGetItemsOutput{Responses: responses}, nil
 }
 
 func (fd *Client) runTransactItem(i, n int, item types.TransactWriteItem) error {

@@ -734,6 +734,107 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	return &TransactWriteItemsOutput{}, nil
 }
 
+func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {
+	if input == nil {
+		return nil
+	}
+
+	count := len(input.TransactItems)
+	if count == 0 {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "1 validation error detected: Value '{}' at 'transactItems' failed to satisfy constraint: Member must have length greater than or equal to 1",
+		}
+	}
+
+	if count > batchGetItemRequestsLimit {
+		return &smithy.GenericAPIError{
+			Code:    "ValidationException",
+			Message: "Too many items requested for the TransactGetItems call",
+		}
+	}
+
+	seenKeys := make(map[string]struct{}, count)
+
+	for _, item := range input.TransactItems {
+		if item.Get == nil {
+			return &smithy.GenericAPIError{
+				Code:    "ValidationException",
+				Message: "transaction item must include Get",
+			}
+		}
+
+		get := item.Get
+
+		tableName := aws.ToString(get.TableName)
+		if tableName == "" {
+			return &smithy.GenericAPIError{
+				Code:    "ValidationException",
+				Message: "TableName must not be null",
+			}
+		}
+
+		table, err := c.getTable(tableName)
+		if err != nil {
+			return mapKnownError(err)
+		}
+
+		internalKeyMap := mapAttributeValueMapToTypes(get.Key)
+		if vErr := types.ValidateItemMap(internalKeyMap); vErr != nil {
+			return mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
+		}
+
+		if keyErr := table.ValidatePrimaryKeyMap(internalKeyMap); keyErr != nil {
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
+		}
+
+		key, err := table.KeySchema.GetKey(table.AttributesDef, internalKeyMap)
+		if err != nil {
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+		}
+
+		id := tableName + "|" + key
+
+		if _, exists := seenKeys[id]; exists {
+			return &smithy.GenericAPIError{
+				Code:    "ValidationException",
+				Message: "Transaction request cannot include multiple operations on one item",
+			}
+		}
+
+		seenKeys[id] = struct{}{}
+	}
+
+	return nil
+}
+
+// TransactGetItems atomically retrieves multiple items from one or more tables.
+func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsInput) (*TransactGetItemsOutput, error) {
+	if err := validateTransactGetItemsInput(c, input); err != nil {
+		return nil, err
+	}
+
+	responses := make([]ItemResponse, 0, len(input.TransactItems))
+
+	for _, item := range input.TransactItems {
+		get := item.Get
+
+		out, err := c.GetItem(ctx, &GetItemInput{
+			TableName:                get.TableName,
+			Key:                      get.Key,
+			ExpressionAttributeNames: get.ExpressionAttributeNames,
+			ProjectionExpression:     get.ProjectionExpression,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		responses = append(responses, ItemResponse{Item: out.Item})
+	}
+
+	return &TransactGetItemsOutput{Responses: responses}, nil
+}
+
 func (c *Client) runTransactItem(i, n int, item TransactWriteItem) error {
 	switch {
 	case item.Put != nil:

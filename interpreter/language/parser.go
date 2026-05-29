@@ -231,7 +231,7 @@ func (p *Parser) parseExpression(precedence int) Expression {
 func (p *Parser) parsePrefixExpression() Expression {
 	expression := &PrefixExpression{
 		Token:    p.curToken,
-		Operator: p.curToken.Literal,
+		Operator: string(p.curToken.Type),
 	}
 
 	p.nextToken()
@@ -243,7 +243,7 @@ func (p *Parser) parsePrefixExpression() Expression {
 func (p *Parser) parseInfixExpression(left Expression) Expression {
 	expression := &InfixExpression{
 		Token:    p.curToken,
-		Operator: p.curToken.Literal,
+		Operator: string(p.curToken.Type),
 		Left:     left,
 	}
 

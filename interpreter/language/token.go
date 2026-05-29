@@ -1,5 +1,7 @@
 package language
 
+import "strings"
+
 // TokenType represents the type of the token
 type TokenType string
 
@@ -664,7 +666,7 @@ var (
 
 // LookupIdent checks if the ident is a keyword
 func LookupIdent(ident string) TokenType {
-	if tok, ok := keywords[ident]; ok {
+	if tok, ok := keywords[strings.ToUpper(ident)]; ok {
 		return tok
 	}
 

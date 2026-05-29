@@ -92,6 +92,25 @@ func TestNextToken(t *testing.T) {
 			{DOT, "."},
 			{IDENT, "f"},
 		},
+		`a or b`: {
+			{IDENT, "a"},
+			{OR, "or"},
+			{IDENT, "b"},
+		},
+		`a and b`: {
+			{IDENT, "a"},
+			{AND, "and"},
+			{IDENT, "b"},
+		},
+		`not a`: {
+			{NOT, "not"},
+			{IDENT, "a"},
+		},
+		`a Or b`: {
+			{IDENT, "a"},
+			{OR, "Or"},
+			{IDENT, "b"},
+		},
 	}
 
 	for input, tests := range table {

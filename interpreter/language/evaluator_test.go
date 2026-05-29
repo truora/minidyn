@@ -25,6 +25,10 @@ func TestEval(t *testing.T) {
 		{":a = :a AND :b = :b", TRUE},
 		{":a = :a AND :a = :b", FALSE},
 		{":a = :a OR :a = :b", TRUE},
+		{":a = :a or :a = :b", TRUE},
+		{":a = :a and :b = :b", TRUE},
+		{"not :a = :a", FALSE},
+		{":a = :a Or :a = :b", TRUE},
 		{":x = :y", FALSE},
 		// Numbers
 		{":s = :b", FALSE},

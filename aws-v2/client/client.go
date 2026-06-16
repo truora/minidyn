@@ -66,6 +66,7 @@ type Client struct {
 	nativeInterpreter     *interpreter.Native
 	useNativeInterpreter  bool
 	forceFailureErr       error
+	tableFailureErrs      map[string]error
 	indexActivationDelay  time.Duration
 }
 
@@ -76,6 +77,7 @@ func NewClient() *Client {
 		mu:                sync.Mutex{},
 		nativeInterpreter: interpreter.NewNativeInterpreter(),
 		langInterpreter:   &interpreter.Language{},
+		tableFailureErrs:  map[string]error{},
 	}
 
 	return &fake
@@ -106,6 +108,48 @@ func (fd *Client) setFailureCondition(condition FailureCondition) {
 	defer fd.mu.Unlock()
 
 	fd.forceFailureErr = emulatingErrors[condition]
+}
+
+// failureKey builds the lookup key for a table-scoped failure. An empty index
+// means the failure applies to the whole table.
+func failureKey(table, index string) string {
+	return table + "\x00" + index
+}
+
+// setTableFailureCondition scopes a failure to a table, or to a specific index of
+// that table when index is not empty. FailureConditionNone clears that exact scope.
+func (fd *Client) setTableFailureCondition(table, index string, condition FailureCondition) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	key := failureKey(table, index)
+
+	err := emulatingErrors[condition]
+	if err == nil {
+		delete(fd.tableFailureErrs, key)
+
+		return
+	}
+
+	fd.tableFailureErrs[key] = err
+}
+
+// failureErrFor resolves the emulated error for an operation targeting the given
+// table and index. A global failure overrides everything; otherwise an
+// index-scoped failure (when index is set) wins over a table-wide one. Callers
+// must hold fd.mu.
+func (fd *Client) failureErrFor(table, index string) error {
+	if fd.forceFailureErr != nil {
+		return fd.forceFailureErr
+	}
+
+	if index != "" {
+		if err := fd.tableFailureErrs[failureKey(table, index)]; err != nil {
+			return err
+		}
+	}
+
+	return fd.tableFailureErrs[failureKey(table, "")]
 }
 
 func (fd *Client) setIndexActivationDelay(delay time.Duration) {
@@ -237,8 +281,8 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	if fd.forceFailureErr != nil {
-		return nil, fd.forceFailureErr
+	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
@@ -263,8 +307,8 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	if fd.forceFailureErr != nil {
-		return nil, fd.forceFailureErr
+	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
@@ -314,8 +358,8 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	if fd.forceFailureErr != nil {
-		return nil, fd.forceFailureErr
+	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.UpdateExpression), aws.ToString(input.ConditionExpression))
@@ -351,8 +395,8 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	if fd.forceFailureErr != nil {
-		return nil, fd.forceFailureErr
+	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.ToString(input.ProjectionExpression))
@@ -398,8 +442,8 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	if fd.forceFailureErr != nil {
-		return nil, fd.forceFailureErr
+	if ferr := fd.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
+		return nil, ferr
 	}
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
@@ -442,8 +486,8 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	if fd.forceFailureErr != nil {
-		return nil, fd.forceFailureErr
+	if ferr := fd.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
+		return nil, ferr
 	}
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
@@ -697,6 +741,10 @@ func (fd *Client) prepareTransact(items []types.TransactWriteItem) (map[string]c
 
 		if tableName == "" {
 			continue
+		}
+
+		if ferr := fd.failureErrFor(tableName, ""); ferr != nil {
+			return nil, ferr
 		}
 
 		if _, alreadySnapped := snapshots[tableName]; !alreadySnapped {

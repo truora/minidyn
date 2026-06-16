@@ -62,6 +62,36 @@ func TestEmulateFailure(t *testing.T) {
 	EmulateFailure(client, FailureConditionInternalServerError)
 }
 
+func TestEmulateFailureForTable(t *testing.T) {
+	c := require.New(t)
+
+	c.Panics(func() {
+		cfg, err := config.LoadDefaultConfig(context.Background())
+		c.NoError(err)
+
+		client := dynamodb.NewFromConfig(cfg)
+		EmulateFailureForTable(client, tableName, FailureConditionInternalServerError)
+	})
+
+	client := NewClient()
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	EmulateFailureForTable(client, tableName, FailureConditionInternalServerError)
+
+	err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+	var internal *dynamodbtypes.InternalServerError
+
+	c.ErrorAs(err, &internal)
+
+	EmulateFailureForTable(client, tableName, FailureConditionNone)
+
+	err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	c.NoError(err)
+}
+
 func TestAddIndex(t *testing.T) {
 	c := require.New(t)
 

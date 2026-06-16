@@ -2176,6 +2176,203 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	c.Nil(output)
 }
 
+func TestEmulateFailureForTableScopesToTable(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+
+	const secondTable = "items"
+
+	c.NoError(AddTable(context.Background(), client, secondTable, "id", ""))
+
+	EmulateFailureForTable(client, tableName, FailureConditionInternalServerError)
+
+	var internal *dynamodbtypes.InternalServerError
+
+	err := createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	c.ErrorAs(err, &internal)
+
+	_, err = client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(secondTable),
+		Item:      map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	c.NoError(err)
+
+	EmulateFailureForTable(client, tableName, FailureConditionNone)
+
+	c.NoError(createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"}))
+}
+
+func TestEmulateFailureForTableIndexScoped(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+	c.NoError(ensurePokemonTypeIndex(client))
+	c.NoError(createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"}))
+
+	EmulateFailureForTable(client, tableName, FailureConditionInternalServerError, "by-type")
+
+	var internal *dynamodbtypes.InternalServerError
+
+	_, err := getPokemonsByType(client, "grass")
+	c.ErrorAs(err, &internal)
+
+	// Operations that do not use the failing index are unaffected.
+	item, err := getPokemon(client, "001")
+	c.NoError(err)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, item["name"])
+
+	c.NoError(createPokemon(client, pokemon{ID: "002", Type: "fire", Name: "Charmander"}))
+}
+
+func TestEmulateFailureForTableBatchWriteMultiTable(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+
+	const secondTable = "items"
+
+	c.NoError(AddTable(context.Background(), client, secondTable, "id", ""))
+
+	EmulateFailureForTable(client, tableName, FailureConditionInternalServerError)
+
+	out, err := client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
+			tableName: {
+				{PutRequest: &dynamodbtypes.PutRequest{Item: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}}}},
+			},
+			secondTable: {
+				{PutRequest: &dynamodbtypes.PutRequest{Item: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}}}},
+			},
+		},
+	})
+	c.NoError(err)
+	c.Len(out.UnprocessedItems[tableName], 1)
+	c.Empty(out.UnprocessedItems[secondTable])
+
+	got, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(secondTable),
+		Key:       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	c.NoError(err)
+	c.NotEmpty(got.Item)
+}
+
+func TestEmulateFailureForTableBatchGetMultiTable(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+
+	const secondTable = "items"
+
+	c.NoError(AddTable(context.Background(), client, secondTable, "id", ""))
+	c.NoError(createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"}))
+
+	_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(secondTable),
+		Item:      map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	c.NoError(err)
+
+	EmulateFailureForTable(client, tableName, FailureConditionInternalServerError)
+
+	out, err := client.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+			tableName: {Keys: []map[string]dynamodbtypes.AttributeValue{
+				{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+			}},
+			secondTable: {Keys: []map[string]dynamodbtypes.AttributeValue{
+				{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}},
+			}},
+		},
+	})
+	c.NoError(err)
+	c.Len(out.UnprocessedKeys[tableName].Keys, 1)
+	c.Empty(out.UnprocessedKeys[secondTable].Keys)
+	c.Len(out.Responses[secondTable], 1)
+}
+
+func TestEmulateFailureForTableTransactWriteAtomic(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+
+	const secondTable = "items"
+
+	c.NoError(AddTable(context.Background(), client, secondTable, "id", ""))
+
+	EmulateFailureForTable(client, tableName, FailureConditionInternalServerError)
+
+	_, err := client.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+		TransactItems: []dynamodbtypes.TransactWriteItem{
+			{Put: &dynamodbtypes.Put{TableName: aws.String(secondTable), Item: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}}}},
+			{Put: &dynamodbtypes.Put{TableName: aws.String(tableName), Item: map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}}}},
+		},
+	})
+
+	var internal *dynamodbtypes.InternalServerError
+
+	c.ErrorAs(err, &internal)
+
+	got, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String(secondTable),
+		Key:       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	c.NoError(err)
+	c.Empty(got.Item)
+}
+
+func TestEmulateFailureForTableGlobalOverride(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+
+	const secondTable = "items"
+
+	c.NoError(AddTable(context.Background(), client, secondTable, "id", ""))
+
+	EmulateFailureForTable(client, tableName, FailureConditionInternalServerError)
+	EmulateFailure(client, FailureConditionInternalServerError)
+
+	var internal *dynamodbtypes.InternalServerError
+
+	_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(secondTable),
+		Item:      map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	c.ErrorAs(err, &internal)
+
+	// Clearing the global failure leaves the table-scoped failure in place.
+	EmulateFailure(client, FailureConditionNone)
+
+	_, err = client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(secondTable),
+		Item:      map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	c.NoError(err)
+
+	err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	c.ErrorAs(err, &internal)
+}
+
+func TestEmulateFailureForTableDeprecated(t *testing.T) {
+	c := require.New(t)
+	client := NewClient()
+
+	c.NoError(ensurePokemonTable(client))
+
+	EmulateFailureForTable(client, tableName, FailureConditionDeprecated)
+
+	err := createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	c.ErrorIs(err, ErrForcedFailure)
+}
+
 func TestHandleBatchWriteRequestError(t *testing.T) {
 	t.Run("nil error", func(t *testing.T) {
 		unprocessed := map[string][]dynamodbtypes.WriteRequest{}

@@ -49,6 +49,24 @@ func (s *Server) EmulateFailure(condition FailureCondition) {
 	s.client.setFailureCondition(emulatingErrors[condition])
 }
 
+// EmulateFailureForTable scopes failure injection to a single table, or to a
+// specific index of that table when indexName is provided. Operations targeting
+// other tables (or, for an index-scoped failure, other access paths on the same
+// table) keep working. Passing FailureConditionNone clears the failure for that
+// exact table/index scope. The global EmulateFailure still overrides everything.
+func (s *Server) EmulateFailureForTable(tableName string, condition FailureCondition, indexName ...string) {
+	if s == nil || s.client == nil {
+		return
+	}
+
+	index := ""
+	if len(indexName) > 0 {
+		index = indexName[0]
+	}
+
+	s.client.setTableFailureCondition(tableName, index, emulatingErrors[condition])
+}
+
 // SetIndexActivationDelay configures how long newly created GSIs report CREATING before ACTIVE.
 func (s *Server) SetIndexActivationDelay(delay time.Duration) {
 	if s == nil || s.client == nil {

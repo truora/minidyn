@@ -1173,6 +1173,188 @@ func TestServerEmulateFailureWithSDKv2(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestServerEmulateFailureForTable(t *testing.T) {
+	s := NewServer()
+
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	makeBasicTable(t, cli, "items", "id")
+
+	s.EmulateFailureForTable("pokemons", FailureConditionInternalServerError)
+
+	var internal *ddbtypes.InternalServerError
+
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.ErrorAs(t, err, &internal)
+
+	_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("items"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	require.NoError(t, err)
+
+	s.EmulateFailureForTable("pokemons", FailureConditionNone)
+
+	_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.NoError(t, err)
+}
+
+func TestServerEmulateFailureForTableIndexScoped(t *testing.T) {
+	s := NewServer()
+
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	createServerTestGlobalSecondaryIndex(t, cli, "pokemons", "by-type")
+
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "1"},
+			"type": &ddbtypes.AttributeValueMemberS{Value: "grass"},
+		},
+	})
+	require.NoError(t, err)
+
+	s.EmulateFailureForTable("pokemons", FailureConditionInternalServerError, "by-type")
+
+	var internal *ddbtypes.InternalServerError
+
+	_, err = cli.Query(context.Background(), &dynamodb.QueryInput{
+		TableName:                 aws.String("pokemons"),
+		IndexName:                 aws.String("by-type"),
+		KeyConditionExpression:    aws.String("#type = :type"),
+		ExpressionAttributeNames:  map[string]string{"#type": "type"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":type": &ddbtypes.AttributeValueMemberS{Value: "grass"}},
+	})
+	require.ErrorAs(t, err, &internal)
+
+	// GetItem does not use the index, so it must keep working.
+	out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, out.Item)
+}
+
+func TestServerEmulateFailureForTableBatchWriteMultiTable(t *testing.T) {
+	s := NewServer()
+
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	makeBasicTable(t, cli, "items", "id")
+
+	s.EmulateFailureForTable("pokemons", FailureConditionInternalServerError)
+
+	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}}},
+			},
+			"items": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.UnprocessedItems["pokemons"], 1)
+	require.Empty(t, out.UnprocessedItems["items"])
+
+	got, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("items"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Item)
+}
+
+func TestServerEmulateFailureForTableTransactWriteAtomic(t *testing.T) {
+	s := NewServer()
+
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	makeBasicTable(t, cli, "items", "id")
+
+	s.EmulateFailureForTable("pokemons", FailureConditionInternalServerError)
+
+	_, err := cli.TransactWriteItems(context.Background(), &dynamodb.TransactWriteItemsInput{
+		TransactItems: []ddbtypes.TransactWriteItem{
+			{Put: &ddbtypes.Put{TableName: aws.String("items"), Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}}}},
+			{Put: &ddbtypes.Put{TableName: aws.String("pokemons"), Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}}},
+		},
+	})
+
+	var internal *ddbtypes.InternalServerError
+
+	require.ErrorAs(t, err, &internal)
+
+	got, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("items"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	require.NoError(t, err)
+	require.Empty(t, got.Item)
+}
+
+func TestServerEmulateFailureForTableGlobalOverride(t *testing.T) {
+	s := NewServer()
+
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+	makeBasicTable(t, cli, "items", "id")
+
+	s.EmulateFailureForTable("pokemons", FailureConditionInternalServerError)
+	s.EmulateFailure(FailureConditionInternalServerError)
+
+	var internal *ddbtypes.InternalServerError
+
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("items"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	require.ErrorAs(t, err, &internal)
+
+	s.EmulateFailure(FailureConditionNone)
+
+	_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("items"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.ErrorAs(t, err, &internal)
+}
+
 func TestServerGetItemAttributeNameValidation(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

@@ -22,6 +22,7 @@ type Client struct {
 	nativeInterpreter    *interpreter.Native
 	useNativeInterpreter bool
 	forceFailureErr      error
+	tableFailureErrs     map[string]error
 	indexActivationDelay time.Duration
 }
 
@@ -32,11 +33,53 @@ func NewClient() *Client {
 		mu:                sync.Mutex{},
 		nativeInterpreter: interpreter.NewNativeInterpreter(),
 		langInterpreter:   &interpreter.Language{},
+		tableFailureErrs:  map[string]error{},
 	}
 }
 
 func (c *Client) setFailureCondition(err error) {
 	c.forceFailureErr = err
+}
+
+// failureKey builds the lookup key for a table-scoped failure. An empty index
+// means the failure applies to the whole table.
+func failureKey(table, index string) string {
+	return table + "\x00" + index
+}
+
+// setTableFailureCondition scopes a failure to a table, or to a specific index of
+// that table when index is not empty. A nil err clears that exact scope.
+func (c *Client) setTableFailureCondition(table, index string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	key := failureKey(table, index)
+
+	if err == nil {
+		delete(c.tableFailureErrs, key)
+
+		return
+	}
+
+	c.tableFailureErrs[key] = err
+}
+
+// failureErrFor resolves the emulated error for an operation targeting the given
+// table and index. A global failure overrides everything; otherwise an
+// index-scoped failure (when index is set) wins over a table-wide one. Callers
+// must hold c.mu.
+func (c *Client) failureErrFor(table, index string) error {
+	if c.forceFailureErr != nil {
+		return c.forceFailureErr
+	}
+
+	if index != "" {
+		if err := c.tableFailureErrs[failureKey(table, index)]; err != nil {
+			return err
+		}
+	}
+
+	return c.tableFailureErrs[failureKey(table, "")]
 }
 
 func (c *Client) setIndexActivationDelay(delay time.Duration) {
@@ -192,8 +235,8 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
+	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	if err := validateExpressionAttributes(
@@ -232,8 +275,8 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
+	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	if err := validateExpressionAttributes(
@@ -273,8 +316,8 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
+	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	if err := validateExpressionAttributes(
@@ -314,8 +357,8 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
+	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
+		return nil, ferr
 	}
 
 	if err := validateExpressionAttributes(input.ExpressionAttributeNames, nil, aws.ToString(input.ProjectionExpression)); err != nil {
@@ -356,8 +399,8 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
+	if ferr := c.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
+		return nil, ferr
 	}
 
 	if err := validateExpressionAttributes(
@@ -408,8 +451,8 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
+	if ferr := c.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
+		return nil, ferr
 	}
 
 	if err := validateExpressionAttributes(
@@ -666,6 +709,10 @@ func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.Tab
 
 		if tableName == "" {
 			continue
+		}
+
+		if ferr := c.failureErrFor(tableName, ""); ferr != nil {
+			return nil, ferr
 		}
 
 		if _, alreadySnapped := snapshots[tableName]; !alreadySnapped {

@@ -48,6 +48,25 @@ func EmulateFailure(client FakeClient, condition FailureCondition) {
 	fakeClient.setFailureCondition(condition)
 }
 
+// EmulateFailureForTable scopes failure emulation to a single table, or to a
+// specific index of that table when indexName is provided. Operations targeting
+// other tables (or, for an index-scoped failure, other access paths on the same
+// table) keep working. Passing FailureConditionNone clears the failure for that
+// exact table/index scope. The global EmulateFailure still overrides everything.
+func EmulateFailureForTable(client FakeClient, tableName string, condition FailureCondition, indexName ...string) {
+	fakeClient, ok := client.(*Client)
+	if !ok {
+		panic("EmulateFailureForTable: invalid client type")
+	}
+
+	index := ""
+	if len(indexName) > 0 {
+		index = indexName[0]
+	}
+
+	fakeClient.setTableFailureCondition(tableName, index, condition)
+}
+
 // ActiveForceFailure active force operation to fail
 func ActiveForceFailure(client FakeClient) {
 	fakeClient, ok := client.(*Client)

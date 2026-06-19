@@ -679,31 +679,6 @@ func TestServerBatchGetItemValidationException(t *testing.T) {
 	})
 }
 
-func TestServerBatchGetItemUnprocessedOnEmulatedInternalError(t *testing.T) {
-	s := NewServer()
-	ts := httptest.NewServer(s)
-	defer ts.Close()
-
-	cli := newTestDynamoClient(t, ts.URL)
-	makeBasicTable(t, cli, "pokemons", "id")
-
-	s.EmulateFailure(FailureConditionInternalServerError)
-
-	out, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
-		RequestItems: map[string]ddbtypes.KeysAndAttributes{
-			"pokemons": {
-				Keys: []map[string]ddbtypes.AttributeValue{
-					{"id": &ddbtypes.AttributeValueMemberS{Value: "a"}},
-					{"id": &ddbtypes.AttributeValueMemberS{Value: "b"}},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, out.UnprocessedKeys["pokemons"].Keys, 2)
-	require.Empty(t, out.Responses["pokemons"])
-}
-
 func TestServerBatchGetItemWithProjection(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()
@@ -1264,7 +1239,8 @@ func TestServerEmulateFailureForTableBatchWriteMultiTable(t *testing.T) {
 
 	s.EmulateFailureForTable("pokemons", FailureConditionInternalServerError)
 
-	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+	// A batch touching the scoped table hard-fails the whole call.
+	_, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]ddbtypes.WriteRequest{
 			"pokemons": {
 				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}}},
@@ -1274,8 +1250,20 @@ func TestServerEmulateFailureForTableBatchWriteMultiTable(t *testing.T) {
 			},
 		},
 	})
+
+	var internal *ddbtypes.InternalServerError
+
+	require.ErrorAs(t, err, &internal)
+
+	// A batch touching only the unscoped table succeeds.
+	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"items": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "x"}}}},
+			},
+		},
+	})
 	require.NoError(t, err)
-	require.Len(t, out.UnprocessedItems["pokemons"], 1)
 	require.Empty(t, out.UnprocessedItems["items"])
 
 	got, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
@@ -1865,7 +1853,7 @@ func TestServerUpdateItemConditionalFailureReturnsAllOldItem(t *testing.T) {
 	require.Equal(t, "kanto", cond.Item["meta"].(*ddbtypes.AttributeValueMemberM).Value["region"].(*ddbtypes.AttributeValueMemberS).Value)
 }
 
-func TestServerBatchWriteItemUnprocessedOnEmulatedInternalError(t *testing.T) {
+func TestServerBatchWriteItemHardFailsOnEmulatedInternalError(t *testing.T) {
 	s := NewServer()
 	ts := httptest.NewServer(s)
 	defer ts.Close()
@@ -1875,7 +1863,7 @@ func TestServerBatchWriteItemUnprocessedOnEmulatedInternalError(t *testing.T) {
 
 	s.EmulateFailure(FailureConditionInternalServerError)
 
-	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+	_, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
 		RequestItems: map[string][]ddbtypes.WriteRequest{
 			"pokemons": {
 				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{
@@ -1887,8 +1875,10 @@ func TestServerBatchWriteItemUnprocessedOnEmulatedInternalError(t *testing.T) {
 			},
 		},
 	})
-	require.NoError(t, err)
-	require.Len(t, out.UnprocessedItems["pokemons"], 2)
+
+	var internal *ddbtypes.InternalServerError
+
+	require.ErrorAs(t, err, &internal)
 
 	s.EmulateFailure(FailureConditionNone)
 
@@ -1902,6 +1892,258 @@ func TestServerBatchWriteItemUnprocessedOnEmulatedInternalError(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+
+	got, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "ok"}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Item)
+}
+
+func TestServerBatchGetItemHardFailsOnEmulatedInternalError(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	s.EmulateFailure(FailureConditionInternalServerError)
+
+	_, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{
+			"pokemons": {Keys: []map[string]ddbtypes.AttributeValue{
+				{"id": &ddbtypes.AttributeValueMemberS{Value: "a"}},
+			}},
+		},
+	})
+
+	var internal *ddbtypes.InternalServerError
+
+	require.ErrorAs(t, err, &internal)
+}
+
+// matchID returns a predicate that marks the item/key whose "id" string attribute
+// equals the given value as unprocessed.
+func matchID(id string) func(int, map[string]*AttributeValue) bool {
+	return func(_ int, raw map[string]*AttributeValue) bool {
+		av, ok := raw["id"]
+
+		return ok && av != nil && av.S != nil && *av.S == id
+	}
+}
+
+func TestServerEmulateUnprocessedItemsBatchWriteByAttribute(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	s.EmulateUnprocessedItems("pokemons", matchID("1"))
+
+	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}}},
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "2"}}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.UnprocessedItems["pokemons"], 1)
+	require.Equal(t, "1", out.UnprocessedItems["pokemons"][0].PutRequest.Item["id"].(*ddbtypes.AttributeValueMemberS).Value)
+
+	// "2" was written, "1" was left unprocessed (not written).
+	got2, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "2"}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, got2.Item)
+
+	got1, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.NoError(t, err)
+	require.Empty(t, got1.Item)
+}
+
+func TestServerEmulateUnprocessedItemsBatchWriteByIndex(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	s.EmulateUnprocessedItems("pokemons", func(n int, _ map[string]*AttributeValue) bool {
+		return n == 0
+	})
+
+	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}}},
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "2"}}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.UnprocessedItems["pokemons"], 1)
+	require.Equal(t, "1", out.UnprocessedItems["pokemons"][0].PutRequest.Item["id"].(*ddbtypes.AttributeValueMemberS).Value)
+}
+
+func TestServerEmulateUnprocessedItemsBatchWriteDelete(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	for _, id := range []string{"1", "2"} {
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: id}},
+		})
+		require.NoError(t, err)
+	}
+
+	s.EmulateUnprocessedItems("pokemons", matchID("1"))
+
+	out, err := cli.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{DeleteRequest: &ddbtypes.DeleteRequest{Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}}},
+				{DeleteRequest: &ddbtypes.DeleteRequest{Key: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "2"}}}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.UnprocessedItems["pokemons"], 1)
+
+	// "1" was left unprocessed so it still exists; "2" was deleted.
+	got1, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, got1.Item)
+
+	got2, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "2"}},
+	})
+	require.NoError(t, err)
+	require.Empty(t, got2.Item)
+}
+
+func TestServerEmulateUnprocessedItemsBatchGet(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	for _, id := range []string{"1", "2"} {
+		_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String("pokemons"),
+			Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: id}},
+		})
+		require.NoError(t, err)
+	}
+
+	s.EmulateUnprocessedItems("pokemons", matchID("1"))
+
+	out, err := cli.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]ddbtypes.KeysAndAttributes{
+			"pokemons": {Keys: []map[string]ddbtypes.AttributeValue{
+				{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+				{"id": &ddbtypes.AttributeValueMemberS{Value: "2"}},
+			}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.UnprocessedKeys["pokemons"].Keys, 1)
+	require.Equal(t, "1", out.UnprocessedKeys["pokemons"].Keys[0]["id"].(*ddbtypes.AttributeValueMemberS).Value)
+	require.Len(t, out.Responses["pokemons"], 1)
+	require.Equal(t, "2", out.Responses["pokemons"][0]["id"].(*ddbtypes.AttributeValueMemberS).Value)
+}
+
+func TestServerEmulateUnprocessedItemsDoesNotAffectSingleOps(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	s.EmulateUnprocessedItems("pokemons", matchID("1"))
+
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item:      map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.NoError(t, err)
+
+	got, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Item)
+
+	_, err = cli.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}},
+	})
+	require.NoError(t, err)
+}
+
+func TestServerEmulateUnprocessedItemsStickyAndClear(t *testing.T) {
+	s := NewServer()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	batch := &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]ddbtypes.WriteRequest{
+			"pokemons": {
+				{PutRequest: &ddbtypes.PutRequest{Item: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}}},
+			},
+		},
+	}
+
+	s.EmulateUnprocessedItems("pokemons", matchID("1"))
+
+	// Sticky: two consecutive batches both leave "1" unprocessed.
+	for range 2 {
+		out, err := cli.BatchWriteItem(context.Background(), batch)
+		require.NoError(t, err)
+		require.Len(t, out.UnprocessedItems["pokemons"], 1)
+	}
+
+	// Per-table clear via nil predicate.
+	s.EmulateUnprocessedItems("pokemons", nil)
+
+	out, err := cli.BatchWriteItem(context.Background(), batch)
+	require.NoError(t, err)
+	require.Empty(t, out.UnprocessedItems["pokemons"])
+
+	// Re-arm then clear with ClearUnprocessedItems.
+	s.EmulateUnprocessedItems("pokemons", matchID("1"))
+	s.ClearUnprocessedItems()
+
+	out, err = cli.BatchWriteItem(context.Background(), batch)
+	require.NoError(t, err)
+	require.Empty(t, out.UnprocessedItems["pokemons"])
 }
 
 func TestServerGetItemKeyValidationError(t *testing.T) {

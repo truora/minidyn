@@ -2171,6 +2171,28 @@ func TestBatchWriteItemWithFailingDatabase(t *testing.T) {
 	c.Nil(output)
 }
 
+func TestBatchWriteItemValidatesBeforeEmulatedFailure(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+
+	EmulateFailure(client, FailureConditionInternalServerError)
+	defer EmulateFailure(client, FailureConditionNone)
+
+	// A write request with neither PutRequest nor DeleteRequest is invalid.
+	// DynamoDB validates (400) before raising any emulated server error (500),
+	// so the ValidationException must win over the active failure emulation.
+	input := &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]dynamodbtypes.WriteRequest{
+			tableName: {{}},
+		},
+	}
+
+	_, err := client.BatchWriteItem(context.Background(), input)
+	c.Contains(err.Error(), "ValidationException")
+}
+
 func TestEmulateFailureForTableScopesToTable(t *testing.T) {
 	c := require.New(t)
 	client := NewClient()

@@ -630,13 +630,13 @@ func SetItemCollectionMetrics(client FakeClient, itemCollectionMetrics map[strin
 // predicate selects individual sub-requests to leave unprocessed while the rest are
 // applied.
 func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error) {
+	if err := validateBatchWriteItemInput(input); err != nil {
+		return &dynamodb.BatchWriteItemOutput{}, err
+	}
+
 	emulation := fd.batchEmulationFor(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
-	}
-
-	if err := validateBatchWriteItemInput(input); err != nil {
-		return &dynamodb.BatchWriteItemOutput{}, err
 	}
 
 	unprocessed := map[string][]types.WriteRequest{}

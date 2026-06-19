@@ -23,17 +23,19 @@ type Client struct {
 	useNativeInterpreter bool
 	forceFailureErr      error
 	tableFailureErrs     map[string]error
+	unprocessedMatchers  map[string]func(int, map[string]*AttributeValue) bool
 	indexActivationDelay time.Duration
 }
 
 // NewClient creates a new in-memory DynamoDB-compatible client used by the HTTP server.
 func NewClient() *Client {
 	return &Client{
-		tables:            map[string]*core.Table{},
-		mu:                sync.Mutex{},
-		nativeInterpreter: interpreter.NewNativeInterpreter(),
-		langInterpreter:   &interpreter.Language{},
-		tableFailureErrs:  map[string]error{},
+		tables:              map[string]*core.Table{},
+		mu:                  sync.Mutex{},
+		nativeInterpreter:   interpreter.NewNativeInterpreter(),
+		langInterpreter:     &interpreter.Language{},
+		tableFailureErrs:    map[string]error{},
+		unprocessedMatchers: map[string]func(int, map[string]*AttributeValue) bool{},
 	}
 }
 
@@ -80,6 +82,82 @@ func (c *Client) failureErrFor(table, index string) error {
 	}
 
 	return c.tableFailureErrs[failureKey(table, "")]
+}
+
+// setUnprocessedMatcher installs a predicate that marks matching sub-requests of a
+// batch operation on tableName as unprocessed. A nil match clears the predicate for
+// that table.
+func (c *Client) setUnprocessedMatcher(tableName string, match func(int, map[string]*AttributeValue) bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if match == nil {
+		delete(c.unprocessedMatchers, tableName)
+
+		return
+	}
+
+	c.unprocessedMatchers[tableName] = match
+}
+
+// clearUnprocessedMatchers removes every batch partial-failure predicate.
+func (c *Client) clearUnprocessedMatchers() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.unprocessedMatchers = map[string]func(int, map[string]*AttributeValue) bool{}
+}
+
+// batchEmulation is a lock-free snapshot of the failure emulation that applies to a
+// batch operation: a hard failure error (global or table-scoped) that fails the whole
+// call, and the per-table partial-failure predicates.
+type batchEmulation struct {
+	failErr  error
+	matchers map[string]func(int, map[string]*AttributeValue) bool
+}
+
+// unprocessed reports whether sub-request n (raw payload) of tableName should be
+// returned as unprocessed instead of being executed.
+func (e batchEmulation) unprocessed(tableName string, n int, raw map[string]*AttributeValue) bool {
+	match, ok := e.matchers[tableName]
+
+	return ok && match(n, raw)
+}
+
+// batchEmulationFor snapshots the emulation state relevant to a batch touching the
+// given tables. A global failure overrides everything; otherwise any table-scoped
+// failure hard-fails the whole batch. Takes c.mu briefly so the loop can run lock-free.
+func (c *Client) batchEmulationFor(tables ...string) batchEmulation {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	snap := batchEmulation{}
+
+	if c.forceFailureErr != nil {
+		snap.failErr = c.forceFailureErr
+
+		return snap
+	}
+
+	for _, table := range tables {
+		if err := c.failureErrFor(table, ""); err != nil {
+			snap.failErr = err
+
+			return snap
+		}
+	}
+
+	for _, table := range tables {
+		if match, ok := c.unprocessedMatchers[table]; ok {
+			if snap.matchers == nil {
+				snap.matchers = map[string]func(int, map[string]*AttributeValue) bool{}
+			}
+
+			snap.matchers[table] = match
+		}
+	}
+
+	return snap
 }
 
 func (c *Client) setIndexActivationDelay(delay time.Duration) {
@@ -542,32 +620,44 @@ func validateBatchWriteItemInput(input *BatchWriteItemInput) error {
 	return nil
 }
 
-func isRetriableBatchSubrequestError(err error) bool {
-	if _, ok := errors.AsType[*ddbtypes.InternalServerError](err); ok {
-		return true
+func batchWriteRequestKey(req WriteRequest) map[string]*AttributeValue {
+	if req.PutRequest != nil {
+		return req.PutRequest.Item
 	}
 
-	_, ok := errors.AsType[*ddbtypes.ProvisionedThroughputExceededException](err)
+	if req.DeleteRequest != nil {
+		return req.DeleteRequest.Key
+	}
 
-	return ok
+	return nil
 }
 
-// BatchWriteItem runs put and delete sub-requests in order. Sub-request failures that look
-// retriable (InternalServerError, ProvisionedThroughputExceededException) are appended to
-// UnprocessedItems and processing continues, matching DynamoDB batch semantics. Any other
-// error fails the whole batch.
-//
-// With EmulateFailure(FailureConditionInternalServerError), each sub-request fails that way,
-// so those writes appear as unprocessed until you call EmulateFailure(FailureConditionNone).
+// BatchWriteItem runs put and delete sub-requests in order. An emulated failure
+// (global EmulateFailure or table-scoped EmulateFailureForTable touching any table in
+// the batch) hard-fails the whole call, mirroring DynamoDB returning a 500 for the
+// request. UnprocessedItems is produced only by EmulateUnprocessedItems, whose
+// predicate selects individual sub-requests to leave unprocessed while the rest are
+// applied.
 func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput) (*BatchWriteItemOutput, error) {
 	if err := validateBatchWriteItemInput(input); err != nil {
 		return nil, err
 	}
 
+	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
+	if emulation.failErr != nil {
+		return nil, emulation.failErr
+	}
+
 	unprocessed := map[string][]WriteRequest{}
 
 	for tableName, reqs := range input.RequestItems {
-		for _, req := range reqs {
+		for i, req := range reqs {
+			if emulation.unprocessed(tableName, i, batchWriteRequestKey(req)) {
+				unprocessed[tableName] = append(unprocessed[tableName], req)
+
+				continue
+			}
+
 			var err error
 			if req.PutRequest != nil {
 				_, err = c.PutItem(ctx, &PutItemInput{
@@ -584,17 +674,21 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 			}
 
 			if err != nil {
-				if isRetriableBatchSubrequestError(err) {
-					unprocessed[tableName] = append(unprocessed[tableName], req)
-					continue
-				}
-
 				return nil, err
 			}
 		}
 	}
 
 	return &BatchWriteItemOutput{UnprocessedItems: unprocessed}, nil
+}
+
+func tableNames[V any](requestItems map[string]V) []string {
+	names := make([]string, 0, len(requestItems))
+	for name := range requestItems {
+		names = append(names, name)
+	}
+
+	return names
 }
 
 func validateBatchGetItemInput(input *BatchGetItemInput) error {
@@ -626,19 +720,26 @@ func validateBatchGetItemInput(input *BatchGetItemInput) error {
 }
 
 // BatchGetItem retrieves multiple items across one or more tables. Validation errors
-// (invalid key schema, malformed AttributeValues, or missing tables) fail the whole batch.
-// Retriable per-key failures (InternalServerError, ProvisionedThroughputExceededException)
-// are reported via UnprocessedKeys, mirroring DynamoDB batch semantics.
+// (invalid key schema, malformed AttributeValues, or missing tables) fail the whole
+// batch. An emulated failure (global EmulateFailure or table-scoped
+// EmulateFailureForTable touching any table in the batch) hard-fails the whole call.
+// UnprocessedKeys is produced only by EmulateUnprocessedItems, whose predicate selects
+// individual keys to leave unprocessed while the rest are fetched.
 func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*BatchGetItemOutput, error) {
 	if err := validateBatchGetItemInput(input); err != nil {
 		return nil, err
+	}
+
+	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
+	if emulation.failErr != nil {
+		return nil, emulation.failErr
 	}
 
 	responses := map[string][]map[string]*AttributeValue{}
 	unprocessed := map[string]KeysAndAttributes{}
 
 	for tableName, reqs := range input.RequestItems {
-		tableResponses, unprocessedKeys, err := c.batchGetItemForTable(ctx, tableName, reqs)
+		tableResponses, unprocessedKeys, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation)
 		if err != nil {
 			return nil, err
 		}
@@ -655,7 +756,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	return &BatchGetItemOutput{Responses: responses, UnprocessedKeys: unprocessed}, nil
 }
 
-func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes) ([]map[string]*AttributeValue, []map[string]*AttributeValue, error) {
+func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation) ([]map[string]*AttributeValue, []map[string]*AttributeValue, error) {
 	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
 		return nil, nil, err
 	}
@@ -663,7 +764,13 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 	responses := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
 	unprocessedKeys := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
 
-	for _, key := range reqs.Keys {
+	for i, key := range reqs.Keys {
+		if emulation.unprocessed(tableName, i, key) {
+			unprocessedKeys = append(unprocessedKeys, key)
+
+			continue
+		}
+
 		item, err := c.GetItem(ctx, &GetItemInput{
 			TableName:                aws.String(tableName),
 			Key:                      key,
@@ -672,11 +779,6 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 			ProjectionExpression:     reqs.ProjectionExpression,
 		})
 		if err != nil {
-			if isRetriableBatchSubrequestError(err) {
-				unprocessedKeys = append(unprocessedKeys, key)
-				continue
-			}
-
 			return nil, nil, err
 		}
 

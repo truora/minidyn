@@ -36,11 +36,10 @@ var (
 )
 
 // EmulateFailure configures failure injection on the server's in-memory client.
-// Single-item APIs fail per call (e.g. InternalServerError on PutItem). For
-// BatchWriteItem, InternalServerError (and provisioned-throughput exceeded) on a
-// sub-request are treated as retriable: those requests are returned in
-// UnprocessedItems and the batch call still succeeds. Use FailureConditionNone to
-// clear emulation.
+// Every API hard-fails the call with the emulated error, including BatchWriteItem and
+// BatchGetItem (the whole batch errors; it does not return partial results). Use
+// FailureConditionNone to clear emulation. To leave individual batch sub-requests
+// unprocessed instead of failing the whole call, use EmulateUnprocessedItems.
 func (s *Server) EmulateFailure(condition FailureCondition) {
 	if s == nil || s.client == nil {
 		return
@@ -52,8 +51,9 @@ func (s *Server) EmulateFailure(condition FailureCondition) {
 // EmulateFailureForTable scopes failure injection to a single table, or to a
 // specific index of that table when indexName is provided. Operations targeting
 // other tables (or, for an index-scoped failure, other access paths on the same
-// table) keep working. Passing FailureConditionNone clears the failure for that
-// exact table/index scope. The global EmulateFailure still overrides everything.
+// table) keep working. A batch (BatchWriteItem/BatchGetItem) that touches the scoped
+// table hard-fails the whole call. Passing FailureConditionNone clears the failure for
+// that exact table/index scope. The global EmulateFailure still overrides everything.
 func (s *Server) EmulateFailureForTable(tableName string, condition FailureCondition, indexName ...string) {
 	if s == nil || s.client == nil {
 		return
@@ -65,6 +65,32 @@ func (s *Server) EmulateFailureForTable(tableName string, condition FailureCondi
 	}
 
 	s.client.setTableFailureCondition(tableName, index, emulatingErrors[condition])
+}
+
+// EmulateUnprocessedItems makes BatchWriteItem and BatchGetItem leave selected
+// sub-requests of tableName unprocessed (returned in UnprocessedItems/UnprocessedKeys)
+// instead of executing them, while the rest of the batch is applied normally. The
+// match predicate receives the zero-based index of the sub-request within that table's
+// request slice and its raw payload: a PutRequest's full item, or a DeleteRequest/get
+// key map. It is sticky until cleared with EmulateUnprocessedItems(tableName, nil) or
+// ClearUnprocessedItems. Single-item operations are unaffected. A global or
+// table-scoped EmulateFailure overrides this and hard-fails the whole batch.
+func (s *Server) EmulateUnprocessedItems(tableName string, match func(n int, raw map[string]*AttributeValue) bool) {
+	if s == nil || s.client == nil {
+		return
+	}
+
+	s.client.setUnprocessedMatcher(tableName, match)
+}
+
+// ClearUnprocessedItems removes every batch partial-failure predicate set with
+// EmulateUnprocessedItems.
+func (s *Server) ClearUnprocessedItems() {
+	if s == nil || s.client == nil {
+		return
+	}
+
+	s.client.clearUnprocessedMatchers()
 }
 
 // SetIndexActivationDelay configures how long newly created GSIs report CREATING before ACTIVE.

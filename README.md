@@ -113,6 +113,72 @@ ddb := dynamodb.NewFromConfig(cfg)
 // use ddb as usual: CreateTable, PutItem, Query, etc.
 ```
 
+### Failure emulation
+
+minidyn can inject DynamoDB-style failures so you can exercise your error- and
+retry-handling without a real backend. There are three knobs, available both on the
+in-process `aws-v2/client` (package functions) and on the HTTP `server` (methods on
+`*Server`).
+
+```go
+import (
+  "github.com/truora/minidyn/aws-v2/client"
+  ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+c := client.NewClient()
+
+// 1. Global failure — every operation returns the emulated error until cleared.
+client.EmulateFailure(c, client.FailureConditionInternalServerError)
+client.EmulateFailure(c, client.FailureConditionNone) // clear
+
+// 2. Table/index-scoped failure — only operations touching that table (or one of
+//    its indexes) fail; everything else keeps working.
+client.EmulateFailureForTable(c, "pokemons", client.FailureConditionInternalServerError)
+client.EmulateFailureForTable(c, "pokemons", client.FailureConditionInternalServerError, "type_index")
+client.EmulateFailureForTable(c, "pokemons", client.FailureConditionNone) // clear that scope
+
+// 3. Partial batch failure — leave selected BatchWriteItem / BatchGetItem
+//    sub-requests in UnprocessedItems / UnprocessedKeys while the rest are applied.
+//    The predicate receives the sub-request index within the table's slice and its
+//    raw payload (a PutRequest's item, or a Delete/Get key), so you can match by
+//    position, key, or any attribute.
+client.EmulateUnprocessedItems(c, "pokemons", func(n int, raw map[string]ddbtypes.AttributeValue) bool {
+  v, ok := raw["id"].(*ddbtypes.AttributeValueMemberS)
+  return ok && v.Value == "001"
+})
+client.ClearUnprocessedItems(c) // clear all predicates
+```
+
+Behavior:
+
+* A global `EmulateFailure` **and** a table-scoped `EmulateFailureForTable` **hard-fail
+  the whole** `BatchWriteItem`/`BatchGetItem` call (matching DynamoDB returning a 500),
+  not just the affected items.
+* `EmulateUnprocessedItems` is the only way to get partial `UnprocessedItems`/
+  `UnprocessedKeys`. It applies to batch operations only — single-item `PutItem`,
+  `GetItem`, and `DeleteItem` are unaffected.
+* Failure conditions and predicates are **sticky** until cleared
+  (`FailureConditionNone`, a `nil` predicate, or `ClearUnprocessedItems`). A global
+  failure overrides a table-scoped one.
+
+The HTTP server exposes the same controls as methods on the `*Server` you pass to
+`httptest.NewServer`:
+
+```go
+s := miniserver.NewServer()
+ts := httptest.NewServer(s)
+defer ts.Close()
+// ... point an AWS SDK client at ts.URL as shown above ...
+
+s.EmulateFailure(miniserver.FailureConditionInternalServerError)
+s.EmulateFailureForTable("pokemons", miniserver.FailureConditionInternalServerError, "type_index")
+s.EmulateUnprocessedItems("pokemons", func(n int, raw map[string]*miniserver.AttributeValue) bool {
+  return n == 0 // leave the first sub-request of each batch on this table unprocessed
+})
+s.ClearUnprocessedItems()
+```
+
 ## Supported Operations and Features
 
 For a detailed list of supported DynamoDB operations, types, and expressions, please refer to the documentation:

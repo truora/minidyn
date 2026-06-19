@@ -374,6 +374,19 @@ func TestEvalUpdateError(t *testing.T) {
 	}
 }
 
+func TestEvalUpdateIndexAliasInvalidPath(t *testing.T) {
+	env := startEvalUpdateEnv(t)
+
+	// #nested_map_attr aliases a scalar string field; indexing it with [0] fails
+	// and surfaces the resolved alias in the document-path error, exercising
+	// indexFieldID's alias branch.
+	result := testEvalUpdate(t, "SET #nested_map_attr[0] = :one", env)
+
+	if !isError(result) {
+		t.Fatalf("expected an error, got %v", result.Inspect())
+	}
+}
+
 func TestEvalSetUpdate(t *testing.T) {
 	tests := []struct {
 		input    string

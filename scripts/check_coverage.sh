@@ -7,7 +7,7 @@ pkgs_to_test=`find . -type f -name '*.go' | grep -v -E '^\./(tools|e2e)/' | xarg
 
 function parse_test {
 
-    exit_code=0
+    local exit_code=0
     while read line; do
         if [[ `echo "$line" | grep -cE '\-+ FAIL'` -gt 0 ]]
         then
@@ -22,7 +22,7 @@ function parse_test {
 }
 
 function parse_coverage {
-    exit_code=0
+    local exit_code=0
     output=`go tool cover -func=$coverage_file`
     while read line; do
         if [[ `echo "$line" | grep -cE '\b([0-7][0-9]|[0-9])\.[0-9]+%'` -gt 0 ]] && [[ `echo "$line" | grep -cE '\s(init|main|\(statements\))\s'` -eq 0 ]] && [[ `echo "$line" | grep -cE '\s\S+SC\s'` -eq 0 ]]

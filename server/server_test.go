@@ -1717,10 +1717,44 @@ func TestServerServeHTTPJSONEncodeError(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.code)
 }
 
+func TestServerValidateTransactGetItemsInput(t *testing.T) {
+	c := NewClient()
+	id := map[string]*AttributeValue{"id": {S: aws.String("1")}}
+
+	// nil input is a no-op.
+	require.NoError(t, validateTransactGetItemsInput(c, nil))
+
+	// empty TransactItems.
+	require.Error(t, validateTransactGetItemsInput(c, &TransactGetItemsInput{}))
+
+	// too many items.
+	require.Error(t, validateTransactGetItemsInput(c, &TransactGetItemsInput{
+		TransactItems: make([]TransactGetItem, batchGetItemRequestsLimit+1),
+	}))
+
+	// missing Get.
+	require.Error(t, validateTransactGetItemsInput(c, &TransactGetItemsInput{
+		TransactItems: []TransactGetItem{{Get: nil}},
+	}))
+
+	// empty table name.
+	require.Error(t, validateTransactGetItemsInput(c, &TransactGetItemsInput{
+		TransactItems: []TransactGetItem{{Get: &Get{TableName: aws.String(""), Key: id}}},
+	}))
+
+	// non-existent table.
+	require.Error(t, validateTransactGetItemsInput(c, &TransactGetItemsInput{
+		TransactItems: []TransactGetItem{{Get: &Get{TableName: aws.String("ghost"), Key: id}}},
+	}))
+}
+
 func TestServerNilServerGuards(t *testing.T) {
 	var s *Server
 
 	s.EmulateFailure(FailureConditionNone)
+	s.EmulateUnprocessedItems("any", matchID("1"))
+	s.ClearUnprocessedItems()
+	s.SetIndexActivationDelay(0)
 	require.ErrorIs(t, s.ClearTable("any"), ErrServerNotInitialized)
 	require.ErrorIs(t, s.ClearAllTables(), ErrServerNotInitialized)
 	require.ErrorIs(t, s.Reset(), ErrServerNotInitialized)

@@ -100,6 +100,27 @@ func consumedMode(s string) capacity.Mode {
 	return capacity.ParseMode(s)
 }
 
+// sdkConsumedList maps a per-table Consumed list (e.g. a WriteAccumulator's output) into the SDK
+// ConsumedCapacity slice. Returns nil when nothing is reported.
+func sdkConsumedList(cs []*capacity.Consumed) []types.ConsumedCapacity {
+	if len(cs) == 0 {
+		return nil
+	}
+
+	out := make([]types.ConsumedCapacity, 0, len(cs))
+	for _, c := range cs {
+		if cc := toSDKConsumed(c); cc != nil {
+			out = append(out, *cc)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
 // sdkConsumedSlice assembles the per-table ConsumedCapacity slice used by batch and
 // transactional operations from already-aggregated units. Tables with zero units are
 // omitted; nil is returned when nothing is reported (NONE/unset or empty).

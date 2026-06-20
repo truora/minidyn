@@ -751,7 +751,7 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 	}
 
 	unprocessed := map[string][]types.WriteRequest{}
-	unitsByTable := map[string]float64{}
+	acc := capacity.NewWriteAccumulator()
 
 	for table, reqs := range input.RequestItems {
 		for i, req := range reqs {
@@ -765,15 +765,28 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 				return &dynamodb.BatchWriteItemOutput{}, err
 			}
 
-			unitsByTable[table] += capacity.WriteUnits(capacity.Size(batchWriteRequestItem(req)))
+			item := batchWriteRequestItem(req)
+			acc.Add(table, capacity.Size(item), fd.tableIndexWrites(table, item), 1)
 		}
 	}
 
 	return &dynamodb.BatchWriteItemOutput{
 		UnprocessedItems:      unprocessed,
 		ItemCollectionMetrics: fd.itemCollectionMetrics,
-		ConsumedCapacity:      sdkConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, false),
+		ConsumedCapacity:      sdkConsumedList(acc.Consumed(consumedMode(string(input.ReturnConsumedCapacity)))),
 	}, nil
+}
+
+// tableIndexWrites returns the per-index write footprint of writing item to the named table, or
+// nil when the table is unknown. A nil/key-only item (e.g. a batch delete) yields no index
+// entries, matching the existing size-from-request approximation for deletes.
+func (fd *Client) tableIndexWrites(table string, item map[string]*mtypes.Item) []capacity.IndexWrite {
+	tbl, err := fd.getTable(table)
+	if err != nil {
+		return nil
+	}
+
+	return indexWrites(tbl, item)
 }
 
 // batchWriteRequestItem returns the item used to size a write request: the put item, or
@@ -1021,7 +1034,7 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 	}
 
 	mode := consumedMode(string(input.ReturnConsumedCapacity))
-	unitsByTable := map[string]float64{}
+	acc := capacity.NewWriteAccumulator()
 
 	for _, item := range input.TransactItems {
 		tableName, size := fd.transactWriteSize(item)
@@ -1029,12 +1042,41 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 			continue
 		}
 
-		unitsByTable[tableName] += 2 * capacity.WriteUnits(size)
+		acc.Add(tableName, size, fd.transactWriteIndexWrites(item), 2)
 	}
 
 	return &dynamodb.TransactWriteItemsOutput{
-		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable, false),
+		ConsumedCapacity: sdkConsumedList(acc.Consumed(mode)),
 	}, nil
+}
+
+// transactWriteIndexWrites returns the per-index write footprint of a transactional write item.
+// Put projects the written item and Update the stored item after the update; Delete and
+// ConditionCheck carry no per-index entries (matching the size-from-key approximation).
+func (fd *Client) transactWriteIndexWrites(item types.TransactWriteItem) []capacity.IndexWrite {
+	switch {
+	case item.Put != nil:
+		return fd.tableIndexWrites(aws.ToString(item.Put.TableName), mapDynamoToTypesMapItem(item.Put.Item))
+	case item.Update != nil:
+		return fd.tableIndexWrites(aws.ToString(item.Update.TableName), fd.storedItemByKey(aws.ToString(item.Update.TableName), item.Update.Key))
+	default:
+		return nil
+	}
+}
+
+// storedItemByKey returns the stored item for a key, or nil when the table or item is absent.
+func (fd *Client) storedItemByKey(tableName string, key map[string]types.AttributeValue) map[string]*mtypes.Item {
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return nil
+	}
+
+	k, err := table.KeySchema.GetKey(table.AttributesDef, mapDynamoToTypesMapItem(key))
+	if err != nil {
+		return nil
+	}
+
+	return table.Data[k]
 }
 
 // transactWriteSize returns the table name and byte size used to bill a transact write item.

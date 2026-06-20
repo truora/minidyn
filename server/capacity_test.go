@@ -68,6 +68,27 @@ func newServerWithPokemonTable(t *testing.T) *Client {
 	return c
 }
 
+func TestServerTableIndexWritesAndStoredItem(t *testing.T) {
+	c := require.New(t)
+	client := newServerWithPokemonTable(t)
+
+	_, err := client.PutItem(context.Background(), &PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item:      map[string]*AttributeValue{"id": {S: aws.String("001")}},
+	})
+	c.NoError(err)
+
+	// Unknown table -> nil from both helpers.
+	c.Nil(client.tableIndexWrites("missing", nil))
+	c.Nil(client.storedItemByKey("missing", map[string]*AttributeValue{"id": {S: aws.String("001")}}))
+
+	// Bad key (no key attributes) -> GetKey error -> nil.
+	c.Nil(client.storedItemByKey("pokemons", map[string]*AttributeValue{}))
+
+	// Stored item present -> non-nil.
+	c.NotNil(client.storedItemByKey("pokemons", map[string]*AttributeValue{"id": {S: aws.String("001")}}))
+}
+
 func TestServerItemSizeByKey(t *testing.T) {
 	c := require.New(t)
 	client := newServerWithPokemonTable(t)

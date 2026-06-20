@@ -750,7 +750,7 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 	}
 
 	unprocessed := map[string][]WriteRequest{}
-	unitsByTable := map[string]float64{}
+	acc := capacity.NewWriteAccumulator()
 
 	for tableName, reqs := range input.RequestItems {
 		for i, req := range reqs {
@@ -779,14 +779,27 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 				return nil, err
 			}
 
-			unitsByTable[tableName] += capacity.WriteUnits(capacity.Size(batchWriteRequestItem(req)))
+			item := batchWriteRequestItem(req)
+			acc.Add(tableName, capacity.Size(item), c.tableIndexWrites(tableName, item), 1)
 		}
 	}
 
 	return &BatchWriteItemOutput{
 		UnprocessedItems: unprocessed,
-		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, false),
+		ConsumedCapacity: wireConsumedList(acc.Consumed(consumedMode(string(input.ReturnConsumedCapacity)))),
 	}, nil
+}
+
+// tableIndexWrites returns the per-index write footprint of writing item to the named table, or
+// nil when the table is unknown. A nil/key-only item (e.g. a batch delete) yields no index
+// entries, matching the existing size-from-request approximation for deletes.
+func (c *Client) tableIndexWrites(tableName string, item map[string]*types.Item) []capacity.IndexWrite {
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return nil
+	}
+
+	return indexWrites(table, item)
 }
 
 // batchWriteRequestItem returns the internal item used to size a write request: the put
@@ -1012,7 +1025,7 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 		}
 	}
 
-	unitsByTable := map[string]float64{}
+	acc := capacity.NewWriteAccumulator()
 
 	for _, item := range input.TransactItems {
 		tableName, size := c.transactWriteSize(item)
@@ -1020,12 +1033,41 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 			continue
 		}
 
-		unitsByTable[tableName] += 2 * capacity.WriteUnits(size)
+		acc.Add(tableName, size, c.transactWriteIndexWrites(item), 2)
 	}
 
 	return &TransactWriteItemsOutput{
-		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, false),
+		ConsumedCapacity: wireConsumedList(acc.Consumed(consumedMode(string(input.ReturnConsumedCapacity)))),
 	}, nil
+}
+
+// transactWriteIndexWrites returns the per-index write footprint of a transactional write item.
+// Put projects the written item and Update the stored item after the update; Delete and
+// ConditionCheck carry no per-index entries (matching the size-from-key approximation).
+func (c *Client) transactWriteIndexWrites(item TransactWriteItem) []capacity.IndexWrite {
+	switch {
+	case item.Put != nil:
+		return c.tableIndexWrites(aws.ToString(item.Put.TableName), mapAttributeValueMapToTypes(item.Put.Item))
+	case item.Update != nil:
+		return c.tableIndexWrites(aws.ToString(item.Update.TableName), c.storedItemByKey(aws.ToString(item.Update.TableName), item.Update.Key))
+	default:
+		return nil
+	}
+}
+
+// storedItemByKey returns the stored item for a key, or nil when the table or item is absent.
+func (c *Client) storedItemByKey(tableName string, key map[string]*AttributeValue) map[string]*types.Item {
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return nil
+	}
+
+	k, err := table.KeySchema.GetKey(table.AttributesDef, mapAttributeValueMapToTypes(key))
+	if err != nil {
+		return nil
+	}
+
+	return table.Data[k]
 }
 
 // transactWriteSize returns the table name and byte size used to bill a transact write item.

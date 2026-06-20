@@ -12,6 +12,27 @@ func consumedMode(s string) capacity.Mode {
 	return capacity.ParseMode(s)
 }
 
+// wireConsumedList maps a per-table Consumed list (e.g. a WriteAccumulator's output) into the
+// server's JSON ConsumedCapacity slice. Returns nil when nothing is reported.
+func wireConsumedList(cs []*capacity.Consumed) []ConsumedCapacity {
+	if len(cs) == 0 {
+		return nil
+	}
+
+	out := make([]ConsumedCapacity, 0, len(cs))
+	for _, c := range cs {
+		if cc := toWireConsumed(c); cc != nil {
+			out = append(out, *cc)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
 // indexWrites returns the per-index write footprint of writing item to table: for each secondary
 // index the write touches, the size of the item as projected into that index. Feeds the
 // per-index ConsumedCapacity breakdown at the INDEXES level.

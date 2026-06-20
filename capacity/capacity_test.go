@@ -175,6 +175,67 @@ func TestForUnits_IndexesAttributesToTable(t *testing.T) {
 	}
 }
 
+func TestWriteAccumulator_None(t *testing.T) {
+	a := NewWriteAccumulator()
+	a.Add("t", 1024, nil, 1)
+
+	if a.Consumed(ModeNone) != nil {
+		t.Fatalf("ModeNone must produce no consumed entries")
+	}
+
+	if NewWriteAccumulator().Consumed(ModeTotal) != nil {
+		t.Fatalf("empty accumulator must produce no consumed entries")
+	}
+}
+
+func TestWriteAccumulator_TotalAggregates(t *testing.T) {
+	a := NewWriteAccumulator()
+	// Two 1KB writes to the same table, plus one GSI touched by both.
+	a.Add("t", 1024, []IndexWrite{{Name: "g", Kind: "GSI", Size: 1024}}, 1)
+	a.Add("t", 1024, []IndexWrite{{Name: "g", Kind: "GSI", Size: 1024}}, 1)
+
+	out := a.Consumed(ModeTotal)
+	if len(out) != 1 || out[0].CapacityUnits != 4 || out[0].Breakdown {
+		t.Fatalf("TOTAL must sum table+GSI without a breakdown: %#v", out)
+	}
+}
+
+func TestWriteAccumulator_IndexesBreakdownSorted(t *testing.T) {
+	a := NewWriteAccumulator()
+	// Transactional factor doubles every unit; two GSIs reported in name order.
+	a.Add("t", 1024, []IndexWrite{
+		{Name: "z-idx", Kind: "GSI", Size: 1024},
+		{Name: "a-idx", Kind: "LSI", Size: 1024},
+	}, 2)
+
+	out := a.Consumed(ModeIndexes)
+	if len(out) != 1 {
+		t.Fatalf("expected one table entry: %#v", out)
+	}
+
+	c := out[0]
+	if !c.Breakdown || c.TableUnits != 2 || c.CapacityUnits != 6 {
+		t.Fatalf("INDEXES total/table units wrong: %#v", c)
+	}
+
+	if len(c.Indexes) != 2 || c.Indexes[0].Name != "a-idx" || c.Indexes[1].Name != "z-idx" {
+		t.Fatalf("per-index entries must be name-sorted: %#v", c.Indexes)
+	}
+
+	if c.Indexes[0].Units != 2 || c.Indexes[1].Units != 2 {
+		t.Fatalf("per-index units must include the transactional factor: %#v", c.Indexes)
+	}
+}
+
+func TestWriteAccumulator_ZeroUnitTableOmitted(t *testing.T) {
+	a := NewWriteAccumulator()
+	a.Add("t", 0, nil, 0) // factor 0 -> no units
+
+	if out := a.Consumed(ModeTotal); out != nil {
+		t.Fatalf("zero-unit table must be omitted: %#v", out)
+	}
+}
+
 func TestForTransactWrite_DoublesWCU(t *testing.T) {
 	single := ForWrite(ModeTotal, "t", 1000, nil)
 	txn := ForTransactWrite(ModeTotal, "t", 1000)

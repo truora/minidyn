@@ -76,6 +76,17 @@ func snapshotBreakdown(cc *dynamodbtypes.ConsumedCapacity) capacityBreakdown {
 	}
 }
 
+func sortedBreakdowns(ccs []dynamodbtypes.ConsumedCapacity) []capacityBreakdown {
+	out := make([]capacityBreakdown, 0, len(ccs))
+	for i := range ccs {
+		out = append(out, snapshotBreakdown(&ccs[i]))
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].TableName < out[j].TableName })
+
+	return out
+}
+
 func sortedCapacityMapKeys(m map[string]dynamodbtypes.Capacity) []string {
 	if len(m) == 0 {
 		return nil
@@ -519,6 +530,55 @@ func TestE2E_ConsumedCapacityIndexes(t *testing.T) {
 				t.Logf("Delete(GSI) INDEXES ConsumedCapacity = %#v", out.ConsumedCapacity)
 
 				return snapshotBreakdown(out.ConsumedCapacity)
+			},
+		},
+		{
+			// Batch write against a table with a GSI: each affected index is charged, so the
+			// per-table breakdown includes the GSI.
+			name: "BatchWriteItemWithGSIIndexes",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+
+				out, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+					ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityIndexes,
+					RequestItems: map[string][]dynamodbtypes.WriteRequest{
+						parityPokemonTable: {
+							{PutRequest: &dynamodbtypes.PutRequest{Item: parityMarshalPokemon(t, parityPokemon{ID: "bw1", Type: "fire", Name: "a"})}},
+							{PutRequest: &dynamodbtypes.PutRequest{Item: parityMarshalPokemon(t, parityPokemon{ID: "bw2", Type: "fire", Name: "b"})}},
+						},
+					},
+				})
+				require.NoError(t, err)
+				t.Logf("BatchWrite(GSI) INDEXES ConsumedCapacity = %#v", out.ConsumedCapacity)
+
+				return sortedBreakdowns(out.ConsumedCapacity)
+			},
+		},
+		{
+			// Transactional write against a table with a GSI: the affected index is charged.
+			name: "TransactWriteItemsWithGSIIndexes",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+
+				out, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+					ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityIndexes,
+					TransactItems: []dynamodbtypes.TransactWriteItem{
+						{Put: &dynamodbtypes.Put{
+							TableName: aws.String(parityPokemonTable),
+							Item:      parityMarshalPokemon(t, parityPokemon{ID: "tw1", Type: "fire", Name: "x"}),
+						}},
+					},
+				})
+				require.NoError(t, err)
+				t.Logf("TransactWrite(GSI) INDEXES ConsumedCapacity = %#v", out.ConsumedCapacity)
+
+				return sortedBreakdowns(out.ConsumedCapacity)
 			},
 		},
 	}

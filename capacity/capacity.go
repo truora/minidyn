@@ -1,6 +1,9 @@
 package capacity
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 const (
 	readBlockBytes  = 4096
@@ -190,4 +193,105 @@ func ForTransactRead(mode Mode, table string, size int) *Consumed {
 // ForTransactWrite builds the consumed capacity for a transactional write (2x).
 func ForTransactWrite(mode Mode, table string, size int) *Consumed {
 	return forUnits(mode, table, 2*WriteUnits(size), false)
+}
+
+// WriteAccumulator aggregates write capacity per table and per secondary index across the
+// sub-requests of a batch or transactional write, so the INDEXES breakdown can report a
+// per-index split (which single-item writes derive directly).
+type WriteAccumulator struct {
+	tables map[string]*tableWrite
+}
+
+type tableWrite struct {
+	table   float64
+	order   []string
+	indexes map[string]*IndexUnits
+}
+
+// NewWriteAccumulator returns an empty WriteAccumulator.
+func NewWriteAccumulator() *WriteAccumulator {
+	return &WriteAccumulator{tables: map[string]*tableWrite{}}
+}
+
+// Add records a single write to table: its base item size plus the per-index write footprint.
+// factor scales the units (1 for batch writes, 2 for transactional writes).
+func (a *WriteAccumulator) Add(table string, size int, indexes []IndexWrite, factor float64) {
+	tw, ok := a.tables[table]
+	if !ok {
+		tw = &tableWrite{indexes: map[string]*IndexUnits{}}
+		a.tables[table] = tw
+	}
+
+	tw.table += factor * WriteUnits(size)
+
+	for _, iw := range indexes {
+		e, ok := tw.indexes[iw.Name]
+		if !ok {
+			e = &IndexUnits{Name: iw.Name, Kind: iw.Kind}
+			tw.indexes[iw.Name] = e
+			tw.order = append(tw.order, iw.Name)
+		}
+
+		e.Units += factor * WriteUnits(iw.Size)
+	}
+}
+
+// Consumed builds the per-table Consumed list for the given mode: nil for ModeNone or when
+// nothing was charged, table-sorted otherwise, with zero-unit tables omitted. At the INDEXES
+// level each entry carries the base-table units and the aggregated per-index entries.
+func (a *WriteAccumulator) Consumed(mode Mode) []*Consumed {
+	if mode == ModeNone || len(a.tables) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(a.tables))
+	for name := range a.tables {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	out := make([]*Consumed, 0, len(names))
+
+	for _, table := range names {
+		if c := a.tables[table].consumed(mode, table); c != nil {
+			out = append(out, c)
+		}
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
+}
+
+func (tw *tableWrite) consumed(mode Mode, table string) *Consumed {
+	total := tw.table
+	for _, name := range tw.order {
+		total += tw.indexes[name].Units
+	}
+
+	if total == 0 {
+		return nil
+	}
+
+	c := newConsumed(mode, table, total, false)
+	if !c.Breakdown {
+		return c
+	}
+
+	c.TableUnits = tw.table
+
+	if len(tw.order) > 0 {
+		entries := make([]IndexUnits, 0, len(tw.order))
+		for _, name := range tw.order {
+			entries = append(entries, *tw.indexes[name])
+		}
+
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+		c.Indexes = entries
+	}
+
+	return c
 }

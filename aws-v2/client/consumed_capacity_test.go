@@ -65,6 +65,21 @@ func TestSDKConsumedSlice(t *testing.T) {
 	c.Equal(2.0, aws.ToFloat64(out[0].WriteCapacityUnits))
 }
 
+func TestTableIndexWritesAndStoredItem(t *testing.T) {
+	c := require.New(t)
+	client := setupCapacityClient(t)
+
+	// Unknown table -> nil from both helpers.
+	c.Nil(client.tableIndexWrites("missing", nil))
+	c.Nil(client.storedItemByKey("missing", keyID("001")))
+
+	// Bad key (no key attributes) -> GetKey error -> nil.
+	c.Nil(client.storedItemByKey(tableName, map[string]dynamodbtypes.AttributeValue{}))
+
+	// Stored item present -> non-nil.
+	c.NotNil(client.storedItemByKey(tableName, keyID("001")))
+}
+
 func TestItemSizeByKey(t *testing.T) {
 	c := require.New(t)
 	client := setupCapacityClient(t)

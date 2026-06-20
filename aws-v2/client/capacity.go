@@ -4,7 +4,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/truora/minidyn/capacity"
+	"github.com/truora/minidyn/core"
+	mtypes "github.com/truora/minidyn/types"
 )
+
+// indexWrites returns the per-index write footprint of writing item to table: for each secondary
+// index the write touches, the size of the item as projected into that index. Feeds the
+// per-index ConsumedCapacity breakdown at the INDEXES level.
+func indexWrites(table *core.Table, item map[string]*mtypes.Item) []capacity.IndexWrite {
+	projections := table.WriteIndexProjections(item)
+	if len(projections) == 0 {
+		return nil
+	}
+
+	out := make([]capacity.IndexWrite, 0, len(projections))
+	for _, p := range projections {
+		out = append(out, capacity.IndexWrite{Name: p.Name, Kind: p.Kind, Size: capacity.Size(p.Item)})
+	}
+
+	return out
+}
 
 // toSDKConsumed maps a capacity.Consumed into the AWS SDK ConsumedCapacity shape.
 // It returns nil for a nil input (ReturnConsumedCapacity=NONE/unset), so callers can
@@ -34,25 +53,46 @@ func toSDKConsumed(c *capacity.Consumed) *types.ConsumedCapacity {
 	return cc
 }
 
+// applySDKBreakdown renders the INDEXES-level per-table/index breakdown. DynamoDB always reports
+// the Table sub-object (even when an index served the request) plus an entry per affected index.
 func applySDKBreakdown(cc *types.ConsumedCapacity, c *capacity.Consumed) {
-	entry := types.Capacity{CapacityUnits: aws.Float64(c.CapacityUnits)}
+	table := sdkCapacityEntry(c, c.TableUnits)
+	cc.Table = &table
 
-	if c.ReadCapacityUnits != 0 {
-		entry.ReadCapacityUnits = aws.Float64(c.ReadCapacityUnits)
+	for _, idx := range c.Indexes {
+		entry := sdkCapacityEntry(c, idx.Units)
+
+		switch idx.Kind {
+		case "GSI":
+			if cc.GlobalSecondaryIndexes == nil {
+				cc.GlobalSecondaryIndexes = map[string]types.Capacity{}
+			}
+
+			cc.GlobalSecondaryIndexes[idx.Name] = entry
+		case "LSI":
+			if cc.LocalSecondaryIndexes == nil {
+				cc.LocalSecondaryIndexes = map[string]types.Capacity{}
+			}
+
+			cc.LocalSecondaryIndexes[idx.Name] = entry
+		}
+	}
+}
+
+// sdkCapacityEntry builds a single Capacity sub-object carrying the given units. Read/Write
+// columns mirror whichever the operation reports, and only when non-zero.
+func sdkCapacityEntry(c *capacity.Consumed, units float64) types.Capacity {
+	entry := types.Capacity{CapacityUnits: aws.Float64(units)}
+
+	if c.ReadCapacityUnits != 0 && units != 0 {
+		entry.ReadCapacityUnits = aws.Float64(units)
 	}
 
-	if c.WriteCapacityUnits != 0 {
-		entry.WriteCapacityUnits = aws.Float64(c.WriteCapacityUnits)
+	if c.WriteCapacityUnits != 0 && units != 0 {
+		entry.WriteCapacityUnits = aws.Float64(units)
 	}
 
-	switch {
-	case c.IndexName != "" && c.IndexKind == "GSI":
-		cc.GlobalSecondaryIndexes = map[string]types.Capacity{c.IndexName: entry}
-	case c.IndexName != "" && c.IndexKind == "LSI":
-		cc.LocalSecondaryIndexes = map[string]types.Capacity{c.IndexName: entry}
-	default:
-		cc.Table = &entry
-	}
+	return entry
 }
 
 // consumedMode resolves the request's ReturnConsumedCapacity enum into a capacity.Mode.

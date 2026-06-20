@@ -85,6 +85,47 @@ func (t *Table) IndexKind(name string) string {
 	return "GSI"
 }
 
+// IndexProjection is a secondary index's projection of an item, used to compute the per-index
+// write ConsumedCapacity breakdown at the INDEXES level: the index name, its kind ("GSI"/"LSI"),
+// and the item as it lands in the index (honoring the index's ProjectionType).
+type IndexProjection struct {
+	Name string
+	Kind string
+	Item map[string]*types.Item
+}
+
+// WriteIndexProjections returns one IndexProjection per secondary index the given item is
+// indexed by — i.e. indexes for which the item has a complete index key. Indexes the item does
+// not participate in are omitted, mirroring DynamoDB, which only charges write capacity on
+// indexes a write actually touches. Entries are name-sorted for deterministic reporting.
+func (t *Table) WriteIndexProjections(item map[string]*types.Item) []IndexProjection {
+	if len(item) == 0 || len(t.Indexes) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(t.Indexes))
+	for name := range t.Indexes {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	out := make([]IndexProjection, 0, len(names))
+
+	for _, name := range names {
+		idx := t.Indexes[name]
+
+		indexKey, err := idx.keySchema.GetKey(t.AttributesDef, item)
+		if err != nil || indexKey == "" {
+			continue
+		}
+
+		out = append(out, IndexProjection{Name: name, Kind: t.IndexKind(name), Item: idx.ProjectItem(item)})
+	}
+
+	return out
+}
+
 // SetAttributeDefinition sets the attribute definition of a table
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {

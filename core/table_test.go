@@ -82,6 +82,30 @@ func createPokemonTable() (*Table, error) {
 	return table, nil
 }
 
+func TestWriteIndexProjections(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
+
+	projections := table.WriteIndexProjections(item)
+	c.Len(projections, 1)
+	c.Equal("invert", projections[0].Name)
+	c.Equal("GSI", projections[0].Kind)
+	// The "invert" GSI projects ALL attributes, so the projected item matches the full item.
+	c.Equal(item, projections[0].Item)
+
+	// An empty item and a table without secondary indexes both yield no per-index entries.
+	c.Nil(table.WriteIndexProjections(map[string]*types.Item{}))
+	c.Nil(NewTable(tableName).WriteIndexProjections(item))
+
+	// An item missing an index key attribute is not indexed, so the index is omitted.
+	missingRange := map[string]*types.Item{"id": item["id"], "type": item["type"]}
+	c.Empty(table.WriteIndexProjections(missingRange))
+}
+
 func createGlobalSecondaryIndex() *types.GlobalSecondaryIndexUpdate {
 	return &types.GlobalSecondaryIndexUpdate{
 		Create: &types.CreateGlobalSecondaryIndexAction{},

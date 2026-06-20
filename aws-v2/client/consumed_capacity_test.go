@@ -32,15 +32,25 @@ func TestToSDKConsumedBreakdowns(t *testing.T) {
 
 	c.Nil(toSDKConsumed(nil))
 
-	gsi := toSDKConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true, IndexName: "i", IndexKind: "GSI"})
+	// An index read: the Table sub-object is always reported (DynamoDB includes it even when an
+	// index served the request) alongside the index entry.
+	gsi := toSDKConsumed(&capacity.Consumed{
+		TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true,
+		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "GSI", Units: 1}},
+	})
 	c.Contains(gsi.GlobalSecondaryIndexes, "i")
-	c.Nil(gsi.Table)
+	c.NotNil(gsi.Table)
 
-	lsi := toSDKConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, IndexName: "i", IndexKind: "LSI"})
+	lsi := toSDKConsumed(&capacity.Consumed{
+		TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, TableUnits: 1,
+		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "LSI", Units: 1}},
+	})
 	c.Contains(lsi.LocalSecondaryIndexes, "i")
+	c.NotNil(lsi.Table)
 
-	tbl := toSDKConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true})
+	tbl := toSDKConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true, TableUnits: 1})
 	c.NotNil(tbl.Table)
+	c.Empty(tbl.GlobalSecondaryIndexes)
 }
 
 func TestSDKConsumedSlice(t *testing.T) {
@@ -232,7 +242,10 @@ func TestQueryIndexConsumedCapacityIndexes(t *testing.T) {
 	c.NoError(err)
 	c.NotNil(out.ConsumedCapacity)
 	c.Contains(out.ConsumedCapacity.GlobalSecondaryIndexes, "by-type")
-	c.Nil(out.ConsumedCapacity.Table) // index read attributes capacity to the index
+	// DynamoDB always reports the Table sub-object at the INDEXES level, even for an index read
+	// (with zero units, since the base table is not directly read).
+	c.NotNil(out.ConsumedCapacity.Table)
+	c.Equal(0.0, aws.ToFloat64(out.ConsumedCapacity.Table.CapacityUnits))
 }
 
 func TestScanConsumedCapacity(t *testing.T) {

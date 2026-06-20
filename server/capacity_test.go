@@ -15,15 +15,25 @@ func TestToWireConsumedBreakdowns(t *testing.T) {
 
 	c.Nil(toWireConsumed(nil))
 
-	gsi := toWireConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true, IndexName: "i", IndexKind: "GSI"})
+	// An index read: the Table sub-object is always reported (DynamoDB includes it even when an
+	// index served the request) alongside the index entry.
+	gsi := toWireConsumed(&capacity.Consumed{
+		TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true,
+		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "GSI", Units: 1}},
+	})
 	c.Contains(gsi.GlobalSecondaryIndexes, "i")
-	c.Nil(gsi.Table)
+	c.NotNil(gsi.Table)
 
-	lsi := toWireConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, IndexName: "i", IndexKind: "LSI"})
+	lsi := toWireConsumed(&capacity.Consumed{
+		TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, TableUnits: 1,
+		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "LSI", Units: 1}},
+	})
 	c.Contains(lsi.LocalSecondaryIndexes, "i")
+	c.NotNil(lsi.Table)
 
-	tbl := toWireConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true})
+	tbl := toWireConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, TableUnits: 1})
 	c.NotNil(tbl.Table)
+	c.Empty(tbl.GlobalSecondaryIndexes)
 }
 
 func TestWireConsumedSlice(t *testing.T) {

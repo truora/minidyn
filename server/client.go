@@ -369,6 +369,7 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		ConsumedCapacity: toWireConsumed(capacity.ForWrite(
 			consumedMode(string(input.ReturnConsumedCapacity)),
 			aws.ToString(input.TableName), max(oldSize, newSize),
+			indexWrites(table, item),
 		)),
 	}, nil
 }
@@ -424,6 +425,7 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	consumed := toWireConsumed(capacity.ForWrite(
 		consumedMode(string(input.ReturnConsumedCapacity)),
 		aws.ToString(input.TableName), capacity.Size(sizeSource),
+		indexWrites(table, sizeSource),
 	))
 
 	if item == nil {
@@ -490,6 +492,7 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		ConsumedCapacity: toWireConsumed(capacity.ForWrite(
 			consumedMode(string(input.ReturnConsumedCapacity)),
 			aws.ToString(input.TableName), max(beforeSize, afterSize),
+			indexWrites(table, table.Data[updateKey]),
 		)),
 	}, nil
 }

@@ -406,6 +406,7 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 		ConsumedCapacity: toSDKConsumed(capacity.ForWrite(
 			consumedMode(string(input.ReturnConsumedCapacity)),
 			aws.ToString(input.TableName), max(oldSize, newSize),
+			indexWrites(table, item),
 		)),
 	}, nil
 }
@@ -474,6 +475,7 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 	consumed := toSDKConsumed(capacity.ForWrite(
 		consumedMode(string(input.ReturnConsumedCapacity)),
 		aws.ToString(input.TableName), capacity.Size(sizeSource),
+		indexWrites(table, sizeSource),
 	))
 
 	if item == nil {
@@ -532,6 +534,7 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		ConsumedCapacity: toSDKConsumed(capacity.ForWrite(
 			consumedMode(string(input.ReturnConsumedCapacity)),
 			aws.ToString(input.TableName), max(beforeSize, afterSize),
+			indexWrites(table, table.Data[updateKey]),
 		)),
 	}
 

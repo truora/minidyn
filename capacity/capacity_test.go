@@ -72,8 +72,20 @@ func TestForRead_Total(t *testing.T) {
 		t.Fatalf("bad TOTAL read: %#v", c)
 	}
 
-	if c.WriteCapacityUnits != 0 || c.Breakdown || c.IndexName != "" {
+	if c.WriteCapacityUnits != 0 || c.Breakdown || len(c.Indexes) != 0 {
 		t.Fatalf("TOTAL must not set write/breakdown/index: %#v", c)
+	}
+}
+
+func TestForRead_IndexesBaseTable(t *testing.T) {
+	c := ForRead(ModeIndexes, "tbl", "", "", 100, true)
+	if c == nil || !c.Breakdown {
+		t.Fatalf("INDEXES must set Breakdown: %#v", c)
+	}
+
+	// A base-table read attributes its units to the Table sub-object and reports no index.
+	if c.TableUnits != 1 || len(c.Indexes) != 0 {
+		t.Fatalf("base-table INDEXES read must charge the table only: %#v", c)
 	}
 }
 
@@ -83,21 +95,53 @@ func TestForRead_IndexesGSI(t *testing.T) {
 		t.Fatalf("INDEXES must set Breakdown: %#v", c)
 	}
 
-	if c.IndexName != "by-type" || c.IndexKind != "GSI" {
-		t.Fatalf("INDEXES must carry index info: %#v", c)
+	// An index read charges the index; the Table sub-object is still reported, with zero units.
+	if c.TableUnits != 0 {
+		t.Fatalf("index read must leave the table sub-object at zero units: %#v", c)
+	}
+
+	if len(c.Indexes) != 1 || c.Indexes[0].Name != "by-type" || c.Indexes[0].Kind != "GSI" || c.Indexes[0].Units != 1 {
+		t.Fatalf("INDEXES must carry the index entry: %#v", c)
 	}
 }
 
 func TestForWrite(t *testing.T) {
-	c := ForWrite(ModeTotal, "tbl", 100)
+	c := ForWrite(ModeTotal, "tbl", 100, nil)
 	if c == nil || c.CapacityUnits != 1 || c.WriteCapacityUnits != 1 || c.ReadCapacityUnits != 0 {
 		t.Fatalf("bad write: %#v", c)
 	}
 }
 
 func TestForWrite_None(t *testing.T) {
-	if c := ForWrite(ModeNone, "t", 100); c != nil {
+	if c := ForWrite(ModeNone, "t", 100, nil); c != nil {
 		t.Fatalf("ModeNone write must return nil, got %#v", c)
+	}
+}
+
+func TestForWrite_WithIndexesTotal(t *testing.T) {
+	// Two 1KB writes (base table + one GSI) cost 1 WCU each; the TOTAL always includes the GSI.
+	c := ForWrite(ModeTotal, "tbl", 1024, []IndexWrite{{Name: "by-type", Kind: "GSI", Size: 1024}})
+	if c == nil || c.CapacityUnits != 2 || c.WriteCapacityUnits != 2 {
+		t.Fatalf("TOTAL write must include the GSI cost: %#v", c)
+	}
+
+	if c.Breakdown || len(c.Indexes) != 0 {
+		t.Fatalf("TOTAL must not carry a breakdown: %#v", c)
+	}
+}
+
+func TestForWrite_WithIndexesBreakdown(t *testing.T) {
+	c := ForWrite(ModeIndexes, "tbl", 1024, []IndexWrite{{Name: "by-type", Kind: "GSI", Size: 1024}})
+	if c == nil || !c.Breakdown || c.CapacityUnits != 2 {
+		t.Fatalf("INDEXES write total must include the GSI cost: %#v", c)
+	}
+
+	if c.TableUnits != 1 {
+		t.Fatalf("base-table sub-object must carry the table write units: %#v", c)
+	}
+
+	if len(c.Indexes) != 1 || c.Indexes[0].Name != "by-type" || c.Indexes[0].Kind != "GSI" || c.Indexes[0].Units != 1 {
+		t.Fatalf("INDEXES write must carry the per-GSI entry: %#v", c)
 	}
 }
 
@@ -117,8 +161,22 @@ func TestForUnits(t *testing.T) {
 	}
 }
 
+func TestForUnits_IndexesAttributesToTable(t *testing.T) {
+	// At the INDEXES level aggregated units are attributed to the base-table sub-object; batch
+	// and transactional ops report table totals only, with no per-index breakdown.
+	r := ForReadUnits(ModeIndexes, "tbl", 3.5)
+	if r == nil || !r.Breakdown || r.TableUnits != 3.5 || len(r.Indexes) != 0 {
+		t.Fatalf("bad INDEXES ForReadUnits: %#v", r)
+	}
+
+	w := ForWriteUnits(ModeIndexes, "tbl", 4)
+	if w == nil || !w.Breakdown || w.TableUnits != 4 || len(w.Indexes) != 0 {
+		t.Fatalf("bad INDEXES ForWriteUnits: %#v", w)
+	}
+}
+
 func TestForTransactWrite_DoublesWCU(t *testing.T) {
-	single := ForWrite(ModeTotal, "t", 1000)
+	single := ForWrite(ModeTotal, "t", 1000, nil)
 	txn := ForTransactWrite(ModeTotal, "t", 1000)
 
 	if txn.CapacityUnits != 2*single.CapacityUnits {

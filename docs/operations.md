@@ -25,7 +25,7 @@ Minidyn aims to accurately mock DynamoDB behavior for local testing. However, it
   - **Eventual Consistency**: Global Secondary Indexes are updated synchronously and are always strongly consistent in minidyn. Real DynamoDB updates GSIs asynchronously (eventually consistent).
   - **Throughput/Limits**: Minidyn does not enforce index-specific read/write capacity limits.
 - **Limits and Restrictions**: Real DynamoDB limits (such as 400KB item sizes, 1MB limits per Query/Scan, or max limits for pagination) are not enforced in minidyn. Queries and Scans will return all matching items unless explicitly limited.
-- **ReturnConsumedCapacity**: Operations in minidyn do not accurately calculate or return the consumed capacity units. The `ReturnConsumedCapacity` parameter is largely ignored, and mock/empty capacity reports are returned or omitted entirely.
+- **ReturnConsumedCapacity**: Supported for all operations that report it (`GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem`, `TransactGetItems`, `TransactWriteItems`). `NONE` (or unset) omits `ConsumedCapacity`; `TOTAL` returns table-level totals; `INDEXES` additionally returns a per-table/index breakdown. Capacity units are derived from the documented DynamoDB item-size algorithm (4&nbsp;KB per read unit, 1&nbsp;KB per write unit, eventually consistent reads halved, transactional operations doubled). Because that algorithm is the contract, the exact unit values may differ slightly from a given DynamoDB Local build's rounding; per-index **write** capacity under `INDEXES` is attributed to the table rather than split across each GSI.
 
 ---
 

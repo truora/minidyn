@@ -63,6 +63,22 @@ func (t *Table) ValidatePrimaryKeyMap(key map[string]*types.Item) error {
 	return t.KeySchema.validatePrimaryKeyMap(key)
 }
 
+// IndexKind classifies a secondary index by name: "GSI" for a global secondary index,
+// "LSI" for a local one. It returns "" for the primary index or an unknown name. Used to
+// place per-index entries when reporting ConsumedCapacity at the INDEXES level.
+func (t *Table) IndexKind(name string) string {
+	idx, ok := t.Indexes[name]
+	if !ok {
+		return ""
+	}
+
+	if idx.typ == indexTypeLocal {
+		return "LSI"
+	}
+
+	return "GSI"
+}
+
 // SetAttributeDefinition sets the attribute definition of a table
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {

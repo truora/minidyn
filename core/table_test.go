@@ -127,6 +127,24 @@ func TestAddLocalIndexes(t *testing.T) {
 	c.Contains(err.Error(), "ValidationException: LSI list is empty/invalid")
 }
 
+func TestIndexKind(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	localIndexes := createLocalSecondaryIndex()
+	localIndexes[0].KeySchema = []*types.KeySchemaElement{
+		{AttributeName: "id", KeyType: "HASH"},
+	}
+	c.NoError(newTable.AddLocalIndexes(localIndexes))
+
+	c.Equal("GSI", newTable.IndexKind("invert"))
+	c.Equal("LSI", newTable.IndexKind("indexname"))
+	c.Equal("", newTable.IndexKind(PrimaryIndexName))
+	c.Equal("", newTable.IndexKind("does-not-exist"))
+}
+
 func TestTableIndexesDescription(t *testing.T) {
 	c := require.New(t)
 

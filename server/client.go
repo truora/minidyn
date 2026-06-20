@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
+	"github.com/truora/minidyn/capacity"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
 	"github.com/truora/minidyn/types"
@@ -330,13 +331,22 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		return nil, err
 	}
 
+	putItem := mapAttributeValueMapToTypes(input.Item)
+
+	newSize := capacity.Size(putItem)
+
+	oldSize := 0
+	if key, kerr := table.KeySchema.GetKey(table.AttributesDef, putItem); kerr == nil {
+		oldSize = capacity.Size(table.Data[key])
+	}
+
 	item, err := table.Put(&types.PutItemInput{
 		TableName:                   input.TableName,
 		ConditionExpression:         input.ConditionExpression,
 		ConditionalOperator:         toStringPtr(string(input.ConditionalOperator)),
 		ExpressionAttributeNames:    input.ExpressionAttributeNames,
 		ExpressionAttributeValues:   mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Item:                        mapAttributeValueMapToTypes(input.Item),
+		Item:                        putItem,
 		ReturnConsumedCapacity:      toStringPtr(string(input.ReturnConsumedCapacity)),
 		ReturnItemCollectionMetrics: toStringPtr(string(input.ReturnItemCollectionMetrics)),
 		ReturnValues:                toStringPtr(string(input.ReturnValues)),
@@ -345,7 +355,13 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		return nil, mapKnownError(err)
 	}
 
-	return &PutItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
+	return &PutItemOutput{
+		Attributes: mapTypesMapToAttributeValue(item),
+		ConsumedCapacity: toWireConsumed(capacity.ForWrite(
+			consumedMode(string(input.ReturnConsumedCapacity)),
+			aws.ToString(input.TableName), max(oldSize, newSize),
+		)),
+	}, nil
 }
 
 // DeleteItem removes an item and optionally returns old values.
@@ -370,23 +386,35 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 		return nil, err
 	}
 
+	deleteKey := mapAttributeValueMapToTypes(input.Key)
+
 	item, err := table.Delete(&types.DeleteItemInput{
 		TableName:                 input.TableName,
 		ConditionExpression:       input.ConditionExpression,
 		ConditionalOperator:       toStringPtr(string(input.ConditionalOperator)),
 		ExpressionAttributeNames:  toStringPtrMap(input.ExpressionAttributeNames),
 		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Key:                       mapAttributeValueMapToTypes(input.Key),
+		Key:                       deleteKey,
 	})
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	if input.ReturnValues == ddbtypes.ReturnValueAllOld {
-		return &DeleteItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
+	sizeSource := item
+	if len(sizeSource) == 0 {
+		sizeSource = deleteKey
 	}
 
-	return &DeleteItemOutput{}, nil
+	consumed := toWireConsumed(capacity.ForWrite(
+		consumedMode(string(input.ReturnConsumedCapacity)),
+		aws.ToString(input.TableName), capacity.Size(sizeSource),
+	))
+
+	if input.ReturnValues == ddbtypes.ReturnValueAllOld {
+		return &DeleteItemOutput{Attributes: mapTypesMapToAttributeValue(item), ConsumedCapacity: consumed}, nil
+	}
+
+	return &DeleteItemOutput{ConsumedCapacity: consumed}, nil
 }
 
 // UpdateItem modifies attributes of an item using an update expression.
@@ -412,13 +440,22 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, err
 	}
 
+	updateKeyMap := mapAttributeValueMapToTypes(input.Key)
+
+	updateKey, keyErr := table.KeySchema.GetKey(table.AttributesDef, updateKeyMap)
+
+	beforeSize := 0
+	if keyErr == nil {
+		beforeSize = capacity.Size(table.Data[updateKey])
+	}
+
 	item, err := table.Update(&types.UpdateItemInput{
 		TableName:                           input.TableName,
 		ConditionExpression:                 input.ConditionExpression,
 		ConditionalOperator:                 toStringPtr(string(input.ConditionalOperator)),
 		ExpressionAttributeNames:            input.ExpressionAttributeNames,
 		ExpressionAttributeValues:           mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Key:                                 mapAttributeValueMapToTypes(input.Key),
+		Key:                                 updateKeyMap,
 		UpdateExpression:                    aws.ToString(input.UpdateExpression),
 		ReturnValues:                        toStringPtr(string(input.ReturnValues)),
 		ReturnValuesOnConditionCheckFailure: toStringPtr(string(input.ReturnValuesOnConditionCheckFailure)),
@@ -427,7 +464,18 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, mapKnownError(err)
 	}
 
-	return &UpdateItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
+	afterSize := beforeSize
+	if keyErr == nil {
+		afterSize = capacity.Size(table.Data[updateKey])
+	}
+
+	return &UpdateItemOutput{
+		Attributes: mapTypesMapToAttributeValue(item),
+		ConsumedCapacity: toWireConsumed(capacity.ForWrite(
+			consumedMode(string(input.ReturnConsumedCapacity)),
+			aws.ToString(input.TableName), max(beforeSize, afterSize),
+		)),
+	}, nil
 }
 
 // GetItem returns a single item by key.
@@ -469,7 +517,19 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
 
-	return &GetItemOutput{Item: item}, nil
+	sizeSource := stored
+	if len(sizeSource) == 0 {
+		sizeSource = keyMap
+	}
+
+	return &GetItemOutput{
+		Item: item,
+		ConsumedCapacity: toWireConsumed(capacity.ForRead(
+			consumedMode(string(input.ReturnConsumedCapacity)),
+			aws.ToString(input.TableName), "", "",
+			capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
+		)),
+	}, nil
 }
 
 // Query searches items by key condition and optional filter.
@@ -516,11 +576,17 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 	}
 
 	count := int32(len(items))
+	indexName := aws.ToString(input.IndexName)
 
 	return &QueryOutput{
 		Items:            mapTypesSliceToAttributeValue(items),
 		Count:            count,
 		LastEvaluatedKey: mapTypesMapToAttributeValue(last),
+		ConsumedCapacity: toWireConsumed(capacity.ForRead(
+			consumedMode(string(input.ReturnConsumedCapacity)),
+			aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
+			capacity.SumSize(items), aws.ToBool(input.ConsistentRead),
+		)),
 	}, nil
 }
 
@@ -563,11 +629,17 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 	}
 
 	count := int32(len(items))
+	indexName := aws.ToString(input.IndexName)
 
 	return &ScanOutput{
 		Items:            mapTypesSliceToAttributeValue(items),
 		Count:            count,
 		LastEvaluatedKey: mapTypesMapToAttributeValue(last),
+		ConsumedCapacity: toWireConsumed(capacity.ForRead(
+			consumedMode(string(input.ReturnConsumedCapacity)),
+			aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
+			capacity.SumSize(items), aws.ToBool(input.ConsistentRead),
+		)),
 	}, nil
 }
 
@@ -649,6 +721,7 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 	}
 
 	unprocessed := map[string][]WriteRequest{}
+	unitsByTable := map[string]float64{}
 
 	for tableName, reqs := range input.RequestItems {
 		for i, req := range reqs {
@@ -676,10 +749,29 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 			if err != nil {
 				return nil, err
 			}
+
+			unitsByTable[tableName] += capacity.WriteUnits(capacity.Size(batchWriteRequestItem(req)))
 		}
 	}
 
-	return &BatchWriteItemOutput{UnprocessedItems: unprocessed}, nil
+	return &BatchWriteItemOutput{
+		UnprocessedItems: unprocessed,
+		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, false),
+	}, nil
+}
+
+// batchWriteRequestItem returns the internal item used to size a write request: the put
+// item, or the delete key when sizing a delete.
+func batchWriteRequestItem(req WriteRequest) map[string]*types.Item {
+	if req.PutRequest != nil {
+		return mapAttributeValueMapToTypes(req.PutRequest.Item)
+	}
+
+	if req.DeleteRequest != nil {
+		return mapAttributeValueMapToTypes(req.DeleteRequest.Key)
+	}
+
+	return nil
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
@@ -737,14 +829,16 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 
 	responses := map[string][]map[string]*AttributeValue{}
 	unprocessed := map[string]KeysAndAttributes{}
+	unitsByTable := map[string]float64{}
 
 	for tableName, reqs := range input.RequestItems {
-		tableResponses, unprocessedKeys, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation)
+		tableResponses, unprocessedKeys, units, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation)
 		if err != nil {
 			return nil, err
 		}
 
 		responses[tableName] = tableResponses
+		unitsByTable[tableName] += units
 
 		if len(unprocessedKeys) > 0 {
 			tableUnprocessed := reqs
@@ -753,16 +847,23 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 		}
 	}
 
-	return &BatchGetItemOutput{Responses: responses, UnprocessedKeys: unprocessed}, nil
+	return &BatchGetItemOutput{
+		Responses:        responses,
+		UnprocessedKeys:  unprocessed,
+		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, true),
+	}, nil
 }
 
-func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation) ([]map[string]*AttributeValue, []map[string]*AttributeValue, error) {
+func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
 	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 
 	responses := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
 	unprocessedKeys := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
+
+	consistent := aws.ToBool(reqs.ConsistentRead)
+	units := 0.0
 
 	for i, key := range reqs.Keys {
 		if emulation.unprocessed(tableName, i, key) {
@@ -779,15 +880,17 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 			ProjectionExpression:     reqs.ProjectionExpression,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
+
+		units += capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(item.Item)), consistent)
 
 		if len(item.Item) > 0 {
 			responses = append(responses, item.Item)
 		}
 	}
 
-	return responses, unprocessedKeys, nil
+	return responses, unprocessedKeys, units, nil
 }
 
 func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {
@@ -880,7 +983,59 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 		}
 	}
 
-	return &TransactWriteItemsOutput{}, nil
+	unitsByTable := map[string]float64{}
+
+	for _, item := range input.TransactItems {
+		tableName, size := c.transactWriteSize(item)
+		if tableName == "" {
+			continue
+		}
+
+		unitsByTable[tableName] += 2 * capacity.WriteUnits(size)
+	}
+
+	return &TransactWriteItemsOutput{
+		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, false),
+	}, nil
+}
+
+// transactWriteSize returns the table name and byte size used to bill a transact write item.
+// Update sizes the stored item after the update; Delete/ConditionCheck size the key.
+func (c *Client) transactWriteSize(item TransactWriteItem) (string, int) {
+	switch {
+	case item.Put != nil:
+		return aws.ToString(item.Put.TableName), capacity.Size(mapAttributeValueMapToTypes(item.Put.Item))
+	case item.Update != nil:
+		return aws.ToString(item.Update.TableName), c.itemSizeByKey(aws.ToString(item.Update.TableName), item.Update.Key)
+	case item.Delete != nil:
+		return aws.ToString(item.Delete.TableName), capacity.Size(mapAttributeValueMapToTypes(item.Delete.Key))
+	case item.ConditionCheck != nil:
+		return aws.ToString(item.ConditionCheck.TableName), capacity.Size(mapAttributeValueMapToTypes(item.ConditionCheck.Key))
+	default:
+		return "", 0
+	}
+}
+
+// itemSizeByKey returns the byte size of the stored item for a key, falling back to the
+// key's own size when the table or item is not found.
+func (c *Client) itemSizeByKey(tableName string, key map[string]*AttributeValue) int {
+	keyMap := mapAttributeValueMapToTypes(key)
+
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return capacity.Size(keyMap)
+	}
+
+	k, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	if err != nil {
+		return capacity.Size(keyMap)
+	}
+
+	if stored := table.Data[k]; len(stored) > 0 {
+		return capacity.Size(stored)
+	}
+
+	return capacity.Size(keyMap)
 }
 
 func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {
@@ -964,6 +1119,7 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 	}
 
 	responses := make([]ItemResponse, 0, len(input.TransactItems))
+	unitsByTable := map[string]float64{}
 
 	for _, item := range input.TransactItems {
 		get := item.Get
@@ -979,9 +1135,14 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 		}
 
 		responses = append(responses, ItemResponse{Item: out.Item})
+
+		unitsByTable[aws.ToString(get.TableName)] += 2 * capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(out.Item)), true)
 	}
 
-	return &TransactGetItemsOutput{Responses: responses}, nil
+	return &TransactGetItemsOutput{
+		Responses:        responses,
+		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, true),
+	}, nil
 }
 
 func (c *Client) runTransactItem(i, n int, item TransactWriteItem) error {

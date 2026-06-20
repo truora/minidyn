@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
+	"github.com/truora/minidyn/capacity"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
 	mtypes "github.com/truora/minidyn/types"
@@ -386,11 +387,27 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 		return nil, mapKnownError(err)
 	}
 
-	item, err := table.Put(mapDynamoToTypesPutItemInput(input))
+	putInput := mapDynamoToTypesPutItemInput(input)
+
+	newSize := capacity.Size(putInput.Item)
+
+	oldSize := 0
+	if key, kerr := table.KeySchema.GetKey(table.AttributesDef, putInput.Item); kerr == nil {
+		oldSize = capacity.Size(table.Data[key])
+	}
+
+	item, err := table.Put(putInput)
+	if err != nil {
+		return &dynamodb.PutItemOutput{Attributes: mapTypesToDynamoMapItem(item)}, mapKnownError(err)
+	}
 
 	return &dynamodb.PutItemOutput{
 		Attributes: mapTypesToDynamoMapItem(item),
-	}, mapKnownError(err)
+		ConsumedCapacity: toSDKConsumed(capacity.ForWrite(
+			consumedMode(string(input.ReturnConsumedCapacity)),
+			aws.ToString(input.TableName), max(oldSize, newSize),
+		)),
+	}, nil
 }
 
 // DeleteItem mock response for dynamodb
@@ -436,17 +453,36 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 		}
 	}
 
-	item, err := table.Delete(mapDynamoToTypesDeleteItemInput(input))
+	deleteInput := mapDynamoToTypesDeleteItemInput(input)
+
+	// Delete only returns the old item for ALL_OLD, so size it up front.
+	var stored map[string]*mtypes.Item
+	if key, kerr := table.KeySchema.GetKey(table.AttributesDef, deleteInput.Key); kerr == nil {
+		stored = table.Data[key]
+	}
+
+	item, err := table.Delete(deleteInput)
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
+	sizeSource := stored
+	if len(sizeSource) == 0 {
+		sizeSource = deleteInput.Key
+	}
+
+	consumed := toSDKConsumed(capacity.ForWrite(
+		consumedMode(string(input.ReturnConsumedCapacity)),
+		aws.ToString(input.TableName), capacity.Size(sizeSource),
+	))
+
 	if item == nil {
-		return &dynamodb.DeleteItemOutput{}, nil
+		return &dynamodb.DeleteItemOutput{ConsumedCapacity: consumed}, nil
 	}
 
 	return &dynamodb.DeleteItemOutput{
-		Attributes: mapTypesToDynamoMapItem(item),
+		Attributes:       mapTypesToDynamoMapItem(item),
+		ConsumedCapacity: consumed,
 	}, nil
 }
 
@@ -469,7 +505,16 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		return nil, mapKnownError(err)
 	}
 
-	item, err := table.Update(mapDynamoToTypesUpdateItemInput(input))
+	updateInput := mapDynamoToTypesUpdateItemInput(input)
+
+	updateKey, keyErr := table.KeySchema.GetKey(table.AttributesDef, updateInput.Key)
+
+	beforeSize := 0
+	if keyErr == nil {
+		beforeSize = capacity.Size(table.Data[updateKey])
+	}
+
+	item, err := table.Update(updateInput)
 	if err != nil {
 		if errors.Is(err, interpreter.ErrSyntaxError) {
 			return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
@@ -478,7 +523,17 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		return nil, mapKnownError(err)
 	}
 
-	output := &dynamodb.UpdateItemOutput{}
+	afterSize := beforeSize
+	if keyErr == nil {
+		afterSize = capacity.Size(table.Data[updateKey])
+	}
+
+	output := &dynamodb.UpdateItemOutput{
+		ConsumedCapacity: toSDKConsumed(capacity.ForWrite(
+			consumedMode(string(input.ReturnConsumedCapacity)),
+			aws.ToString(input.TableName), max(beforeSize, afterSize),
+		)),
+	}
 
 	if item != nil {
 		output.Attributes = mapTypesToDynamoMapItem(item)
@@ -531,6 +586,17 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 		Item: copyItem(item),
 	}
 
+	sizeSource := stored
+	if len(sizeSource) == 0 {
+		sizeSource = keyMap
+	}
+
+	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
+		consumedMode(string(input.ReturnConsumedCapacity)),
+		aws.ToString(input.TableName), "", "",
+		capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
+	))
+
 	return output, nil
 }
 
@@ -579,6 +645,12 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 	if input.Select != types.SelectCount {
 		output.Items = mapTypesToDynamoSliceMapItem(res.Items)
 	}
+
+	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
+		consumedMode(string(input.ReturnConsumedCapacity)),
+		aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
+		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+	))
 
 	return output, nil
 }
@@ -636,6 +708,12 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		output.Items = mapTypesToDynamoSliceMapItem(res.Items)
 	}
 
+	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
+		consumedMode(string(input.ReturnConsumedCapacity)),
+		aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
+		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+	))
+
 	return output, nil
 }
 
@@ -670,6 +748,7 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 	}
 
 	unprocessed := map[string][]types.WriteRequest{}
+	unitsByTable := map[string]float64{}
 
 	for table, reqs := range input.RequestItems {
 		for i, req := range reqs {
@@ -682,13 +761,30 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 			if err := executeBatchWriteRequest(ctx, fd, aws.String(table), req); err != nil {
 				return &dynamodb.BatchWriteItemOutput{}, err
 			}
+
+			unitsByTable[table] += capacity.WriteUnits(capacity.Size(batchWriteRequestItem(req)))
 		}
 	}
 
 	return &dynamodb.BatchWriteItemOutput{
 		UnprocessedItems:      unprocessed,
 		ItemCollectionMetrics: fd.itemCollectionMetrics,
+		ConsumedCapacity:      sdkConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, false),
 	}, nil
+}
+
+// batchWriteRequestItem returns the item used to size a write request: the put item, or
+// the delete key when sizing a delete.
+func batchWriteRequestItem(req types.WriteRequest) map[string]*mtypes.Item {
+	if req.PutRequest != nil {
+		return mapDynamoToTypesMapItem(req.PutRequest.Item)
+	}
+
+	if req.DeleteRequest != nil {
+		return mapDynamoToTypesMapItem(req.DeleteRequest.Key)
+	}
+
+	return nil
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
@@ -724,10 +820,13 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 
 	responses := make(map[string][]map[string]types.AttributeValue, len(input.RequestItems))
 	unprocessed := make(map[string]types.KeysAndAttributes, len(input.RequestItems))
+	unitsByTable := map[string]float64{}
 
 	for tableName, reqs := range input.RequestItems {
 		unprocessedKeys := make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
 		responses[tableName] = make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
+
+		consistent := aws.ToBool(reqs.ConsistentRead)
 
 		for i, req := range reqs.Keys {
 			if emulation.unprocessed(tableName, i, req) {
@@ -750,6 +849,8 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 				return nil, err
 			}
 
+			unitsByTable[tableName] += capacity.ReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)), consistent)
+
 			if len(out.Item) > 0 {
 				responses[tableName] = append(responses[tableName], out.Item)
 			}
@@ -766,8 +867,9 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 	}
 
 	return &dynamodb.BatchGetItemOutput{
-		Responses:       responses,
-		UnprocessedKeys: unprocessed,
+		Responses:        responses,
+		UnprocessedKeys:  unprocessed,
+		ConsumedCapacity: sdkConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, true),
 	}, nil
 }
 
@@ -915,7 +1017,60 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 		}
 	}
 
-	return &dynamodb.TransactWriteItemsOutput{}, nil
+	mode := consumedMode(string(input.ReturnConsumedCapacity))
+	unitsByTable := map[string]float64{}
+
+	for _, item := range input.TransactItems {
+		tableName, size := fd.transactWriteSize(item)
+		if tableName == "" {
+			continue
+		}
+
+		unitsByTable[tableName] += 2 * capacity.WriteUnits(size)
+	}
+
+	return &dynamodb.TransactWriteItemsOutput{
+		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable, false),
+	}, nil
+}
+
+// transactWriteSize returns the table name and byte size used to bill a transact write item.
+// Update sizes the stored item after the update; Delete/ConditionCheck size the key.
+func (fd *Client) transactWriteSize(item types.TransactWriteItem) (string, int) {
+	switch {
+	case item.Put != nil:
+		return aws.ToString(item.Put.TableName), capacity.Size(mapDynamoToTypesMapItem(item.Put.Item))
+	case item.Update != nil:
+		return aws.ToString(item.Update.TableName), fd.itemSizeByKey(aws.ToString(item.Update.TableName), item.Update.Key)
+	case item.Delete != nil:
+		return aws.ToString(item.Delete.TableName), capacity.Size(mapDynamoToTypesMapItem(item.Delete.Key))
+	case item.ConditionCheck != nil:
+		return aws.ToString(item.ConditionCheck.TableName), capacity.Size(mapDynamoToTypesMapItem(item.ConditionCheck.Key))
+	default:
+		return "", 0
+	}
+}
+
+// itemSizeByKey returns the byte size of the stored item for a key, falling back to the
+// key's own size when the table or item is not found.
+func (fd *Client) itemSizeByKey(tableName string, key map[string]types.AttributeValue) int {
+	keyMap := mapDynamoToTypesMapItem(key)
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return capacity.Size(keyMap)
+	}
+
+	k, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	if err != nil {
+		return capacity.Size(keyMap)
+	}
+
+	if stored := table.Data[k]; len(stored) > 0 {
+		return capacity.Size(stored)
+	}
+
+	return capacity.Size(keyMap)
 }
 
 func validateTransactGetItemsInput(fd *Client, input *dynamodb.TransactGetItemsInput) error {
@@ -1003,6 +1158,8 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 	}
 
 	responses := make([]types.ItemResponse, 0, len(input.TransactItems))
+	mode := consumedMode(string(input.ReturnConsumedCapacity))
+	unitsByTable := map[string]float64{}
 
 	for _, item := range input.TransactItems {
 		get := item.Get
@@ -1018,9 +1175,14 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 		}
 
 		responses = append(responses, types.ItemResponse{Item: out.Item})
+
+		unitsByTable[aws.ToString(get.TableName)] += 2 * capacity.ReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)), true)
 	}
 
-	return &dynamodb.TransactGetItemsOutput{Responses: responses}, nil
+	return &dynamodb.TransactGetItemsOutput{
+		Responses:        responses,
+		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable, true),
+	}, nil
 }
 
 func (fd *Client) runTransactItem(i, n int, item types.TransactWriteItem) error {

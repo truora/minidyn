@@ -100,6 +100,48 @@ func TestServerCRUDWithSDKv2(t *testing.T) {
 	require.Equal(t, "pikachu", out.Item["n"].(*ddbtypes.AttributeValueMemberS).Value)
 }
 
+func TestServerConsumedCapacityWithSDKv2(t *testing.T) {
+	srv := NewServer()
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	ctx := context.Background()
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	putOut, err := cli.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id": &ddbtypes.AttributeValueMemberS{Value: "25"},
+			"n":  &ddbtypes.AttributeValueMemberS{Value: "pikachu"},
+		},
+		ReturnConsumedCapacity: ddbtypes.ReturnConsumedCapacityTotal,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putOut.ConsumedCapacity, "ConsumedCapacity must survive the HTTP round-trip")
+	require.Equal(t, "pokemons", aws.ToString(putOut.ConsumedCapacity.TableName))
+	require.Greater(t, aws.ToFloat64(putOut.ConsumedCapacity.WriteCapacityUnits), 0.0)
+
+	getOut, err := cli.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName:              aws.String("pokemons"),
+		Key:                    map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "25"}},
+		ConsistentRead:         aws.Bool(true),
+		ReturnConsumedCapacity: ddbtypes.ReturnConsumedCapacityTotal,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, getOut.ConsumedCapacity)
+	require.Greater(t, aws.ToFloat64(getOut.ConsumedCapacity.ReadCapacityUnits), 0.0)
+
+	// Omitted when ReturnConsumedCapacity is not requested.
+	noCC, err := cli.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String("pokemons"),
+		Key:       map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "25"}},
+	})
+	require.NoError(t, err)
+	require.Nil(t, noCC.ConsumedCapacity)
+}
+
 func TestServerQueryGSIWithSDKv2(t *testing.T) {
 	ts := httptest.NewServer(NewServer())
 	defer ts.Close()

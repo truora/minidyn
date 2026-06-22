@@ -45,6 +45,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, fmt.Errorf("%w: empty expression", ErrSyntaxError)
 	}
 
+	if err := ValidateExpressionAttributeNamesDeclared(matchExpressionLabel(input.ExpressionType), input.Expression, input.Aliases); err != nil {
+		return false, err
+	}
+
 	env := language.NewEnvironment()
 
 	aliases := map[string]string{}
@@ -83,6 +87,19 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	return result == language.TRUE, nil
 }
 
+// matchExpressionLabel maps a MatchInput expression type to its DynamoDB expression label
+// used in ValidationException messages.
+func matchExpressionLabel(t ExpressionType) string {
+	switch t {
+	case ExpressionTypeKey:
+		return "KeyConditionExpression"
+	case ExpressionTypeFilter:
+		return "FilterExpression"
+	default:
+		return "ConditionExpression"
+	}
+}
+
 // Project evaluates a projection expression and returns a new attribute map containing only the requested paths.
 func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) {
 	l := language.NewLexer(input.Expression)
@@ -91,6 +108,10 @@ func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) 
 
 	if len(p.Errors()) != 0 {
 		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(p.Errors(), "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+	}
+
+	if err := ValidateExpressionAttributeNamesDeclared("ProjectionExpression", input.Expression, input.Aliases); err != nil {
+		return nil, err
 	}
 
 	env := language.NewEnvironment()
@@ -154,6 +175,10 @@ func (li *Language) Update(input UpdateInput) error {
 		}
 
 		return fmt.Errorf("%w: %s", errType, strings.Join(p.Errors(), "\n"))
+	}
+
+	if err := ValidateExpressionAttributeNamesDeclared("UpdateExpression", input.Expression, aliases); err != nil {
+		return err
 	}
 
 	item := map[string]*types.Item{}

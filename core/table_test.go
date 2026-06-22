@@ -725,6 +725,49 @@ func TestSearchData_duplicateExpressionAttributeValues(t *testing.T) {
 	c.Contains(apiErr.Message(), "contains duplicates")
 }
 
+func TestSearchData_undeclaredExpressionAttributeName(t *testing.T) {
+	cases := []struct {
+		name  string
+		input QueryInput
+		label string
+	}{
+		{
+			name:  "KeyConditionExpression",
+			input: QueryInput{KeyConditionExpression: "#a = :v"},
+			label: "KeyConditionExpression",
+		},
+		{
+			name:  "FilterExpression",
+			input: QueryInput{FilterExpression: "#a = :v"},
+			label: "FilterExpression",
+		},
+		{
+			name:  "ProjectionExpression",
+			input: QueryInput{ProjectionExpression: "#a"},
+			label: "ProjectionExpression",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := require.New(t)
+
+			newTable, err := createPokemonTable()
+			c.NoError(err)
+
+			// Empty table: the per-item interpreter checks never run, so validation must
+			// happen up front to match DynamoDB.
+			_, _, err = newTable.SearchData(tc.input)
+			c.Error(err)
+
+			var apiErr types.Error
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.Code())
+			c.Contains(apiErr.Message(), "Invalid "+tc.label+": An expression attribute name used in the document path is not defined; attribute name: #a")
+		})
+	}
+}
+
 func TestUpdate_duplicateExpressionAttributeValues(t *testing.T) {
 	c := require.New(t)
 
@@ -1140,6 +1183,9 @@ func TestMatchKey(t *testing.T) {
 	queryInput := QueryInput{
 		ExpressionAttributeValues: map[string]*types.Item{
 			":id": {S: new("001")},
+		},
+		Aliases: map[string]string{
+			"#id": "id",
 		},
 		KeyConditionExpression: "#id = :id",
 		FilterExpression:       "#id = :id",

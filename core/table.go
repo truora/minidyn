@@ -289,6 +289,29 @@ func validateSearchInputMaps(input QueryInput) error {
 	return nil
 }
 
+// validateSearchExpressionAttributeNames rejects up front any Query/Scan expression that
+// references an attribute name placeholder (#name) not declared in ExpressionAttributeNames.
+// DynamoDB validates this before scanning, so it must error even when the table is empty or
+// no item matches (when the per-item interpreter checks would never run).
+func validateSearchExpressionAttributeNames(input QueryInput) error {
+	checks := []struct {
+		label      string
+		expression string
+	}{
+		{"KeyConditionExpression", input.KeyConditionExpression},
+		{"FilterExpression", input.FilterExpression},
+		{"ProjectionExpression", input.ProjectionExpression},
+	}
+
+	for _, c := range checks {
+		if err := interpreter.ValidateExpressionAttributeNamesDeclared(c.label, c.expression, input.Aliases); err != nil {
+			return types.NewError("ValidationException", err.Error(), nil)
+		}
+	}
+
+	return nil
+}
+
 func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
 	if err := types.ValidateItemMap(input.Key); err != nil {
 		return types.NewError("ValidationException", err.Error(), nil)
@@ -415,6 +438,10 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
 	if err := validateSearchInputMaps(input); err != nil {
+		return nil, nil, err
+	}
+
+	if err := validateSearchExpressionAttributeNames(input); err != nil {
 		return nil, nil, err
 	}
 

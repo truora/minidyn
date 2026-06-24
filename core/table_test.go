@@ -1074,6 +1074,57 @@ func TestPutItem(t *testing.T) {
 	c.NoError(err)
 }
 
+func TestPutItemOverwriteReconcilesGSIKey(t *testing.T) {
+	c := require.New(t)
+
+	newTable := NewTable(tableName)
+	newTable.AttributesDef = map[string]string{"id": "S", "type": "S"}
+	newTable.KeySchema = keySchema{"id", "", false}
+
+	indexName, allStr := "by-type", "ALL"
+	err := newTable.AddGlobalIndexes([]*types.GlobalSecondaryIndex{
+		{
+			ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+			IndexName:             &indexName,
+			KeySchema: []*types.KeySchemaElement{
+				{AttributeName: "type", KeyType: "HASH"},
+			},
+			Projection: &types.Projection{ProjectionType: &allStr},
+		},
+	})
+	c.NoError(err)
+
+	put := func(id, typ string) {
+		_, perr := newTable.Put(&types.PutItemInput{
+			Item:      map[string]*types.Item{"id": {S: new(id)}, "type": {S: new(typ)}},
+			TableName: &newTable.Name,
+		})
+		c.NoError(perr)
+	}
+
+	queryByType := func(typ string) []map[string]*types.Item {
+		items, _, qerr := newTable.SearchData(QueryInput{
+			Index:                     "by-type",
+			KeyConditionExpression:    "#type = :type",
+			Aliases:                   map[string]string{"#type": "type"},
+			ExpressionAttributeValues: map[string]*types.Item{":type": {S: new(typ)}},
+			ScanIndexForward:          true,
+		})
+		c.NoError(qerr)
+
+		return items
+	}
+
+	put("001", "grass")
+	c.Len(queryByType("grass"), 1)
+
+	// Overwriting the same primary key with a changed GSI key must move the
+	// projection: the new key becomes searchable and the old one is dropped.
+	put("001", "fire")
+	c.Len(queryByType("fire"), 1)
+	c.Len(queryByType("grass"), 0)
+}
+
 func TestGetItem(t *testing.T) {
 	c := require.New(t)
 

@@ -3633,6 +3633,38 @@ func TestUpdateItemAndQueryAfterUpsert(t *testing.T) {
 	c.Len(items, 1)
 }
 
+func TestPutItemOverwriteAndQueryByGSI(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	err := ensurePokemonTable(client)
+	c.NoError(err)
+
+	err = ensurePokemonTypeIndex(client)
+	c.NoError(err)
+
+	err = createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	c.NoError(err)
+
+	items, err := getPokemonsByType(client, "grass")
+	c.NoError(err)
+	c.Len(items, 1)
+
+	// Overwrite the item via PutItem, changing the GSI partition key (type).
+	err = createPokemon(client, pokemon{ID: "001", Type: "fire", Name: "Charmander"})
+	c.NoError(err)
+
+	// The projection under the new key must be queryable.
+	items, err = getPokemonsByType(client, "fire")
+	c.NoError(err)
+	c.Len(items, 1)
+
+	// The stale projection under the old key must be gone.
+	items, err = getPokemonsByType(client, "grass")
+	c.NoError(err)
+	c.Len(items, 0)
+}
+
 func BenchmarkQuery(b *testing.B) {
 	c := require.New(b)
 	client := setupClient(tableName)

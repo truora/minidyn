@@ -118,12 +118,27 @@ func (i *index) putData(key string, item map[string]*types.Item) error {
 		return err
 	}
 
-	_, exists := i.refs[key]
+	old, exists := i.refs[key]
 
 	i.refs[key] = indexKey
 
 	if !exists {
 		i.sortedKeys = append(i.sortedKeys, indexKey)
+		sort.Strings(i.sortedKeys)
+
+		return nil
+	}
+
+	// On overwrite, reconcile sortedKeys so a changed index key does not leave
+	// a stale projection behind (and the new projection becomes searchable).
+	if old != indexKey {
+		pos := sort.SearchStrings(i.sortedKeys, old)
+		if pos >= len(i.sortedKeys) {
+			i.sortedKeys = append(i.sortedKeys, indexKey)
+		} else {
+			i.sortedKeys[pos] = indexKey
+		}
+
 		sort.Strings(i.sortedKeys)
 	}
 

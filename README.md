@@ -225,7 +225,7 @@ DynamoDB Local listens on port **8000**. Point your client at `http://localhost:
 
 ### What to do when the interpreter does not work properly?
 
-When it happens you can override the intepretation using like this:
+When it happens you can override the interpretation using like this:
 
 ```go
 client.ActivateNativeInterpreter()

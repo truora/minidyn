@@ -41,32 +41,9 @@ runs in the normal test suite and keeps this file and the expectations in sync.
 ## Known performance issues
 
 Measured on an Apple M-series laptop (`-benchtime 300ms`); times are per
-operation.
-
-### P1 — `Query` scans the whole table
-
-| Benchmark | 100 items | 1,000 | 10,000 |
-|-----------|-----------|-------|--------|
-| `QueryPartition` (10 items returned) | 0.23 ms | 2.6 ms | 26 ms |
-| `QueryRangeLimit` (`sk > :s`, `Limit: 3`) | 0.17 ms | 1.8 ms | 18 ms |
-| `QueryWithFilter` | 0.32 ms | 3.3 ms | 33 ms |
-| `QueryGSI` (10 items returned) | 0.26 ms | 2.9 ms | 28 ms |
-
-A query of one 10-item partition is as expensive as a full `Scan`
-(~58 allocations per item in the table). `core/table.go` `SearchData` walks
-every key in `sortedKeys` (table or index) and evaluates the
-`KeyConditionExpression` on each one. Keys are sorted by partition, so the
-search could binary-search to the first key of the partition (and of the sort
-key range) and stop at the first key past it, making a query
-O(log n + items read). With `Limit` the walk stops early, but still starts at
-the first key of the table, so the cost depends on where the partition is.
-
-Per item, about 70% of `interpreter.(*Language).Match` is spent creating the
-lexer and parser, parsing and re-validating attribute names (`go tool pprof` on
-`ScanFilterFullTable`): the same expression is parsed **once per item**.
-Parsing each expression once per request (or caching the parsed AST by
-expression string) would cut the per-item cost of every Query, Scan and filter
-by about two thirds, including full scans.
+operation. `TestAllocationsDoNotGrow` (normal test suite) also fails when a
+point operation or one-partition query starts allocating more on a larger
+table; allocation counts are deterministic, so it is safe to run in CI.
 
 ### P2 — Transactions copy every table they touch
 
@@ -93,3 +70,23 @@ also re-sorts when an item's index key changes), O(n log n) per insert, so loadi
 `sort.SearchStrings` position is O(n) (a copy) and much cheaper in practice; a
 B-tree or skip list would make it O(log n). Note that this sorting is also the
 source of parity issues #147-#149 (keys compared as joined strings).
+
+## Fixed
+
+### P1 — `Query` scanned the whole table (#158)
+
+`Query` walked every key of the table or index and evaluated the
+`KeyConditionExpression` on each one, re-parsing the expression for every
+item. Now the partition key equality is taken from the (cached) parsed key
+condition and the search binary-searches to that partition; GSI queries
+binary-search a sorted copy of the index entries that is rebuilt only after a
+write. Condition expressions are parsed once per distinct text, which also
+makes `Scan` and filters ~45% cheaper per item.
+
+| Benchmark at 10,000 items | Before | After |
+|---------------------------|--------|-------|
+| `QueryPartition` | 26 ms, 580k allocs | 23 µs, 396 allocs |
+| `QueryRangeLimit` | 18 ms | 16 µs |
+| `QueryWithFilter` | 33 ms | 46 µs |
+| `QueryGSI` | 28 ms | 26 µs |
+| `ScanFilterFullTable` | 35 ms | 21 ms |

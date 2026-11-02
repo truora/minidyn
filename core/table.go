@@ -5,6 +5,7 @@ import (
 	"maps"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/truora/minidyn/interpreter"
@@ -343,15 +344,67 @@ func getPrimaryKey(index *index, k string) (string, bool) {
 	return pk, ok
 }
 
+// fetchQueryData returns the index to search (nil for the table) and its sorted keys. For a
+// Query whose key condition pins the partition key, only the keys of that partition are
+// returned, so the search is O(log n + partition size) instead of a walk over every key.
+// The key condition is still evaluated on each returned key.
 func (t *Table) fetchQueryData(input QueryInput) (*index, []string) {
 	if input.Index != "" {
 		i := t.Indexes[input.Index]
-		i.startSearch(input.ScanIndexForward)
+		prefix, ok := t.partitionPrefix(input, i.keySchema)
+		i.startSearch(input.ScanIndexForward, prefix, ok)
+
+		if ok {
+			return i, keysWithPrefix(i.sortedKeys, prefix)
+		}
 
 		return i, i.sortedKeys
 	}
 
+	if prefix, ok := t.partitionPrefix(input, t.KeySchema); ok {
+		return nil, keysWithPrefix(t.SortedKeys, prefix)
+	}
+
 	return nil, t.SortedKeys
+}
+
+// partitionPrefix returns the prefix shared by the stored keys of the partition a Query's key
+// condition selects ("<hash>" or "<hash>." with a range key), if it selects exactly one.
+// Keys of other partitions may share the prefix (e.g. hash "a.b" for "a."): callers only use
+// it to skip keys that can't match.
+func (t *Table) partitionPrefix(input QueryInput, schema keySchema) (string, bool) {
+	if input.Scan || input.KeyConditionExpression == "" {
+		return "", false
+	}
+
+	ph, ok := interpreter.KeyConditionHashPlaceholder(input.KeyConditionExpression, input.Aliases, schema.HashKey)
+	if !ok {
+		return "", false
+	}
+
+	val, ok := input.ExpressionAttributeValues[ph]
+	if !ok || val == nil {
+		return "", false
+	}
+
+	hash, err := keySchema{HashKey: schema.HashKey}.getKeyValue(t.AttributesDef, map[string]*types.Item{schema.HashKey: val})
+	if err != nil {
+		return "", false
+	}
+
+	if schema.RangeKey != "" {
+		hash += "."
+	}
+
+	return hash, true
+}
+
+// keysWithPrefix returns the contiguous run of sorted keys that start with prefix.
+func keysWithPrefix(keys []string, prefix string) []string {
+	lo := sort.SearchStrings(keys, prefix)
+	n := sort.Search(len(keys)-lo, func(j int) bool { return !strings.HasPrefix(keys[lo+j], prefix) })
+
+	return keys[lo : lo+n]
 }
 
 func prepareSearch(input *QueryInput, index *index, k, startKey string) (string, bool) {

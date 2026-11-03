@@ -81,12 +81,7 @@ func (g *fuzzGen) num() string {
 func (g *fuzzGen) str() string { return pick(g, "", "foo", "foobar", "bar") }
 
 func (g *fuzzGen) list() dynamodbtypes.AttributeValue {
-	n := 1 + g.rng.IntN(2)
-	if g.known {
-		n = g.rng.IntN(3) // #152: empty lists
-	}
-
-	l := make([]dynamodbtypes.AttributeValue, n)
+	l := make([]dynamodbtypes.AttributeValue, g.rng.IntN(3))
 	for i := range l {
 		l[i] = fzS(pick(g, "p", "q"))
 	}
@@ -312,7 +307,7 @@ func (g *fuzzGen) updateAction(e *fuzzExpr) (kw, action, path string) {
 }
 
 func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
-	switch g.rng.IntN(9) {
+	switch g.rng.IntN(10) {
 	case 0:
 		return "SET", e.name("n") + " = " + e.name("n") + " " + pick(g, "+", "-") + " " + e.val(fzN(g.num()))
 	case 1:
@@ -337,11 +332,9 @@ func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
 		}
 
 		return "REMOVE", e.name("m") + "." + e.name("j")
+	case 8:
+		return "REMOVE", e.name("l") + "[0]"
 	default:
-		if g.known {
-			return "REMOVE", e.name("l") + "[0]" // #152: may leave an empty list
-		}
-
 		// Items always have g outside known mode: setting it on an item without g does
 		// not index the item (#161).
 		return "SET", e.name("g") + " = " + e.val(fzS(pick(g, "g1", "g2")))
@@ -444,8 +437,8 @@ func (g *fuzzGen) projection(e *fuzzExpr) *string {
 	paths := []func() string{
 		func() string { return e.name("n") },
 		func() string { return e.name("m") + "." + e.name("k") },
-		func() string { return e.name("l") + "[0]" },
 		func() string { return e.name("ss") },
+		func() string { return e.name("l") + "[0]" },
 	}
 
 	for _, p := range paths {

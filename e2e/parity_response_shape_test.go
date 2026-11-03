@@ -157,8 +157,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 			},
 		},
 		{
-			name:       "EmptyMapAndListAttributes",
-			knownIssue: "#152",
+			name: "EmptyMapAndListAttributes",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

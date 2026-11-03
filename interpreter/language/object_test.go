@@ -571,3 +571,18 @@ func TestGetList(t *testing.T) {
 		t.Errorf("expected item to be NULL got=%s", res)
 	}
 }
+
+func TestGetListOutOfRange(t *testing.T) {
+	list := List{Value: []Object{TRUE}}
+
+	for _, pos := range []int64{1, 5, -1} {
+		if res := list.Get(pos); res != UNDEFINED {
+			t.Errorf("Get(%d): expected UNDEFINED got=%s", pos, res)
+		}
+	}
+
+	empty := List{Value: []Object{}}
+	if res := empty.Get(0); res != UNDEFINED {
+		t.Errorf("Get(0) on empty list: expected UNDEFINED got=%s", res)
+	}
+}

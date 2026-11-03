@@ -121,14 +121,14 @@ func mapTypesToDDBAttributeValue(it *types.Item) ddbtypes.AttributeValue {
 		return &ddbtypes.AttributeValueMemberS{Value: aws.ToString(it.S)}
 	case len(it.SS) != 0:
 		return &ddbtypes.AttributeValueMemberSS{Value: fromStringPtrs(it.SS)}
-	case len(it.L) != 0:
+	case it.L != nil:
 		lv := make([]ddbtypes.AttributeValue, len(it.L))
 		for i, v := range it.L {
 			lv[i] = mapTypesToDDBAttributeValue(v)
 		}
 
 		return &ddbtypes.AttributeValueMemberL{Value: lv}
-	case len(it.M) != 0:
+	case it.M != nil:
 		mv := make(map[string]ddbtypes.AttributeValue, len(it.M))
 		for k, v := range it.M {
 			mv[k] = mapTypesToDDBAttributeValue(v)

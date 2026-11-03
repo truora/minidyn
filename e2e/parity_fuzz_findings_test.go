@@ -278,6 +278,36 @@ func TestE2E_FuzzFindings(t *testing.T) {
 				return []any{len(out.Items), parityKeySignature(out.LastEvaluatedKey)}
 			},
 		},
+		{
+			// #177: indexing past the end of a list used to panic.
+			name: "ListIndexPastTheEnd",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				item := fuzzKey("a", "1")
+				item["l"] = &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}
+				item["l1"] = &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{fzS("x")}}
+				fuzzSetup(ctx, t, client, item)
+
+				got, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName:            aws.String(fuzzTable),
+					Key:                  fuzzKey("a", "1"),
+					ProjectionExpression: aws.String("sk, l[0], l1[1]"),
+				})
+				require.NoError(t, err)
+
+				_, condErr := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:                 aws.String(fuzzTable),
+					Key:                       fuzzKey("a", "1"),
+					UpdateExpression:          aws.String("SET x = :v"),
+					ConditionExpression:       aws.String("l[0] = :v"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": fzS("x")},
+				})
+
+				return []any{len(got.Item), parityAttrValueString(got.Item["sk"]), fuzzErrString(condErr)}
+			},
+		},
 	}
 
 	for _, tt := range tests {

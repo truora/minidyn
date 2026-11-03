@@ -70,6 +70,10 @@ func TestServerTransactionCanceledMessageListsEveryReason(t *testing.T) {
 			for i, code := range tt.codes {
 				c.Equal(code, aws.ToString(tce.CancellationReasons[i].Code))
 
+				if code == "None" {
+					c.Nil(tce.CancellationReasons[i].Item)
+				}
+
 				if code == "ConditionalCheckFailed" {
 					c.Equal("The conditional request failed.", aws.ToString(tce.CancellationReasons[i].Message))
 				} else {
@@ -78,4 +82,54 @@ func TestServerTransactionCanceledMessageListsEveryReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServerTransactionCanceledItemOnlyOnFailedIndex(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+	ctx := context.Background()
+	tn := "pokemons"
+
+	key := func(id string) map[string]ddbtypes.AttributeValue {
+		return map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: id}}
+	}
+
+	_, err := cli.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(tn),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "existing"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "old"},
+		},
+	})
+	require.NoError(t, err)
+
+	put := func(id string) ddbtypes.TransactWriteItem {
+		return ddbtypes.TransactWriteItem{Put: &ddbtypes.Put{TableName: aws.String(tn), Item: key(id)}}
+	}
+	failing := ddbtypes.ConditionCheck{
+		TableName:                           aws.String(tn),
+		Key:                                 key("existing"),
+		ConditionExpression:                 aws.String("attribute_not_exists(id)"),
+		ReturnValuesOnConditionCheckFailure: ddbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+	}
+
+	_, err = cli.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []ddbtypes.TransactWriteItem{put("001"), {ConditionCheck: &failing}, put("002")},
+	})
+
+	c := require.New(t)
+
+	var tce *ddbtypes.TransactionCanceledException
+	c.ErrorAs(err, &tce)
+	c.Len(tce.CancellationReasons, 3)
+	c.Nil(tce.CancellationReasons[0].Item)
+	c.Nil(tce.CancellationReasons[2].Item)
+	c.Equal("ConditionalCheckFailed", aws.ToString(tce.CancellationReasons[1].Code))
+	c.Equal(
+		&ddbtypes.AttributeValueMemberS{Value: "old"},
+		tce.CancellationReasons[1].Item["name"],
+	)
 }

@@ -1147,7 +1147,7 @@ func newTransactionCancelledError(i, n int, opErr error) error {
 		reasons[j] = types.CancellationReason{Code: aws.String(code)}
 	}
 
-	reasons[i].Message = aws.String(core.CancellationReasonConditionalMessage)
+	reasons[i].Message = aws.String(core.ConditionalCheckFailedReasonMessage)
 
 	if ccf.Item != nil {
 		reasons[i].Item = mapTypesToDynamoMapItem(ccf.Item)

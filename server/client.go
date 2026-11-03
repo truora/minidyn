@@ -1157,7 +1157,7 @@ func newServerTransactionCancelledError(i, n int, opErr error) error {
 		reasons[j] = ddbtypes.CancellationReason{Code: aws.String(code)}
 	}
 
-	reasons[i].Message = aws.String(core.CancellationReasonConditionalMessage)
+	reasons[i].Message = aws.String(core.ConditionalCheckFailedReasonMessage)
 
 	if ccf.Item != nil {
 		reasons[i].Item = mapTypesMapToDDBAttributeValue(ccf.Item)

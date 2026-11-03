@@ -337,10 +337,11 @@ func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
 			return "REMOVE", e.name(pick(g, "n", "s", "l", "m", "ss"))
 		}
 
-		if g.chance(0.5) {
-			// Only n: filters call functions on s, l, m and ss (#143), and REMOVE m would
-			// overlap the m.k and m.j paths (#164).
-			return "REMOVE", e.name("n")
+		if g.chance(0.6) {
+			// Only n and g: filters call functions on s, l, m and ss (#143), and REMOVE m
+			// would overlap the m.k and m.j paths (#164). Removing g drops the item from
+			// the by-g index.
+			return "REMOVE", e.name(pick(g, "n", "g"))
 		}
 
 		return "REMOVE", e.name("m") + "." + e.name("j")

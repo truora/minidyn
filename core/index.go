@@ -161,6 +161,11 @@ func (i *index) setRef(key, indexKey string) {
 		return
 	}
 
+	// An item that was not indexed and still has no index key changes nothing.
+	if !exists && indexKey == "" {
+		return
+	}
+
 	i.ordered = nil
 
 	if exists {

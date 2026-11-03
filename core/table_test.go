@@ -1422,7 +1422,9 @@ func TestGSIUpdateDropsRemovedSecondaryIndexKey(t *testing.T) {
 
 	c.Len(query("alpha"), 2)
 
-	// Simulate an update whose result no longer has the index key.
+	// Simulate an update whose result no longer has the index key. This calls setItem
+	// and putData directly because a top-level REMOVE is still a no-op in the update
+	// path (issue #146, fixed separately).
 	idx := table.Indexes["by_seg"]
 	key, err := table.KeySchema.GetKey(table.AttributesDef, map[string]*types.Item{"id": {S: new("1")}})
 	c.NoError(err)
@@ -1439,6 +1441,31 @@ func TestGSIUpdateDropsRemovedSecondaryIndexKey(t *testing.T) {
 	// Writing an item that never had the index key leaves the index alone.
 	c.NoError(idx.putData(key, item))
 	c.Equal(int64(1), idx.count())
+}
+
+func TestGSIOrderedCacheSurvivesWritesWithoutIndexKey(t *testing.T) {
+	c := require.New(t)
+	table, query := newSegIndexTable(t)
+
+	put := func(item map[string]*types.Item) {
+		_, err := table.Put(&types.PutItemInput{TableName: aws.String(table.Name), Item: item})
+		c.NoError(err)
+	}
+
+	put(map[string]*types.Item{"id": {S: new("1")}, "seg": {S: new("alpha")}})
+	c.Len(query("alpha"), 1)
+
+	idx := table.Indexes["by_seg"]
+	c.NotNil(idx.ordered)
+
+	// A write of an item that is not indexed keeps the ordered cache.
+	put(map[string]*types.Item{"id": {S: new("2")}})
+	c.NotNil(idx.ordered)
+
+	// Changing an indexed key invalidates it.
+	put(map[string]*types.Item{"id": {S: new("1")}, "seg": {S: new("beta")}})
+	c.Nil(idx.ordered)
+	c.Len(query("beta"), 1)
 }
 
 func TestGSIPutWithoutKeyDropsSecondaryIndexEntry(t *testing.T) {

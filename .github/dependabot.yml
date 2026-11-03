@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Modules that move together are updated in one PR.
+      aws-sdk:
+        patterns:
+          - "github.com/aws/*"
+      testcontainers:
+        # testcontainers and the Docker/OpenTelemetry modules it pulls in; only the e2e
+        # parity tests use them.
+        patterns:
+          - "github.com/testcontainers/*"
+          - "github.com/moby/*"
+          - "github.com/docker/*"
+          - "go.opentelemetry.io/*"
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

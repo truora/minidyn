@@ -66,6 +66,23 @@ func parityCreatePokemonTable(ctx context.Context, t *testing.T, client *dynamod
 	require.NoError(t, err)
 }
 
+// parityCreateSimpleTable creates an on-demand table keyed by a string "pk".
+func parityCreateSimpleTable(ctx context.Context, t *testing.T, client *dynamodb.Client, name string) {
+	t.Helper()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String(name),
+		KeySchema: []dynamodbtypes.KeySchemaElement{
+			{AttributeName: aws.String("pk"), KeyType: dynamodbtypes.KeyTypeHash},
+		},
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
+			{AttributeName: aws.String("pk"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode: dynamodbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+}
+
 // parityWaitUntilGlobalSecondaryIndexRemoved waits until the named GSI is no longer reported on
 // the table. DynamoDB Local removes GSIs asynchronously; minidyn removes synchronously.
 func parityWaitUntilGlobalSecondaryIndexRemoved(ctx context.Context, t *testing.T, client *dynamodb.Client, table, indexName string) {

@@ -438,11 +438,7 @@ func (g *fuzzGen) projection(e *fuzzExpr) *string {
 		func() string { return e.name("n") },
 		func() string { return e.name("m") + "." + e.name("k") },
 		func() string { return e.name("ss") },
-	}
-
-	if g.known {
-		// Untracked: minidyn panics on a list index past the end (l[0] on an empty list).
-		paths = append(paths, func() string { return e.name("l") + "[0]" })
+		func() string { return e.name("l") + "[0]" },
 	}
 
 	for _, p := range paths {

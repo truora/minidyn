@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -116,4 +117,24 @@ func TestMapperKeepsEmptyMapAndList(t *testing.T) {
 	}}, it)
 
 	require.Equal(t, av, mapTypesToAttributeValue(it))
+}
+
+// BenchmarkAttributeValueMarshalJSON guards the response encoding hot path: every
+// Get/Query/Scan/Batch response over HTTP is encoded this way.
+func BenchmarkAttributeValueMarshalJSON(b *testing.B) {
+	item := map[string]*AttributeValue{}
+	for i := range 20 {
+		item[fmt.Sprintf("a%d", i)] = &AttributeValue{M: map[string]*AttributeValue{
+			"s": {S: aws.String("value")},
+			"l": {L: []*AttributeValue{{N: aws.String("1")}, {M: map[string]*AttributeValue{}}}},
+		}}
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := json.Marshal(item); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

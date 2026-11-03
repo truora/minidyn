@@ -60,12 +60,16 @@ func (ks keySchema) GetKey(attrs map[string]string, item map[string]*types.Item)
 }
 
 // keyAttrValue reads a key attribute, reporting a DynamoDB-style type mismatch
-// for primary keys whose value type differs from the declared one.
+// for primary keys whose value type differs from the declared one. See
+// ErrKeyTypeMismatch for why the detail is separated with ";". Values with no
+// recognizable type (nil or empty) keep the generic invalid attribute error.
 func (ks keySchema) keyAttrValue(attrs map[string]string, item map[string]*types.Item, field string) (any, error) {
 	val, err := getItemValue(item, field, attrs[field])
 	if err != nil && !ks.Secondary && errors.Is(err, ErrInvalidAtrributeValue) && attrs[field] != "" {
-		return nil, fmt.Errorf("%w; %s expected: %s actual: %s",
-			ErrKeyTypeMismatch, field, attrs[field], itemTypeName(item[field]))
+		if actual := itemTypeName(item[field]); actual != "" {
+			return nil, fmt.Errorf("%w; %s expected: %s actual: %s",
+				ErrKeyTypeMismatch, field, attrs[field], actual)
+		}
 	}
 
 	return val, err
@@ -73,6 +77,8 @@ func (ks keySchema) keyAttrValue(attrs map[string]string, item map[string]*types
 
 func itemTypeName(it *types.Item) string {
 	switch {
+	case it == nil:
+		return ""
 	case it.S != nil:
 		return "S"
 	case it.N != nil:

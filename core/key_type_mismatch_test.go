@@ -31,6 +31,25 @@ func TestGetKeyTypeMismatch(t *testing.T) {
 		require.Contains(t, err.Error(), "sk expected: N actual: S")
 	})
 
+	t.Run("empty_value_keeps_generic_error", func(t *testing.T) {
+		t.Parallel()
+
+		ks := keySchema{HashKey: "id"}
+		_, err := ks.GetKey(attrs, map[string]*types.Item{"id": {}})
+		require.ErrorIs(t, err, ErrInvalidAtrributeValue)
+		require.NotErrorIs(t, err, ErrKeyTypeMismatch)
+	})
+
+	t.Run("nil_value_returns_invalid_attribute", func(t *testing.T) {
+		t.Parallel()
+
+		ks := keySchema{HashKey: "id"}
+		require.NotPanics(t, func() {
+			_, err := ks.GetKey(attrs, map[string]*types.Item{"id": nil})
+			require.ErrorIs(t, err, ErrInvalidAtrributeValue)
+		})
+	})
+
 	t.Run("secondary_keeps_generic_error", func(t *testing.T) {
 		t.Parallel()
 
@@ -61,4 +80,10 @@ func TestItemTypeName(t *testing.T) {
 	}
 
 	require.Equal(t, "", itemTypeName(&types.Item{}))
+}
+
+func TestItemTypeNameNil(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "", itemTypeName(nil))
 }

@@ -23,6 +23,13 @@ type DescribeTableOutput struct {
 	Table any `json:"Table,omitempty"`
 }
 
+// ListTablesOutput mirrors DynamoDB ListTablesOutput. TableNames is always
+// sent, as an empty list when there are no tables.
+type ListTablesOutput struct {
+	TableNames             []string `json:"TableNames"`
+	LastEvaluatedTableName *string  `json:"LastEvaluatedTableName,omitempty"`
+}
+
 // PutItemOutput mirrors DynamoDB PutItemOutput.
 type PutItemOutput struct {
 	Attributes map[string]*AttributeValue `json:"Attributes,omitempty"`

@@ -9,6 +9,7 @@ Minidyn aims to accurately mock DynamoDB behavior for local testing. However, it
 - `DeleteTable`
 - `DescribeTable`
 - `GetItem`
+- `ListTables`
 - `PutItem`
 - `Query`
 - `Scan`
@@ -37,7 +38,6 @@ Operations related to administrative, backup, streaming, and global table featur
   - `ExecuteStatement`, `BatchExecuteStatement` (PartiQL)
 
 - **Table & Tagging Operations**:
-  - `ListTables`
   - `DescribeEndpoints`
   - `DescribeLimits`
   - `DescribeTimeToLive`, `UpdateTimeToLive`

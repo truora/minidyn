@@ -265,6 +265,19 @@ func (c *Client) DescribeTable(ctx context.Context, input *DescribeTableInput) (
 	return &DescribeTableOutput{Table: mapTableDescriptionToDDB(table.Description(tableName))}, nil
 }
 
+// ListTables returns the table names in byte order, one page at a time.
+func (c *Client) ListTables(ctx context.Context, input *ListTablesInput) (*ListTablesOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	names, last, err := core.ListTableNames(c.tables, aws.ToString(input.ExclusiveStartTableName), input.Limit)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	return &ListTablesOutput{TableNames: names, LastEvaluatedTableName: last}, nil
+}
+
 // ClearTable removes all data from a specific table, including its indexes.
 func (c *Client) ClearTable(tableName string) error {
 	table, err := c.getTable(tableName)

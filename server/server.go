@@ -77,6 +77,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err = decoder.Decode(&input); err == nil {
 			resp, err = s.client.DescribeTable(context.Background(), &input)
 		}
+	case "ListTables":
+		var input ListTablesInput
+		if err = decoder.Decode(&input); err == nil {
+			resp, err = s.client.ListTables(context.Background(), &input)
+		}
 	case "PutItem":
 		var input PutItemInput
 		if err = decoder.Decode(&input); err == nil {

@@ -45,6 +45,7 @@ type FakeClient interface {
 	DeleteTable(ctx context.Context, input *dynamodb.DeleteTableInput, opt ...func(*dynamodb.Options)) (*dynamodb.DeleteTableOutput, error)
 	UpdateTable(ctx context.Context, input *dynamodb.UpdateTableInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateTableOutput, error)
 	DescribeTable(ctx context.Context, input *dynamodb.DescribeTableInput, ops ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
+	ListTables(ctx context.Context, input *dynamodb.ListTablesInput, opts ...func(*dynamodb.Options)) (*dynamodb.ListTablesOutput, error)
 	PutItem(ctx context.Context, input *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 	UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
@@ -352,6 +353,19 @@ func (fd *Client) DescribeTable(ctx context.Context, input *dynamodb.DescribeTab
 	}
 
 	return output, nil
+}
+
+// ListTables returns the table names in byte order, one page at a time
+func (fd *Client) ListTables(ctx context.Context, input *dynamodb.ListTablesInput, opts ...func(*dynamodb.Options)) (*dynamodb.ListTablesOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	names, last, err := core.ListTableNames(fd.tables, aws.ToString(input.ExclusiveStartTableName), input.Limit)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	return &dynamodb.ListTablesOutput{TableNames: names, LastEvaluatedTableName: last}, nil
 }
 
 // PutItem mock response for dynamodb

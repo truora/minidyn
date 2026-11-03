@@ -13,9 +13,6 @@ response ScanOutput.ScannedCount
 request QueryInput.Select
 request ScanInput.Select
 
-# ListTables not implemented (#150)
-operation ListTables
-
 # table description (#151)
 response GlobalSecondaryIndexDescription.Backfilling
 response GlobalSecondaryIndexDescription.OnDemandThroughput

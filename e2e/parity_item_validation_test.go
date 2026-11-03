@@ -72,8 +72,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "PutItemWrongKeyType",
-			knownIssue: "#142",
+			name: "PutItemWrongKeyType",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -92,8 +91,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "GetItemWrongKeyType",
-			knownIssue: "#142",
+			name: "GetItemWrongKeyType",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

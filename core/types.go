@@ -19,6 +19,10 @@ var (
 
 	// ErrInvalidAtrributeValue when the attributte value is invalid
 	ErrInvalidAtrributeValue = errors.New("Invalid attribute value type") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
+	// ErrKeyTypeMismatch when a primary key attribute has a different type than
+	// the one declared in the table's attribute definitions.
+	ErrKeyTypeMismatch = errors.New("One or more parameter values were invalid: Type mismatch for key") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 )
 
 const (

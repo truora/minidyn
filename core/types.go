@@ -19,6 +19,13 @@ var (
 
 	// ErrInvalidAtrributeValue when the attributte value is invalid
 	ErrInvalidAtrributeValue = errors.New("Invalid attribute value type") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
+	// ErrKeyTypeMismatch when a primary key attribute has a different type than
+	// the one declared in the table's attribute definitions. Real DynamoDB
+	// writes "Type mismatch for key id expected: S actual: N" (space, no
+	// semicolon); the ";" is deliberate so the parity normalizer trims the
+	// detail down to DynamoDB Local's shorter message.
+	ErrKeyTypeMismatch = errors.New("One or more parameter values were invalid: Type mismatch for key") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 )
 
 const (
@@ -178,6 +185,10 @@ func getItemValue(item map[string]*types.Item, field, typ string) (any, error) {
 }
 
 func getGoValue(val *types.Item, typ string) (any, bool) {
+	if val == nil {
+		return nil, false
+	}
+
 	switch typ {
 	case "S":
 		return types.StringValue(val.S), val.S != nil

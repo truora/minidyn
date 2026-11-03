@@ -3513,3 +3513,28 @@ func TestServerEmptyMapAndListKeepTheirType(t *testing.T) {
 	require.Equal(t, emptyM, ccf.Item["info"])
 	require.Equal(t, emptyL, ccf.Item["one"])
 }
+
+func TestServerGetItemNullKeyValueReturnsValidationException(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "nullkey", "id")
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL,
+		strings.NewReader(`{"TableName":"nullkey","Key":{"id":null}}`))
+	require.NoError(t, err)
+
+	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.GetItem")
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode, string(body))
+	require.Contains(t, string(body), "ValidationException")
+}

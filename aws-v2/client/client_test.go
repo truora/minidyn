@@ -1135,6 +1135,41 @@ func TestUpdateItemReturnValuesMatrix(t *testing.T) {
 	allNew := putAndUpdate("urv-all-new", dynamodbtypes.ReturnValueAllNew)
 	c.Len(allNew, 4)
 	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, allNew["second_type"])
+
+	// top-level REMOVE: UPDATED_OLD returns the removed attribute and
+	// UPDATED_NEW returns nothing.
+	putAndRemove := func(pk string, rv dynamodbtypes.ReturnValue) map[string]dynamodbtypes.AttributeValue {
+		t.Helper()
+
+		_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]dynamodbtypes.AttributeValue{
+				"id":   &dynamodbtypes.AttributeValueMemberS{Value: pk},
+				"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+				"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+			},
+		})
+		c.NoError(err)
+
+		out, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String(tableName),
+			Key: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: pk},
+			},
+			UpdateExpression:         aws.String("REMOVE #n"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+			ReturnValues:             rv,
+		})
+		c.NoError(err)
+
+		return out.Attributes
+	}
+
+	removedOld := putAndRemove("urv-rm-old", dynamodbtypes.ReturnValueUpdatedOld)
+	c.Len(removedOld, 1)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, removedOld["name"])
+
+	c.Empty(putAndRemove("urv-rm-new", dynamodbtypes.ReturnValueUpdatedNew))
 }
 
 func TestUpdateItemWithConditionalExpression(t *testing.T) {

@@ -13,7 +13,7 @@ type Environment struct {
 	Aliases   map[string]string
 	toCompact []Object
 	// removed holds the top-level names deleted with Remove, so Apply can
-	// delete them from the item as well.
+	// delete them from the item as well. Allocated lazily by Remove.
 	removed map[string]bool
 }
 
@@ -23,7 +23,6 @@ func NewEnvironment() *Environment {
 		store:     map[string]Object{},
 		Aliases:   map[string]string{},
 		toCompact: []Object{},
-		removed:   map[string]bool{},
 	}
 }
 
@@ -137,6 +136,11 @@ func (e *Environment) Remove(name string) {
 
 	if _, ok := e.store[n]; ok {
 		delete(e.store, n)
+
+		if e.removed == nil {
+			e.removed = map[string]bool{}
+		}
+
 		e.removed[n] = true
 	}
 }

@@ -964,6 +964,34 @@ func TestUpdateReturnValuesSemantics(t *testing.T) {
 	c.Equal("Bulbasaur", types.StringValue(allNew["name"].S))
 	c.Equal("rv-all-new", types.StringValue(allNew["id"].S))
 
+	// top-level REMOVE: UPDATED_OLD returns the removed attribute and
+	// UPDATED_NEW returns nothing.
+	runRemove := func(id string, rv string) map[string]*types.Item {
+		t.Helper()
+
+		item := createPokemon(pokemon{ID: id, Type: "grass", Name: "Bulbasaur"})
+
+		_, perr := newTable.Put(&types.PutItemInput{Item: item, TableName: &newTable.Name})
+		c.NoError(perr)
+
+		out, uerr := newTable.Update(&types.UpdateItemInput{
+			TableName:                &newTable.Name,
+			Key:                      primaryKeyFromPokemonItem(item),
+			ReturnValues:             aws.String(rv),
+			UpdateExpression:         "REMOVE #n",
+			ExpressionAttributeNames: map[string]string{"#n": "type"},
+		})
+		c.NoError(uerr)
+
+		return out
+	}
+
+	removedOld := runRemove("rv-rm-old", "UPDATED_OLD")
+	c.Len(removedOld, 1)
+	c.Equal("grass", types.StringValue(removedOld["type"].S))
+
+	c.Empty(runRemove("rv-rm-new", "UPDATED_NEW"))
+
 	newTable.Clear()
 }
 
@@ -990,7 +1018,7 @@ func TestUpdateInvalidReturnValues(t *testing.T) {
 		Key:                       primaryKeyFromPokemonItem(item),
 		ReturnValues:              aws.String("NOT_A_REAL_MODE"),
 		UpdateExpression:          "SET #n = :new",
-		ExpressionAttributeNames:  map[string]string{"#n": "name"},
+		ExpressionAttributeNames:  map[string]string{"#n": "type"},
 		ExpressionAttributeValues: map[string]*types.Item{":new": {S: new("X")}},
 	})
 	c.Error(err)

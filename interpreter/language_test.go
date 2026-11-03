@@ -394,3 +394,21 @@ func TestLanguageProject_rejectsUpdateExpressionSyntax(t *testing.T) {
 		t.Fatalf("expected ErrSyntaxError, got %v", err)
 	}
 }
+
+func BenchmarkLanguageMatch(b *testing.B) {
+	li := Language{}
+	input := MatchInput{
+		TableName:  "test",
+		Expression: ":a = a",
+		Item:       map[string]*types.Item{"a": {S: new("a")}},
+		Attributes: map[string]*types.Item{":a": {S: new("a")}},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := li.Match(input); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

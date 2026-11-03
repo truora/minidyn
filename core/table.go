@@ -370,28 +370,15 @@ func (t *Table) fetchQueryData(input QueryInput) (idx *index, keys []string, pre
 	return nil, t.SortedKeys, "", false
 }
 
-// errStartKeyOutsideRange is DynamoDB's error for an ExclusiveStartKey that is not in the
-// queried partition.
-var errStartKeyOutsideRange = types.NewError("ValidationException",
-	"The provided starting key does not match the range key predicate", nil)
-
-// checkSeek keeps a seeked search equivalent to the full walk it replaces:
-//   - an ExclusiveStartKey outside the queried partition is rejected, as DynamoDB does;
-//   - when the partition has no keys, the conditions are still evaluated once against the
-//     first item the walk would have visited, so invalid conditions keep failing whether or
-//     not the partition holds data.
-func (t *Table) checkSeek(input QueryInput, idx *index, keys []string, prefix string) error {
-	if len(input.ExclusiveStartKey) != 0 {
-		schema := t.KeySchema
-		if idx != nil {
-			schema = idx.keySchema
-		}
-
-		if startKey, err := schema.GetKey(t.AttributesDef, input.ExclusiveStartKey); err == nil && !strings.HasPrefix(startKey, prefix) {
-			return errStartKeyOutsideRange
-		}
-	}
-
+// checkSeek keeps a seeked search equivalent to the full walk it replaces: when the
+// partition has no keys, the conditions are still evaluated once against the first item the
+// walk would have visited, so invalid conditions keep failing whether or not the partition
+// holds data.
+//
+// An ExclusiveStartKey outside the partition (or missing key attributes) is not rejected,
+// unlike DynamoDB: consumers' tests rely on that leniency, so validating it is a separate,
+// release-noted change. Such a start key is never reached, so the page is empty.
+func (t *Table) checkSeek(input QueryInput, idx *index, keys []string) error {
 	if len(keys) != 0 {
 		return nil
 	}
@@ -570,10 +557,10 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 	items := []map[string]*types.Item{}
 	limit := input.Limit
 	exclusiveStartKey := input.ExclusiveStartKey
-	index, sortedKeys, prefix, seeked := t.fetchQueryData(input)
+	index, sortedKeys, _, seeked := t.fetchQueryData(input)
 
 	if seeked {
-		if err := t.checkSeek(input, index, sortedKeys, prefix); err != nil {
+		if err := t.checkSeek(input, index, sortedKeys); err != nil {
 			return nil, nil, err
 		}
 	}

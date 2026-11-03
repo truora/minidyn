@@ -1140,22 +1140,21 @@ func newTransactionCancelledError(i, n int, opErr error) error {
 		return mapKnownError(opErr)
 	}
 
+	codes := core.ConditionalCheckFailedCancellationCodes(i, n)
+
 	reasons := make([]types.CancellationReason, n)
-	for j := range reasons {
-		reasons[j] = types.CancellationReason{Code: aws.String("None")}
+	for j, code := range codes {
+		reasons[j] = types.CancellationReason{Code: aws.String(code)}
 	}
 
-	reasons[i] = types.CancellationReason{
-		Code:    aws.String("ConditionalCheckFailed"),
-		Message: aws.String(core.ErrConditionalRequestFailed.Error()),
-	}
+	reasons[i].Message = aws.String(core.ConditionalCheckFailedReasonMessage)
 
 	if ccf.Item != nil {
 		reasons[i].Item = mapTypesToDynamoMapItem(ccf.Item)
 	}
 
 	return &types.TransactionCanceledException{
-		Message:             aws.String("Transaction cancelled, please refer cancellation reasons for specific reasons [ConditionalCheckFailed]"),
+		Message:             aws.String(core.TransactionCanceledMessage(codes)),
 		CancellationReasons: reasons,
 	}
 }

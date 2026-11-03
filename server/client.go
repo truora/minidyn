@@ -1150,22 +1150,21 @@ func newServerTransactionCancelledError(i, n int, opErr error) error {
 		return mapKnownError(opErr)
 	}
 
+	codes := core.ConditionalCheckFailedCancellationCodes(i, n)
+
 	reasons := make([]ddbtypes.CancellationReason, n)
-	for j := range reasons {
-		reasons[j] = ddbtypes.CancellationReason{Code: aws.String("None")}
+	for j, code := range codes {
+		reasons[j] = ddbtypes.CancellationReason{Code: aws.String(code)}
 	}
 
-	reasons[i] = ddbtypes.CancellationReason{
-		Code:    aws.String("ConditionalCheckFailed"),
-		Message: aws.String(core.ErrConditionalRequestFailed.Error()),
-	}
+	reasons[i].Message = aws.String(core.ConditionalCheckFailedReasonMessage)
 
 	if ccf.Item != nil {
 		reasons[i].Item = mapTypesMapToDDBAttributeValue(ccf.Item)
 	}
 
 	return &ddbtypes.TransactionCanceledException{
-		Message:             aws.String("Transaction cancelled, please refer cancellation reasons for specific reasons [ConditionalCheckFailed]"),
+		Message:             aws.String(core.TransactionCanceledMessage(codes)),
 		CancellationReasons: reasons,
 	}
 }

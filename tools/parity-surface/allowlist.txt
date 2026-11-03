@@ -1,0 +1,198 @@
+# Known gaps in minidyn's API surface, checked by `go run ./tools/parity-surface -check`.
+#
+# One "<kind> <name>" per line; text after # is a comment, with the GitHub issue
+# tracking the gap if there is one. When a gap is fixed, -check fails until the
+# line is removed; a new gap (e.g. a field added by an SDK bump) fails until it
+# is implemented, covered by a parity test or listed here.
+
+# ScannedCount never set (#144)
+response QueryOutput.ScannedCount
+response ScanOutput.ScannedCount
+
+# Select: COUNT not honored (#144)
+request QueryInput.Select
+request ScanInput.Select
+
+# ListTables not implemented (#150)
+operation ListTables
+
+# table description (#151)
+response GlobalSecondaryIndexDescription.Backfilling
+response GlobalSecondaryIndexDescription.OnDemandThroughput
+response GlobalSecondaryIndexDescription.ProvisionedThroughput
+response TableDescription.AttributeDefinitions
+response TableDescription.BillingModeSummary
+response TableDescription.DeletionProtectionEnabled
+response TableDescription.OnDemandThroughput
+response TableDescription.ProvisionedThroughput
+response TableDescription.TableStatus
+
+# table settings not stored (#151)
+request CreateTableInput.DeletionProtectionEnabled
+request CreateTableInput.OnDemandThroughput
+request UpdateTableInput.BillingMode
+request UpdateTableInput.DeletionProtectionEnabled
+request UpdateTableInput.OnDemandThroughput
+request UpdateTableInput.ProvisionedThroughput
+
+# parallel scan (#155)
+request ScanInput.Segment
+request ScanInput.TotalSegments
+
+# legacy parameters (#156)
+request AttributeValueUpdate.Action
+request AttributeValueUpdate.Value
+request Condition.AttributeValueList
+request Condition.ComparisonOperator
+request DeleteItemInput.Expected
+request ExpectedAttributeValue.AttributeValueList
+request ExpectedAttributeValue.ComparisonOperator
+request ExpectedAttributeValue.Exists
+request ExpectedAttributeValue.Value
+request GetItemInput.AttributesToGet
+request KeysAndAttributes.AttributesToGet
+request PutItemInput.Expected
+request QueryInput.AttributesToGet
+request QueryInput.ConditionalOperator
+request QueryInput.KeyConditions
+request QueryInput.QueryFilter
+request ScanInput.AttributesToGet
+request ScanInput.ConditionalOperator
+request ScanInput.ScanFilter
+request UpdateItemInput.AttributeUpdates
+request UpdateItemInput.Expected
+
+# ReturnValuesOnConditionCheckFailure ignored (#157)
+request Delete.ReturnValuesOnConditionCheckFailure
+request DeleteItemInput.ReturnValuesOnConditionCheckFailure
+request Put.ReturnValuesOnConditionCheckFailure
+request PutItemInput.ReturnValuesOnConditionCheckFailure
+
+# accepted: minidyn reads are always consistent
+request GetItemInput.ConsistentRead
+request QueryInput.ConsistentRead
+request ScanInput.ConsistentRead
+
+# not emulated: PartiQL
+operation BatchExecuteStatement
+operation ExecuteStatement
+operation ExecuteTransaction
+
+# not emulated: TTL
+operation DescribeTimeToLive
+operation UpdateTimeToLive
+
+# not emulated: account limits
+operation DescribeLimits
+
+# not emulated: capacity and item collection metrics
+request BatchGetItemInput.ReturnConsumedCapacity
+request BatchWriteItemInput.ReturnConsumedCapacity
+request BatchWriteItemInput.ReturnItemCollectionMetrics
+request DeleteItemInput.ReturnConsumedCapacity
+request DeleteItemInput.ReturnItemCollectionMetrics
+request GetItemInput.ReturnConsumedCapacity
+request QueryInput.ReturnConsumedCapacity
+request ScanInput.ReturnConsumedCapacity
+request TransactGetItemsInput.ReturnConsumedCapacity
+request TransactWriteItemsInput.ReturnConsumedCapacity
+request TransactWriteItemsInput.ReturnItemCollectionMetrics
+request UpdateItemInput.ReturnConsumedCapacity
+request UpdateItemInput.ReturnItemCollectionMetrics
+response BatchGetItemOutput.ConsumedCapacity
+response BatchWriteItemOutput.ConsumedCapacity
+response BatchWriteItemOutput.ItemCollectionMetrics
+response DeleteItemOutput.ConsumedCapacity
+response DeleteItemOutput.ItemCollectionMetrics
+response GetItemOutput.ConsumedCapacity
+response PutItemOutput.ConsumedCapacity
+response PutItemOutput.ItemCollectionMetrics
+response QueryOutput.ConsumedCapacity
+response ScanOutput.ConsumedCapacity
+response TransactGetItemsOutput.ConsumedCapacity
+response TransactWriteItemsOutput.ConsumedCapacity
+response TransactWriteItemsOutput.ItemCollectionMetrics
+response UpdateItemOutput.ConsumedCapacity
+response UpdateItemOutput.ItemCollectionMetrics
+
+# not emulated: deployment metadata
+response GlobalSecondaryIndexDescription.IndexArn
+response GlobalSecondaryIndexDescription.IndexSizeBytes
+response LocalSecondaryIndexDescription.IndexArn
+response LocalSecondaryIndexDescription.IndexSizeBytes
+response TableDescription.CreationDateTime
+response TableDescription.TableArn
+response TableDescription.TableId
+response TableDescription.TableSizeBytes
+
+# not emulated: endpoint discovery
+operation DescribeEndpoints
+
+# not emulated: tags
+operation ListTagsOfResource
+operation TagResource
+operation UntagResource
+
+# not emulated: transaction idempotency
+request TransactWriteItemsInput.ClientRequestToken
+
+# out of scope: backups, global tables, streams, exports/imports, resource
+# policies, SSE, table class, replicas, warm throughput, contributor insights,
+# autoscaling
+operation CreateBackup
+operation CreateGlobalTable
+operation DeleteBackup
+operation DeleteResourcePolicy
+operation DescribeBackup
+operation DescribeContinuousBackups
+operation DescribeContributorInsights
+operation DescribeExport
+operation DescribeGlobalTable
+operation DescribeGlobalTableSettings
+operation DescribeImport
+operation DescribeKinesisStreamingDestination
+operation DescribeTableReplicaAutoScaling
+operation DisableKinesisStreamingDestination
+operation EnableKinesisStreamingDestination
+operation ExportTableToPointInTime
+operation GetResourcePolicy
+operation ImportTable
+operation ListBackups
+operation ListContributorInsights
+operation ListExports
+operation ListGlobalTables
+operation ListImports
+operation PutResourcePolicy
+operation RestoreTableFromBackup
+operation RestoreTableToPointInTime
+operation UpdateContinuousBackups
+operation UpdateContributorInsights
+operation UpdateGlobalTable
+operation UpdateGlobalTableSettings
+operation UpdateKinesisStreamingDestination
+operation UpdateTableReplicaAutoScaling
+request CreateTableInput.ResourcePolicy
+request CreateTableInput.SSESpecification
+request CreateTableInput.StreamSpecification
+request CreateTableInput.TableClass
+request CreateTableInput.Tags
+request CreateTableInput.WarmThroughput
+request UpdateTableInput.MultiRegionConsistency
+request UpdateTableInput.ReplicaUpdates
+request UpdateTableInput.SSESpecification
+request UpdateTableInput.StreamSpecification
+request UpdateTableInput.TableClass
+request UpdateTableInput.WarmThroughput
+response GlobalSecondaryIndexDescription.WarmThroughput
+response TableDescription.ArchivalSummary
+response TableDescription.GlobalTableVersion
+response TableDescription.LatestStreamArn
+response TableDescription.LatestStreamLabel
+response TableDescription.MultiRegionConsistency
+response TableDescription.Replicas
+response TableDescription.RestoreSummary
+response TableDescription.SSEDescription
+response TableDescription.StreamSpecification
+response TableDescription.TableClassSummary
+response TableDescription.WarmThroughput
+

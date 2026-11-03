@@ -112,6 +112,36 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "PutItemInvalidReturnValues",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				errs := map[string]string{}
+
+				for _, rv := range []dynamodbtypes.ReturnValue{
+					dynamodbtypes.ReturnValueAllNew,
+					dynamodbtypes.ReturnValueUpdatedOld,
+					"BOGUS",
+				} {
+					_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+						TableName: aws.String(parityPokemonTable),
+						Item: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+						},
+						ReturnValues: rv,
+					})
+					require.Error(t, err)
+
+					errs[string(rv)] = normalizeSDKErrorString(err.Error())
+				}
+
+				return errs
+			},
+		},
+		{
 			name: "GetItemTableNotFound",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
@@ -151,8 +181,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "PutItemReturnValuesAllOld",
-			knownIssue: "#141",
+			name: "PutItemReturnValuesAllOld",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -173,7 +202,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				return []any{len(first.Attributes), second.Attributes}
+				return []any{len(first.Attributes), parityNormalizeItemSets(second.Attributes)}
 			},
 		},
 		{

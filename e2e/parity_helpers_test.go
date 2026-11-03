@@ -311,3 +311,31 @@ func paritySortedUnprocessedKeySignatures(out *dynamodb.BatchGetItemOutput, tabl
 
 	return sigs
 }
+
+// parityNormalizeSets sorts string, number and binary set members in place (recursively through
+// maps and lists). DynamoDB does not guarantee set ordering, so parity compares sets order-free.
+func parityNormalizeSets(av dynamodbtypes.AttributeValue) {
+	switch v := av.(type) {
+	case *dynamodbtypes.AttributeValueMemberSS:
+		sort.Strings(v.Value)
+	case *dynamodbtypes.AttributeValueMemberNS:
+		sort.Strings(v.Value)
+	case *dynamodbtypes.AttributeValueMemberBS:
+		sort.Slice(v.Value, func(i, j int) bool { return string(v.Value[i]) < string(v.Value[j]) })
+	case *dynamodbtypes.AttributeValueMemberL:
+		for _, e := range v.Value {
+			parityNormalizeSets(e)
+		}
+	case *dynamodbtypes.AttributeValueMemberM:
+		parityNormalizeItemSets(v.Value)
+	}
+}
+
+// parityNormalizeItemSets applies parityNormalizeSets to every attribute of item and returns it.
+func parityNormalizeItemSets(item map[string]dynamodbtypes.AttributeValue) map[string]dynamodbtypes.AttributeValue {
+	for _, v := range item {
+		parityNormalizeSets(v)
+	}
+
+	return item
+}

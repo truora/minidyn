@@ -93,6 +93,30 @@ Or run the full parity package:
 go run ./tools/run-e2e
 ```
 
+### Known divergences
+
+If a new test exposes a minidyn bug you are not fixing now, do not leave the suite red and
+do not weaken the test. File a GitHub issue (repro, expected DynamoDB Local behavior,
+actual minidyn behavior, where to look) and set `knownIssue: "#<number>"` on the case,
+which must run through `RunE2EKnown` instead of `RunE2E`. The case is then skipped while it
+still fails and **fails** once it passes, so the marker and the issue can't go stale.
+`MINIDYN_E2E_RUN_KNOWN=1` runs known-issue cases as normal tests while fixing one.
+
+### Finding gaps proactively
+
+- `MINIDYN_E2E_TRACE=report go run ./tools/run-e2e -count=1` also diffs every raw response
+  and the final table/index contents of each test (`strict` fails on differences;
+  `MINIDYN_E2E_TRACE_OUT=<file>` writes one JSON line per diverging test). Benign
+  differences are normalized in `e2e/trace_test.go`.
+- `go run ./tools/parity-surface` lists unimplemented operations, request fields that are
+  decoded but never read and response fields that are never set. Its allowlist
+  (`tools/parity-surface/allowlist.txt`) is enforced by `go test ./tools/...`: remove the
+  entry when you close a gap, and triage any new one.
+- `go run ./tools/run-e2e TestE2E_Fuzz` runs random operation sequences against both
+  engines (`MINIDYN_E2E_FUZZ_SEEDS`, `_OPS`, `_SEED`, `_KNOWN`; see `e2e/README.md`). Turn a fuzz failure into a minimal case in
+  `e2e/parity_fuzz_findings_test.go`; when fixing an issue, remove the generator
+  restriction that names it.
+
 ## Step 6: Report result
 
 Report with this format:

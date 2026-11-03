@@ -1,0 +1,493 @@
+package e2e
+
+import (
+	"context"
+	"errors"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/stretchr/testify/require"
+)
+
+// paritySortedIDs returns sorted "id" values from Scan/Query items (Scan order is undefined).
+func paritySortedIDs(items []map[string]dynamodbtypes.AttributeValue) []string {
+	ids := make([]string, 0, len(items))
+
+	for _, it := range items {
+		if v, ok := it["id"].(*dynamodbtypes.AttributeValueMemberS); ok {
+			ids = append(ids, v.Value)
+		}
+	}
+
+	sort.Strings(ids)
+
+	return ids
+}
+
+func paritySeedStarters(ctx context.Context, t *testing.T, client *dynamodb.Client) {
+	t.Helper()
+
+	parityCreatePokemonTable(ctx, t, client)
+	parityCreatePokemon(ctx, t, client, parityPokemon{
+		ID: "001", Type: "grass", SecondType: "poison", Name: "Bulbasaur", Level: 5,
+		Moves: []string{"tackle", "vine whip"}, Local: []string{"kanto"},
+	})
+	parityCreatePokemon(ctx, t, client, parityPokemon{
+		ID: "004", Type: "fire", Name: "Charmander", Level: 12,
+		Moves: []string{"scratch", "ember"}, Local: []string{"kanto", "johto"},
+	})
+	parityCreatePokemon(ctx, t, client, parityPokemon{
+		ID: "007", Type: "water", Name: "Squirtle", Level: 30,
+		Moves: []string{"tackle"},
+	})
+}
+
+func TestE2E_ItemValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		knownIssue string
+		fn         func(t *testing.T, client *dynamodb.Client) any
+	}{
+		{
+			name: "PutItemMissingKey",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"name": &dynamodbtypes.AttributeValueMemberS{Value: "Missingno"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name:       "PutItemWrongKeyType",
+			knownIssue: "#142",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name:       "GetItemWrongKeyType",
+			knownIssue: "#142",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreatePokemonTable(ctx, t, client)
+
+				_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "GetItemTableNotFound",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName: aws.String("does-not-exist"),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+				})
+				require.Error(t, err)
+
+				var notFound *dynamodbtypes.ResourceNotFoundException
+
+				return errors.As(err, &notFound)
+			},
+		},
+		{
+			name: "PutItemConditionalCheckFailed",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName:           aws.String(parityPokemonTable),
+					Item:                parityMarshalPokemon(t, parityPokemon{ID: "001", Type: "grass", Name: "Clone"}),
+					ConditionExpression: aws.String("attribute_not_exists(id)"),
+				})
+				require.Error(t, err)
+
+				var ccf *dynamodbtypes.ConditionalCheckFailedException
+
+				return []any{errors.As(err, &ccf), normalizeSDKErrorString(err.Error()), parityGetPokemon(ctx, t, client, "001")}
+			},
+		},
+		{
+			name:       "PutItemReturnValuesAllOld",
+			knownIssue: "#141",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				first, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName:    aws.String(parityPokemonTable),
+					Item:         parityMarshalPokemon(t, parityPokemon{ID: "025", Type: "electric", Name: "Pikachu"}),
+					ReturnValues: dynamodbtypes.ReturnValueAllOld,
+				})
+				require.NoError(t, err)
+
+				second, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName:    aws.String(parityPokemonTable),
+					Item:         parityMarshalPokemon(t, parityPokemon{ID: "004", Type: "fire", Name: "Charmeleon", Level: 16}),
+					ReturnValues: dynamodbtypes.ReturnValueAllOld,
+				})
+				require.NoError(t, err)
+
+				return []any{len(first.Attributes), second.Attributes}
+			},
+		},
+		{
+			name: "UpdateItemArithmeticListAppendIfNotExists",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"},
+					},
+					UpdateExpression: aws.String(
+						"SET lvl = lvl + :inc, #local = list_append(#local, :regions), " +
+							"evolves_at = if_not_exists(evolves_at, :evo), #n = if_not_exists(#n, :name)",
+					),
+					ExpressionAttributeNames: map[string]string{
+						"#local": "local",
+						"#n":     "name",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":inc": &dynamodbtypes.AttributeValueMemberN{Value: "4"},
+						":regions": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{
+							&dynamodbtypes.AttributeValueMemberS{Value: "hoenn"},
+						}},
+						":evo":  &dynamodbtypes.AttributeValueMemberN{Value: "16"},
+						":name": &dynamodbtypes.AttributeValueMemberS{Value: "Ignored"},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueAllNew,
+				})
+				require.NoError(t, err)
+
+				return parityNormalizeItemSets(out.Attributes)
+			},
+		},
+		{
+			name: "UpdateItemReturnValuesUpdatedOldAndNew",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				key := map[string]dynamodbtypes.AttributeValue{
+					"id": &dynamodbtypes.AttributeValueMemberS{Value: "007"},
+				}
+
+				oldOut, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:        aws.String(parityPokemonTable),
+					Key:              key,
+					UpdateExpression: aws.String("SET lvl = :lvl, nickname = :nick"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":lvl":  &dynamodbtypes.AttributeValueMemberN{Value: "31"},
+						":nick": &dynamodbtypes.AttributeValueMemberS{Value: "Squirt"},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueUpdatedOld,
+				})
+				require.NoError(t, err)
+
+				newOut, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:        aws.String(parityPokemonTable),
+					Key:              key,
+					UpdateExpression: aws.String("SET lvl = lvl + :one REMOVE nickname"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":one": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueUpdatedNew,
+				})
+				require.NoError(t, err)
+
+				return []any{oldOut.Attributes, newOut.Attributes}
+			},
+		},
+		{
+			name:       "UpdateItemRemoveTopLevelAttributes",
+			knownIssue: "#146",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				key := map[string]dynamodbtypes.AttributeValue{
+					"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+				}
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:        aws.String(parityPokemonTable),
+					Key:              key,
+					UpdateExpression: aws.String("SET lease_owner = :o, lease_until = :u"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":o": &dynamodbtypes.AttributeValueMemberS{Value: "worker-1"},
+						":u": &dynamodbtypes.AttributeValueMemberN{Value: "1700000000"},
+					},
+				})
+				require.NoError(t, err)
+
+				removeOnly, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:        aws.String(parityPokemonTable),
+					Key:              key,
+					UpdateExpression: aws.String("REMOVE lease_owner, lease_until"),
+					ReturnValues:     dynamodbtypes.ReturnValueAllNew,
+				})
+				require.NoError(t, err)
+
+				mixed, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:        aws.String(parityPokemonTable),
+					Key:              key,
+					UpdateExpression: aws.String("SET lvl = :lvl REMOVE second_type, #n"),
+					ExpressionAttributeNames: map[string]string{
+						"#n": "name",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":lvl": &dynamodbtypes.AttributeValueMemberN{Value: "6"},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueAllNew,
+				})
+				require.NoError(t, err)
+
+				return []any{
+					parityNormalizeItemSets(removeOnly.Attributes),
+					parityNormalizeItemSets(mixed.Attributes),
+					parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "001")),
+				}
+			},
+		},
+		{
+			name: "UpdateItemConditionalCheckFailed",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+					},
+					UpdateExpression:    aws.String("SET lvl = :lvl"),
+					ConditionExpression: aws.String("lvl > :min"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":lvl": &dynamodbtypes.AttributeValueMemberN{Value: "100"},
+						":min": &dynamodbtypes.AttributeValueMemberN{Value: "10"},
+					},
+				})
+				require.Error(t, err)
+
+				var ccf *dynamodbtypes.ConditionalCheckFailedException
+
+				return []any{errors.As(err, &ccf), normalizeSDKErrorString(err.Error()), parityGetPokemon(ctx, t, client, "001")}
+			},
+		},
+		{
+			name:       "ScanFilterFunctions",
+			knownIssue: "#143",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				filters := []struct {
+					expr   string
+					values map[string]dynamodbtypes.AttributeValue
+				}{
+					{"contains(moves, :v)", map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberS{Value: "tackle"},
+					}},
+					{"contains(#local, :v)", map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberS{Value: "johto"},
+					}},
+					{"contains(#n, :v)", map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberS{Value: "rt"},
+					}},
+					{"begins_with(#n, :v)", map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberS{Value: "Char"},
+					}},
+					{"#t IN (:a, :b)", map[string]dynamodbtypes.AttributeValue{
+						":a": &dynamodbtypes.AttributeValueMemberS{Value: "fire"},
+						":b": &dynamodbtypes.AttributeValueMemberS{Value: "water"},
+					}},
+					{"lvl BETWEEN :a AND :b", map[string]dynamodbtypes.AttributeValue{
+						":a": &dynamodbtypes.AttributeValueMemberN{Value: "5"},
+						":b": &dynamodbtypes.AttributeValueMemberN{Value: "12"},
+					}},
+					{"size(moves) > :v", map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberN{Value: "1"},
+					}},
+					{"attribute_type(#local, :v)", map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberS{Value: "L"},
+					}},
+					{"NOT (#t = :a) AND (lvl < :b OR #n = :c)", map[string]dynamodbtypes.AttributeValue{
+						":a": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+						":b": &dynamodbtypes.AttributeValueMemberN{Value: "20"},
+						":c": &dynamodbtypes.AttributeValueMemberS{Value: "Squirtle"},
+					}},
+					{"second_type <> :v", map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
+					}},
+				}
+
+				results := make([][]string, 0, len(filters))
+
+				for _, f := range filters {
+					names := map[string]string{}
+					for _, alias := range []string{"#local", "#n", "#t"} {
+						if strings.Contains(f.expr, alias) {
+							names[alias] = map[string]string{"#local": "local", "#n": "name", "#t": "type"}[alias]
+						}
+					}
+
+					input := &dynamodb.ScanInput{
+						TableName:                 aws.String(parityPokemonTable),
+						FilterExpression:          aws.String(f.expr),
+						ExpressionAttributeValues: f.values,
+					}
+					if len(names) > 0 {
+						input.ExpressionAttributeNames = names
+					}
+
+					out, err := client.Scan(ctx, input)
+					require.NoError(t, err, f.expr)
+
+					results = append(results, paritySortedIDs(out.Items))
+				}
+
+				return results
+			},
+		},
+		{
+			name:       "ScanSelectCount",
+			knownIssue: "#144",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				out, err := client.Scan(ctx, &dynamodb.ScanInput{
+					TableName:        aws.String(parityPokemonTable),
+					Select:           dynamodbtypes.SelectCount,
+					FilterExpression: aws.String("lvl >= :min"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":min": &dynamodbtypes.AttributeValueMemberN{Value: "10"},
+					},
+				})
+				require.NoError(t, err)
+
+				return []any{out.Count, out.ScannedCount, len(out.Items)}
+			},
+		},
+		{
+			name:       "ScanProjectionExpressionNested",
+			knownIssue: "#143",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				out, err := client.Scan(ctx, &dynamodb.ScanInput{
+					TableName:            aws.String(parityPokemonTable),
+					ProjectionExpression: aws.String("id, #local[0], #n"),
+					ExpressionAttributeNames: map[string]string{
+						"#local": "local",
+						"#n":     "name",
+					},
+				})
+				require.NoError(t, err)
+
+				sort.Slice(out.Items, func(i, j int) bool {
+					return parityAttrValueString(out.Items[i]["id"]) < parityAttrValueString(out.Items[j]["id"])
+				})
+
+				return out.Items
+			},
+		},
+		{
+			name: "DeleteItemConditionalCheckFailed",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "007"},
+					},
+					ConditionExpression: aws.String("#t = :t"),
+					ExpressionAttributeNames: map[string]string{
+						"#t": "type",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":t": &dynamodbtypes.AttributeValueMemberS{Value: "fire"},
+					},
+				})
+				require.Error(t, err)
+
+				var ccf *dynamodbtypes.ConditionalCheckFailedException
+
+				return []any{errors.As(err, &ccf), normalizeSDKErrorString(err.Error()), len(parityGetPokemon(ctx, t, client, "007")) > 0}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RunE2EKnown(t, tt.knownIssue, tt.fn)
+		})
+	}
+}

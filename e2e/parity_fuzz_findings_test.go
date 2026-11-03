@@ -88,8 +88,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			},
 		},
 		{
-			name:       "DeleteFromMissingSet",
-			knownIssue: "#162",
+			name: "DeleteFromMissingSet",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

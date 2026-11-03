@@ -580,6 +580,93 @@ func TestEvalDELETEUpdate(t *testing.T) {
 	}
 }
 
+func TestEvalDELETEUpdateMissingAttribute(t *testing.T) {
+	env := startEvalUpdateEnv(t)
+
+	result := testEvalUpdate(t, "DELETE absent_set :strSet", env)
+	if isError(result) {
+		t.Fatalf("error evaluating update, env=%s, %s", env.String(), result.Inspect())
+	}
+
+	if got := env.Get("absent_set"); got != UNDEFINED {
+		t.Errorf("DELETE on a missing attribute must not create it, got=%v", got.Inspect())
+	}
+}
+
+func TestEvalDELETEEmptiedSetRemovesAttribute(t *testing.T) {
+	tests := []struct {
+		name   string
+		attr   *types.Item
+		update string
+	}{
+		{"string set", &types.Item{SS: []*string{new("a"), new("b")}}, "DELETE target :strSet"},
+		{"number set", &types.Item{NS: []*string{new("2"), new("4")}}, "DELETE target :numSet"},
+		{"binary set", &types.Item{BS: [][]byte{[]byte("a"), []byte("b")}}, "DELETE target :binSet"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := startEvalUpdateEnv(t)
+
+			if err := env.AddAttributes(map[string]*types.Item{"target": tt.attr}); err != nil {
+				t.Fatal(err)
+			}
+
+			result := testEvalUpdate(t, tt.update, env)
+			if isError(result) {
+				t.Fatalf("error evaluating update, env=%s, %s", env.String(), result.Inspect())
+			}
+
+			if got := env.Get("target"); got != UNDEFINED {
+				t.Errorf("emptied set must be removed, got=%v", got.Inspect())
+			}
+		})
+	}
+}
+
+func TestIsEmptySet(t *testing.T) {
+	tests := []struct {
+		name string
+		obj  Object
+		want bool
+	}{
+		{"empty string set", &StringSet{Value: map[string]bool{}}, true},
+		{"string set", &StringSet{Value: map[string]bool{"a": true}}, false},
+		{"empty number set", &NumberSet{Value: map[float64]bool{}}, true},
+		{"number set", &NumberSet{Value: map[float64]bool{1: true}}, false},
+		{"empty binary set", &BinarySet{}, true},
+		{"binary set", &BinarySet{Value: [][]byte{[]byte("a")}}, false},
+		{"not a set", &String{Value: "a"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isEmptySet(tt.obj); got != tt.want {
+				t.Errorf("isEmptySet() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvalDELETEPartialSetKeepsAttribute(t *testing.T) {
+	env := startEvalUpdateEnv(t)
+
+	if err := env.AddAttributes(map[string]*types.Item{
+		"target": {SS: []*string{new("a"), new("c")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := testEvalUpdate(t, "DELETE target :strSet", env)
+	if isError(result) {
+		t.Fatalf("error evaluating update, %s", result.Inspect())
+	}
+
+	if got := env.Get("target"); got == UNDEFINED {
+		t.Error("a set with remaining elements must be kept")
+	}
+}
+
 func TestErrorHandling(t *testing.T) {
 	tests := []struct {
 		input           string

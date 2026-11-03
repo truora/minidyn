@@ -972,8 +972,8 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
+		// Deleting from a set that doesn't exist leaves the item unchanged.
 		if obj == UNDEFINED {
-			env.Set(id.Value, val)
 			return obj
 		}
 
@@ -982,10 +982,33 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 			return newError("An operand in the update expression has an incorrect data type")
 		}
 
-		return addObj.Delete(val)
+		result := addObj.Delete(val)
+		if isError(result) {
+			return result
+		}
+
+		// DynamoDB does not keep empty sets: removing the last elements removes the attribute.
+		if isEmptySet(obj) {
+			env.Remove(id.Value)
+		}
+
+		return result
 	}
 
 	return UNDEFINED
+}
+
+func isEmptySet(obj Object) bool {
+	switch set := obj.(type) {
+	case *StringSet:
+		return len(set.Value) == 0
+	case *NumberSet:
+		return len(set.Value) == 0
+	case *BinarySet:
+		return len(set.Value) == 0
+	}
+
+	return false
 }
 
 func evalActionRemove(node *ActionExpression, env *Environment) Object {

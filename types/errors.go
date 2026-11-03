@@ -134,8 +134,7 @@ func (b baseError) OrigErr() error {
 	case 1:
 		return b.errs[0]
 	default:
-		var err Error
-		if errors.As(b.errs[0], &err) {
+		if err, ok := errors.AsType[Error](b.errs[0]); ok {
 			return NewBatchError(err.Code(), err.Message(), b.errs[1:])
 		}
 

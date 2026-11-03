@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -427,9 +428,7 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 
 	obj := o
 
-	for i := len(positions) - 1; i >= 0; i-- {
-		pos := positions[i]
-
+	for _, pos := range slices.Backward(positions) {
 		obj = pos.Get(obj)
 		if isError(obj) {
 			return obj
@@ -1077,8 +1076,7 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 
 	obj := o
 
-	for idx := len(positions) - 1; idx >= 0; idx-- {
-		pos := positions[idx]
+	for idx, pos := range slices.Backward(positions) {
 		if idx == 0 {
 			errObj := pos.Set(obj, val)
 			if isError(errObj) {

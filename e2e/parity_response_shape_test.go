@@ -222,7 +222,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 
 				var pages []any
 
-				for i := 0; i < 5; i++ {
+				for range 5 {
 					out, err := client.Query(ctx, input)
 					require.NoError(t, err)
 
@@ -322,7 +322,7 @@ func TestE2E_ListTables(t *testing.T) {
 
 				var pages []any
 
-				for i := 0; i < 6; i++ {
+				for range 6 {
 					out, err := client.ListTables(ctx, input)
 					require.NoError(t, err)
 

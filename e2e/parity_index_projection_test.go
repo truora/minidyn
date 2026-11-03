@@ -56,8 +56,7 @@ func parityCreateIndexProjectionTable(ctx context.Context, t *testing.T, client 
 		return
 	}
 
-	var inUse *dynamodbtypes.ResourceInUseException
-	if errors.As(err, &inUse) {
+	if _, ok := errors.AsType[*dynamodbtypes.ResourceInUseException](err); ok {
 		return
 	}
 

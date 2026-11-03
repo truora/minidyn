@@ -1253,6 +1253,45 @@ func TestUpdateItemWithGSI(t *testing.T) {
 	c.Len(items, 1)
 }
 
+func TestUpdateItemAddsGSIKeyToExistingItems(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+	c.NoError(ensurePokemonTypeIndex(client))
+
+	ids := []string{"001", "002"}
+
+	for _, id := range ids {
+		_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: id},
+			},
+		})
+		c.NoError(err)
+	}
+
+	for _, id := range ids {
+		_, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String(tableName),
+			Key: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: id},
+			},
+			UpdateExpression:         aws.String("SET #type = :type"),
+			ExpressionAttributeNames: map[string]string{"#type": "type"},
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+				":type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+			},
+		})
+		c.NoError(err)
+	}
+
+	items, err := getPokemonsByType(client, "grass")
+	c.NoError(err)
+	c.Len(items, 2)
+}
+
 func TestUpdateItemError(t *testing.T) {
 	c := require.New(t)
 

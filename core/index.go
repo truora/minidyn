@@ -2,6 +2,7 @@ package core
 
 import (
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -118,60 +119,15 @@ func (i *index) projectInclude(item map[string]*types.Item) map[string]*types.It
 	return out
 }
 
+// putData indexes item under its index key, moving or dropping the entry an earlier
+// version of the item had.
 func (i *index) putData(key string, item map[string]*types.Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
-	if err != nil || indexKey == "" {
+	if err != nil {
 		return err
 	}
 
-	old, exists := i.refs[key]
-
-	i.refs[key] = indexKey
-	i.ordered = nil
-
-	if !exists {
-		i.sortedKeys = append(i.sortedKeys, indexKey)
-		sort.Strings(i.sortedKeys)
-
-		return nil
-	}
-
-	// On overwrite, reconcile sortedKeys so a changed index key does not leave
-	// a stale projection behind (and the new projection becomes searchable).
-	if old != indexKey {
-		pos := sort.SearchStrings(i.sortedKeys, old)
-		if pos >= len(i.sortedKeys) {
-			i.sortedKeys = append(i.sortedKeys, indexKey)
-		} else {
-			i.sortedKeys[pos] = indexKey
-		}
-
-		sort.Strings(i.sortedKeys)
-	}
-
-	return nil
-}
-
-func (i *index) updateData(key string, item, oldItem map[string]*types.Item) error {
-	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
-	if err != nil || indexKey == "" {
-		return err
-	}
-
-	old := i.refs[key]
-	i.refs[key] = indexKey
-	i.ordered = nil
-
-	if old != indexKey {
-		pos := sort.SearchStrings(i.sortedKeys, old)
-		if pos >= len(i.sortedKeys) {
-			i.sortedKeys = append(i.sortedKeys, indexKey)
-		} else {
-			i.sortedKeys[pos] = indexKey
-		}
-
-		sort.Strings(i.sortedKeys)
-	}
+	i.setRef(key, indexKey)
 
 	return nil
 }
@@ -195,6 +151,39 @@ func (i *index) delete(key string, item map[string]*types.Item) error {
 	i.sortedKeys = i.sortedKeys[:len(i.sortedKeys)-1]
 
 	return nil
+}
+
+// setRef points the item with primary key key at indexKey, or drops it from the index
+// when indexKey is "" (the item lacks the index key), keeping sortedKeys in step.
+func (i *index) setRef(key, indexKey string) {
+	old, exists := i.refs[key]
+	if exists && old == indexKey {
+		return
+	}
+
+	// An item that was not indexed and still has no index key changes nothing.
+	if !exists && indexKey == "" {
+		return
+	}
+
+	i.ordered = nil
+
+	if exists {
+		delete(i.refs, key)
+
+		pos := sort.SearchStrings(i.sortedKeys, old)
+		if pos < len(i.sortedKeys) && i.sortedKeys[pos] == old {
+			i.sortedKeys = slices.Delete(i.sortedKeys, pos, pos+1)
+		}
+	}
+
+	if indexKey == "" {
+		return
+	}
+
+	i.refs[key] = indexKey
+	pos := sort.SearchStrings(i.sortedKeys, indexKey)
+	i.sortedKeys = slices.Insert(i.sortedKeys, pos, indexKey)
 }
 
 // orderedRefs returns every (primary key, index key) pair sorted by index key, then primary

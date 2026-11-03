@@ -80,25 +80,57 @@ func assertParityEqual(t *testing.T, gotMinidyn, gotLocal any) {
 }
 
 // RunE2E runs fn against minidyn (httptest) and DynamoDB Local (Docker), then
-// asserts both invocations return equal results.
+// asserts both invocations return equal results. With MINIDYN_E2E_TRACE set it also
+// compares every raw response and the final table state (see trace_test.go).
 func RunE2E[T any](t *testing.T, fn func(t *testing.T, client *dynamodb.Client) T) {
 	t.Helper()
 
+	mode := currentTraceMode()
+
 	var gotMinidyn, gotLocal T
-	var minidynFailed, localFailed bool
+	var traceMinidyn, traceLocal engineTrace
+
+	// Results are only used when the subtest passed. A require.* failure or t.Skip inside the
+	// subtest ends it with runtime.Goexit, so nothing after fn runs; the deferred check sees
+	// both outcomes (t.Run's result alone is true for a skipped subtest).
+	run := func(t *testing.T, endpoint string, got *T, trace *engineTrace) {
+		t.Helper()
+
+		rec := &traceRecorder{}
+		*got = fn(t, newTracedSDKClient(t, endpoint, rec))
+
+		if mode != traceOff && !t.Failed() {
+			trace.Calls = rec.snapshot()
+			trace.State = captureFinalState(t, endpoint, createdTables(trace.Calls))
+		}
+	}
+
+	var minidynOK, localOK, skipped bool
 
 	t.Run("minidyn", func(t *testing.T) {
-		gotMinidyn = fn(t, setupMinidynClient(t))
-		minidynFailed = t.Failed()
+		defer func() { minidynOK, skipped = !t.Failed() && !t.Skipped(), skipped || t.Skipped() }()
+
+		run(t, setupMinidynEndpoint(t), &gotMinidyn, &traceMinidyn)
 	})
 
 	t.Run("dynamodb-local", func(t *testing.T) {
-		gotLocal = fn(t, setupDynamoDBLocalClient(t))
-		localFailed = t.Failed()
+		defer func() { localOK, skipped = !t.Failed() && !t.Skipped(), skipped || t.Skipped() }()
+
+		run(t, setupDynamoDBLocalEndpoint(t), &gotLocal, &traceLocal)
 	})
 
-	if !minidynFailed && !localFailed {
-		assertParityEqual(t, gotMinidyn, gotLocal)
+	if skipped && !t.Failed() {
+		t.Skip("an engine was skipped (e.g. Docker unavailable): nothing to compare")
+	}
+
+	if !minidynOK || !localOK {
+		return
+	}
+
+	assertParityEqual(t, gotMinidyn, gotLocal)
+
+	if mode != traceOff {
+		compareTraces(t, mode, traceMinidyn, traceLocal)
 	}
 }
 

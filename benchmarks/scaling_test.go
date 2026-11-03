@@ -22,6 +22,9 @@ const (
 	maxFlatGrowth = 3.0
 	// maxLinearGrowth is the largest per-item ratio accepted for full-table operations.
 	maxLinearGrowth = 3.0
+	// fixedGrowth is the ratio below which an operation with a known issue is reported as
+	// fixed. It is well under the limits above so a noisy host doesn't flip a known issue.
+	fixedGrowth = 1.5
 )
 
 // expectation says how an operation must scale and, if it currently doesn't, which perf issue
@@ -41,6 +44,7 @@ var scalingExpectations = map[string]expectation{
 	"QueryRangeLimit":        {},
 	"QueryWithFilter":        {},
 	"QueryGSI":               {},
+	"QueryGSIAfterWrite":     {knownIssue: "P3"},
 	"BatchGetItem25":         {},
 	"TransactWritePutUpdate": {knownIssue: "P2"},
 	"ScanFilterFullTable":    {linear: true},
@@ -99,9 +103,9 @@ func checkGrowth(t *testing.T, name string, exp expectation, growth, limit float
 	case exp.knownIssue == "" && growth > limit:
 		t.Errorf("%s got %.1fx slower on a 10x larger table (limit %.1fx): a performance regression",
 			name, growth, limit)
-	case exp.knownIssue != "" && growth <= limit:
+	case exp.knownIssue != "" && growth <= fixedGrowth:
 		t.Errorf("%s now scales within %.1fx (%.1fx): known issue %s appears FIXED; remove its "+
-			"knownIssue in scaling_test.go and its section in benchmarks/README.md", name, limit, growth, exp.knownIssue)
+			"knownIssue in scaling_test.go and its section in benchmarks/README.md", name, fixedGrowth, growth, exp.knownIssue)
 	case exp.knownIssue != "":
 		t.Skipf("known performance issue %s (benchmarks/README.md): %.1fx slower on a 10x larger table",
 			exp.knownIssue, growth)

@@ -1418,7 +1418,9 @@ func TestMatchKey_errorsAndFilterBranches(t *testing.T) {
 		}, item)
 		req.NoError(err)
 		req.False(matched)
-		req.Equal(interpreter.ExpressionTypeFilter, exprType)
+		// The filter never ran, so the item reports the key condition: it must not count
+		// toward Limit (another partition sharing the search prefix, for example).
+		req.Equal(interpreter.ExpressionTypeKey, exprType)
 	})
 }
 
@@ -1597,7 +1599,7 @@ func TestFetchQueryData(t *testing.T) {
 	c.NoError(err)
 	c.Len(newTable.Data, 6)
 
-	index, sortedKeys := newTable.fetchQueryData(QueryInput{
+	index, sortedKeys, _, _ := newTable.fetchQueryData(QueryInput{
 		Index: "invert",
 	})
 

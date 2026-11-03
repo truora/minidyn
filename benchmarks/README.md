@@ -33,7 +33,7 @@ and `go tool pprof -top -cum benchmarks.test cpu.out`.
 an operation that should not depend on the table size gets more than 3x slower
 (full-table operations are compared per item). It is opt-in because it measures
 wall time. Operations with a known issue below are expected to stay slow: the
-check skips them while they are, and **fails once they scale well**, so the
+check skips them while they are, and **fails once they grow less than 1.5x**, so the
 issue gets closed and the expectation tightened (remove the `knownIssue` in
 `scaling_test.go` and the section here). `TestScalingExpectationsDocumented`
 runs in the normal test suite and keeps this file and the expectations in sync.
@@ -63,6 +63,13 @@ transaction).
 |-----------|-----------|-------|--------|
 | `PutItemNewThenDelete` | 4.7 µs | 11 µs | 63 µs |
 | `UpdateItemIndexKey` (moves an item to another GSI key) | 6.7 µs | 8.7 µs | 57 µs |
+| `QueryGSIAfterWrite` (one write, then a GSI query) | 37 µs | 0.19 ms | 1.9 ms |
+
+GSI queries binary-search a sorted copy of the index entries (see P1 below), but
+any write discards that copy and the next GSI query re-sorts every entry. A
+read-heavy test gets the fast path; one that alternates writes and GSI queries
+pays a full sort per query. Keeping the copy sorted on each write (the same
+change as the insert fix) would remove both costs.
 
 Adding a key appends it to `sortedKeys` and calls `sort.Strings` on the whole
 slice (table and every index, e.g. `core/index.go` `putData` and `updateData`, which

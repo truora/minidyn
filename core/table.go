@@ -348,24 +348,86 @@ func getPrimaryKey(index *index, k string) (string, bool) {
 // Query whose key condition pins the partition key, only the keys of that partition are
 // returned, so the search is O(log n + partition size) instead of a walk over every key.
 // The key condition is still evaluated on each returned key.
-func (t *Table) fetchQueryData(input QueryInput) (*index, []string) {
+//
+// seeked reports whether the keys were narrowed to prefix.
+func (t *Table) fetchQueryData(input QueryInput) (idx *index, keys []string, prefix string, seeked bool) {
 	if input.Index != "" {
 		i := t.Indexes[input.Index]
 		prefix, ok := t.partitionPrefix(input, i.keySchema)
 		i.startSearch(input.ScanIndexForward, prefix, ok)
 
 		if ok {
-			return i, keysWithPrefix(i.sortedKeys, prefix)
+			return i, keysWithPrefix(i.sortedKeys, prefix), prefix, true
 		}
 
-		return i, i.sortedKeys
+		return i, i.sortedKeys, "", false
 	}
 
 	if prefix, ok := t.partitionPrefix(input, t.KeySchema); ok {
-		return nil, keysWithPrefix(t.SortedKeys, prefix)
+		return nil, keysWithPrefix(t.SortedKeys, prefix), prefix, true
 	}
 
-	return nil, t.SortedKeys
+	return nil, t.SortedKeys, "", false
+}
+
+// errStartKeyOutsideRange is DynamoDB's error for an ExclusiveStartKey that is not in the
+// queried partition.
+var errStartKeyOutsideRange = types.NewError("ValidationException",
+	"The provided starting key does not match the range key predicate", nil)
+
+// checkSeek keeps a seeked search equivalent to the full walk it replaces:
+//   - an ExclusiveStartKey outside the queried partition is rejected, as DynamoDB does;
+//   - when the partition has no keys, the conditions are still evaluated once against the
+//     first item the walk would have visited, so invalid conditions keep failing whether or
+//     not the partition holds data.
+func (t *Table) checkSeek(input QueryInput, idx *index, keys []string, prefix string) error {
+	if len(input.ExclusiveStartKey) != 0 {
+		schema := t.KeySchema
+		if idx != nil {
+			schema = idx.keySchema
+		}
+
+		if startKey, err := schema.GetKey(t.AttributesDef, input.ExclusiveStartKey); err == nil && !strings.HasPrefix(startKey, prefix) {
+			return errStartKeyOutsideRange
+		}
+	}
+
+	if len(keys) != 0 {
+		return nil
+	}
+
+	probe, ok := t.firstSearchItem(idx)
+	if !ok {
+		return nil
+	}
+
+	if _, _, err := t.matchKey(input, probe); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// firstSearchItem returns the first item a full walk of the table (or index) would visit.
+func (t *Table) firstSearchItem(idx *index) (map[string]*types.Item, bool) {
+	if idx != nil {
+		refs := idx.orderedRefs()
+		if len(refs) == 0 {
+			return nil, false
+		}
+
+		item, ok := t.Data[refs[0][0]]
+
+		return item, ok
+	}
+
+	if len(t.SortedKeys) == 0 {
+		return nil, false
+	}
+
+	item, ok := t.Data[t.SortedKeys[0]]
+
+	return item, ok
 }
 
 // partitionPrefix returns the prefix shared by the stored keys of the partition a Query's key
@@ -374,6 +436,13 @@ func (t *Table) fetchQueryData(input QueryInput) (*index, []string) {
 // it to skip keys that can't match.
 func (t *Table) partitionPrefix(input QueryInput, schema keySchema) (string, bool) {
 	if input.Scan || input.KeyConditionExpression == "" {
+		return "", false
+	}
+
+	// Stored numbers keep the text they were written with ("7" vs "7.0"), so no prefix finds
+	// every spelling of a number: numeric partition keys keep the full walk. Canonical number
+	// keys would remove this limit (#147).
+	if t.AttributesDef[schema.HashKey] == "N" {
 		return "", false
 	}
 
@@ -501,7 +570,13 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 	items := []map[string]*types.Item{}
 	limit := input.Limit
 	exclusiveStartKey := input.ExclusiveStartKey
-	index, sortedKeys := t.fetchQueryData(input)
+	index, sortedKeys, prefix, seeked := t.fetchQueryData(input)
+
+	if seeked {
+		if err := t.checkSeek(input, index, sortedKeys, prefix); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	startKey := t.parseStartKey(t.KeySchema, exclusiveStartKey)
 	input.started = startKey == ""
@@ -535,11 +610,11 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 
 		scanned++
 
+		// Only evaluated items count toward Limit and can be the LastEvaluatedKey.
 		if shouldCountItem(expressionType, matched) {
 			count++
+			last = keyItem
 		}
-
-		last = keyItem
 
 		if shouldBreakPage(count, limit) {
 			break
@@ -616,8 +691,11 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 				return interpreter.ExpressionTypeFilter, false, err
 			}
 			matched = m
+			// Only items that passed the key condition were evaluated by the filter: an item
+			// that failed it (e.g. another partition sharing the search prefix) must not count
+			// toward Limit.
+			lastMatchExpressionType = interpreter.ExpressionTypeFilter
 		}
-		lastMatchExpressionType = interpreter.ExpressionTypeFilter
 	}
 
 	if input.ConditionExpression != nil && *input.ConditionExpression != "" {

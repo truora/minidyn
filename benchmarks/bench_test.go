@@ -203,6 +203,22 @@ var benchOps = []benchOp{
 
 		return err
 	}},
+	{"QueryGSIAfterWrite", func(ctx context.Context, c *client.Client, size, i int) error {
+		// A write between GSI queries: the sorted copy of the index entries is rebuilt on the
+		// next query (P3), so this measures a write-heavy workload's query cost.
+		if _, err := c.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(benchTable), Item: item(spread(i, size))}); err != nil {
+			return err
+		}
+
+		_, err := c.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String(benchTable),
+			IndexName:                 aws.String(benchGSI),
+			KeyConditionExpression:    aws.String("g = :g"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":g": s(gOf(spread(i, size)))},
+		})
+
+		return err
+	}},
 	{"BatchGetItem25", func(ctx context.Context, c *client.Client, size, i int) error {
 		keys := make([]map[string]types.AttributeValue, 25)
 		for j := range keys {

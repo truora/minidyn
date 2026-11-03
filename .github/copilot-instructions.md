@@ -19,6 +19,6 @@ After implementation, follow `.agents/agents/qa-engineer.md`: run `go fix`, unit
 
 1. Clarify use cases, then write a failing test before implementation code.
 2. Never modify `e2e/` tests to make them pass — they are parity references only.
-3. Go 1.26; no external services required for unit tests.
+3. Go 1.27; no external services required for unit tests.
 4. Every package must contain a `doc.go` file.
 5. Regenerate `server/requests.go` with `go run ./tools/generate_requests` when DynamoDB input shapes change.

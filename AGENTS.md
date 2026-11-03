@@ -36,7 +36,7 @@ After implementation, invoke the **qa-engineer** sub-agent (see `.agents/agents/
 
 ## Key constraints
 
-- Go 1.26; no external services required for unit tests
+- Go 1.27; no external services required for unit tests
 - **Never** modify `e2e/` tests to make them pass — they are parity references only
 - `server/requests.go` is generated — run `go run ./tools/generate_requests` when input shapes change
 - Every package must contain a `doc.go` file

@@ -12,7 +12,7 @@ Amazon DynamoDB testing library written in Go.
 
 ### As a Go module dependency
 
-Requires **Go 1.26** or newer (see `go.mod`). From your project root:
+Requires **Go 1.27** or newer (see `go.mod`). From your project root:
 
 ```bash
 go get github.com/truora/minidyn@latest

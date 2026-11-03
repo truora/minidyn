@@ -151,8 +151,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "PutItemReturnValuesAllOld",
-			knownIssue: "#141",
+			name: "PutItemReturnValuesAllOld",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -173,7 +172,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 				})
 				require.NoError(t, err)
 
-				return []any{len(first.Attributes), second.Attributes}
+				return []any{len(first.Attributes), parityNormalizeItemSets(second.Attributes)}
 			},
 		},
 		{

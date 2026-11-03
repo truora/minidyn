@@ -278,8 +278,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "UpdateItemRemoveTopLevelAttributes",
-			knownIssue: "#146",
+			name: "UpdateItemRemoveTopLevelAttributes",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

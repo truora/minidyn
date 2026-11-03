@@ -1032,6 +1032,57 @@ func TestUpdateItem(t *testing.T) {
 	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "water"}, item["second_type"])
 }
 
+func TestUpdateItemRemoveTopLevelAttributes(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+	c.NoError(createPokemon(client, pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	}))
+
+	key := map[string]dynamodbtypes.AttributeValue{
+		"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+	}
+
+	_, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName:        aws.String(tableName),
+		Key:              key,
+		UpdateExpression: aws.String("SET lease_owner = :o, second_type = :st"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":o":  &dynamodbtypes.AttributeValueMemberS{Value: "worker-1"},
+			":st": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
+		},
+	})
+	c.NoError(err)
+
+	out, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName:        aws.String(tableName),
+		Key:              key,
+		UpdateExpression: aws.String("SET lvl = :lvl REMOVE lease_owner, #n, not_there"),
+		ExpressionAttributeNames: map[string]string{
+			"#n": "name",
+		},
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":lvl": &dynamodbtypes.AttributeValueMemberN{Value: "6"},
+		},
+		ReturnValues: dynamodbtypes.ReturnValueAllNew,
+	})
+	c.NoError(err)
+	c.NotContains(out.Attributes, "lease_owner")
+	c.NotContains(out.Attributes, "name")
+	c.Equal(&dynamodbtypes.AttributeValueMemberN{Value: "6"}, out.Attributes["lvl"])
+
+	item, err := getPokemon(client, "001")
+	c.NoError(err)
+	c.NotContains(item, "lease_owner")
+	c.NotContains(item, "name")
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, item["second_type"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberN{Value: "6"}, item["lvl"])
+}
+
 func TestUpdateItemReturnValuesMatrix(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)
@@ -1084,6 +1135,41 @@ func TestUpdateItemReturnValuesMatrix(t *testing.T) {
 	allNew := putAndUpdate("urv-all-new", dynamodbtypes.ReturnValueAllNew)
 	c.Len(allNew, 4)
 	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, allNew["second_type"])
+
+	// top-level REMOVE: UPDATED_OLD returns the removed attribute and
+	// UPDATED_NEW returns nothing.
+	putAndRemove := func(pk string, rv dynamodbtypes.ReturnValue) map[string]dynamodbtypes.AttributeValue {
+		t.Helper()
+
+		_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]dynamodbtypes.AttributeValue{
+				"id":   &dynamodbtypes.AttributeValueMemberS{Value: pk},
+				"type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+				"name": &dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"},
+			},
+		})
+		c.NoError(err)
+
+		out, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String(tableName),
+			Key: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: pk},
+			},
+			UpdateExpression:         aws.String("REMOVE #n"),
+			ExpressionAttributeNames: map[string]string{"#n": "name"},
+			ReturnValues:             rv,
+		})
+		c.NoError(err)
+
+		return out.Attributes
+	}
+
+	removedOld := putAndRemove("urv-rm-old", dynamodbtypes.ReturnValueUpdatedOld)
+	c.Len(removedOld, 1)
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "Bulbasaur"}, removedOld["name"])
+
+	c.Empty(putAndRemove("urv-rm-new", dynamodbtypes.ReturnValueUpdatedNew))
 }
 
 func TestUpdateItemWithConditionalExpression(t *testing.T) {

@@ -334,7 +334,14 @@ func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
 		return "DELETE", e.name("ss") + " " + e.val(g.deletableSet())
 	case 7:
 		if g.known {
-			return "REMOVE", e.name(pick(g, "n", "s", "l", "m", "ss")) // #146
+			return "REMOVE", e.name(pick(g, "n", "s", "l", "m", "ss"))
+		}
+
+		if g.chance(0.6) {
+			// Only n and g: filters call functions on s, l, m and ss (#143), and REMOVE m
+			// would overlap the m.k and m.j paths (#164). Removing g drops the item from
+			// the by-g index.
+			return "REMOVE", e.name(pick(g, "n", "g"))
 		}
 
 		return "REMOVE", e.name("m") + "." + e.name("j")

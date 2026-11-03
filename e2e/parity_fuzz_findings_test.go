@@ -350,8 +350,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			},
 		},
 		{
-			name:       "UpdateItemRemovesIndexKey",
-			knownIssue: "#146",
+			name: "UpdateItemRemovesIndexKey",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

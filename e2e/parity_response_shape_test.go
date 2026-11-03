@@ -61,8 +61,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 		fn         func(t *testing.T, client *dynamodb.Client) any
 	}{
 		{
-			name:       "ListTables",
-			knownIssue: "#150",
+			name: "ListTables",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -302,6 +301,101 @@ func TestE2E_ResponseShape(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			RunE2EKnown(t, tt.knownIssue, tt.fn)
+		})
+	}
+}
+
+// TestE2E_ListTables covers ListTables ordering, pagination and Limit validation.
+func TestE2E_ListTables(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(t *testing.T, client *dynamodb.Client) any
+	}{
+		{
+			name: "Pagination",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				for _, name := range []string{"zeta", "Beta", "alpha", "alpha-2", "alpha.1", "gamma_1"} {
+					parityCreateSimpleTable(ctx, t, client, name)
+				}
+
+				input := &dynamodb.ListTablesInput{Limit: aws.Int32(2)}
+
+				var pages []any
+
+				for i := 0; i < 6; i++ {
+					out, err := client.ListTables(ctx, input)
+					require.NoError(t, err)
+
+					pages = append(pages, []any{out.TableNames, aws.ToString(out.LastEvaluatedTableName)})
+
+					if out.LastEvaluatedTableName == nil {
+						break
+					}
+
+					input.ExclusiveStartTableName = out.LastEvaluatedTableName
+				}
+
+				return pages
+			},
+		},
+		{
+			name: "ExclusiveStartTableName",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				for _, name := range []string{"aaa", "bbb", "ccc"} {
+					parityCreateSimpleTable(ctx, t, client, name)
+				}
+
+				var results []any
+
+				for _, start := range []string{"aaa", "abc", "ccc", "zzz"} {
+					out, err := client.ListTables(ctx, &dynamodb.ListTablesInput{
+						ExclusiveStartTableName: aws.String(start),
+					})
+					require.NoError(t, err)
+
+					results = append(results, []any{start, out.TableNames, aws.ToString(out.LastEvaluatedTableName)})
+				}
+
+				out, err := client.ListTables(ctx, &dynamodb.ListTablesInput{Limit: aws.Int32(3)})
+				require.NoError(t, err)
+
+				results = append(results, []any{"limit=3", out.TableNames, aws.ToString(out.LastEvaluatedTableName)})
+
+				return results
+			},
+		},
+		{
+			name: "InvalidLimit",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				var msgs []string
+
+				for _, limit := range []int32{0, -1, 101} {
+					_, err := client.ListTables(ctx, &dynamodb.ListTablesInput{Limit: aws.Int32(limit)})
+					require.Error(t, err)
+
+					msgs = append(msgs, normalizeSDKErrorString(err.Error()))
+				}
+
+				out, err := client.ListTables(ctx, &dynamodb.ListTablesInput{Limit: aws.Int32(100)})
+				require.NoError(t, err)
+
+				return []any{msgs, out.TableNames}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RunE2E(t, tt.fn)
 		})
 	}
 }

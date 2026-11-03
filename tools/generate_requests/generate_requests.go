@@ -22,6 +22,7 @@ var supportedInputs = []reflect.Type{
 	reflect.TypeFor[dynamodb.DeleteTableInput](),
 	reflect.TypeFor[dynamodb.UpdateTableInput](),
 	reflect.TypeFor[dynamodb.DescribeTableInput](),
+	reflect.TypeFor[dynamodb.ListTablesInput](),
 	reflect.TypeFor[dynamodb.PutItemInput](),
 	reflect.TypeFor[dynamodb.DeleteItemInput](),
 	reflect.TypeFor[dynamodb.UpdateItemInput](),

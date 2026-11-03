@@ -64,7 +64,9 @@ func TestMapTypesToDynamo(t *testing.T) {
 	provisionedThroughputOutput = mapTypesToDynamoProvisionedThroughput(&types.ProvisionedThroughput{ReadCapacityUnits: 1})
 	c.Equal(aws.Int64(1), provisionedThroughputOutput.ReadCapacityUnits)
 
-	var expectedAttributteValue dynamodbtypes.AttributeValue = &dynamodbtypes.AttributeValueMemberNULL{Value: true}
+	var expectedAttributteValue dynamodbtypes.AttributeValue = &dynamodbtypes.AttributeValueMemberM{
+		Value: map[string]dynamodbtypes.AttributeValue{},
+	}
 	input := &types.Item{M: map[string]*types.Item{}}
 
 	attributeDefinitionMapOutput := mapTypesToDynamoAttributeDefinitionMapOrList(input)
@@ -141,4 +143,25 @@ func TestMapDynamoToTypesTransactNil(t *testing.T) {
 	c.Nil(mapDynamoToTypesTransactPut(nil))
 	c.Nil(mapDynamoToTypesTransactUpdate(nil))
 	c.Nil(mapDynamoToTypesTransactDelete(nil))
+}
+
+func TestMapEmptyMapAndListBothWays(t *testing.T) {
+	c := require.New(t)
+
+	dynamo := map[string]dynamodbtypes.AttributeValue{
+		"info":  &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}},
+		"local": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}},
+		"nested": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{
+			&dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}},
+		}},
+	}
+	typed := map[string]*types.Item{
+		"info":   {M: map[string]*types.Item{}},
+		"local":  {L: []*types.Item{}},
+		"nested": {L: []*types.Item{{M: map[string]*types.Item{}}}},
+	}
+
+	c.Equal(typed, mapDynamoToTypesMapItem(dynamo))
+	c.Equal(dynamo, mapTypesToDynamoMapItem(typed))
+	c.Equal(&dynamodbtypes.AttributeValueMemberNULL{Value: true}, mapTypesToDynamoItem(&types.Item{}))
 }

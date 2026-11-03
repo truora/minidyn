@@ -1253,6 +1253,45 @@ func TestUpdateItemWithGSI(t *testing.T) {
 	c.Len(items, 1)
 }
 
+func TestUpdateItemAddsGSIKeyToExistingItems(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+	c.NoError(ensurePokemonTypeIndex(client))
+
+	ids := []string{"001", "002"}
+
+	for _, id := range ids {
+		_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: id},
+			},
+		})
+		c.NoError(err)
+	}
+
+	for _, id := range ids {
+		_, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String(tableName),
+			Key: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: id},
+			},
+			UpdateExpression:         aws.String("SET #type = :type"),
+			ExpressionAttributeNames: map[string]string{"#type": "type"},
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+				":type": &dynamodbtypes.AttributeValueMemberS{Value: "grass"},
+			},
+		})
+		c.NoError(err)
+	}
+
+	items, err := getPokemonsByType(client, "grass")
+	c.NoError(err)
+	c.Len(items, 2)
+}
+
 func TestUpdateItemError(t *testing.T) {
 	c := require.New(t)
 
@@ -1353,9 +1392,7 @@ func TestUpdateExpressions(t *testing.T) {
 				item, err := getPokemon(client, "001")
 				a.NoError(err)
 
-				local, ok := item["local"].(*dynamodbtypes.AttributeValueMemberNULL)
-				a.True(ok)
-				a.True(local.Value)
+				a.Equal(&dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}, item["local"])
 			},
 		},
 		"delete": {
@@ -3716,4 +3753,110 @@ func BenchmarkQuery(b *testing.B) {
 		c.NoError(err)
 		c.Len(out.Items, 1)
 	}
+}
+
+func TestEmptyMapAndListKeepTheirType(t *testing.T) {
+	c := require.New(t)
+	ctx := context.Background()
+	client := NewClient()
+
+	c.NoError(AddTable(ctx, client, tableName, "id", ""))
+
+	emptyM := &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}
+	emptyL := &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}
+	item := map[string]dynamodbtypes.AttributeValue{
+		"id":     &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+		"info":   emptyM,
+		"local":  emptyL,
+		"nested": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{emptyM}},
+		"one":    &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{emptyM}},
+	}
+
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(tableName), Item: item})
+	c.NoError(err)
+
+	key := map[string]dynamodbtypes.AttributeValue{"id": item["id"]}
+
+	out, err := client.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tableName), Key: key})
+	c.NoError(err)
+	c.Equal(item, out.Item)
+
+	upd, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:        aws.String(tableName),
+		Key:              key,
+		UpdateExpression: aws.String("REMOVE one[0]"),
+		ReturnValues:     dynamodbtypes.ReturnValueAllNew,
+	})
+	c.NoError(err)
+	c.Equal(emptyL, upd.Attributes["one"])
+	c.Equal(emptyM, upd.Attributes["info"])
+
+	var ccf *dynamodbtypes.ConditionalCheckFailedException
+
+	_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                           aws.String(tableName),
+		Key:                                 key,
+		UpdateExpression:                    aws.String("SET x = :x"),
+		ConditionExpression:                 aws.String("attribute_not_exists(id)"),
+		ExpressionAttributeValues:           map[string]dynamodbtypes.AttributeValue{":x": emptyM},
+		ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+	})
+	c.True(errors.As(err, &ccf))
+	c.Equal(emptyM, ccf.Item["info"])
+	c.Equal(emptyL, ccf.Item["local"])
+
+	var tce *dynamodbtypes.TransactionCanceledException
+
+	_, err = client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+		TransactItems: []dynamodbtypes.TransactWriteItem{{
+			ConditionCheck: &dynamodbtypes.ConditionCheck{
+				TableName:                           aws.String(tableName),
+				Key:                                 key,
+				ConditionExpression:                 aws.String("attribute_not_exists(id)"),
+				ReturnValuesOnConditionCheckFailure: dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+			},
+		}},
+	})
+	c.True(errors.As(err, &tce))
+	c.Equal(emptyM, tce.CancellationReasons[0].Item["info"])
+	c.Equal(emptyL, tce.CancellationReasons[0].Item["local"])
+}
+
+func TestListIndexPastTheEnd(t *testing.T) {
+	c := require.New(t)
+	ctx := context.Background()
+	client := NewClient()
+
+	c.NoError(AddTable(ctx, client, tableName, "id", ""))
+
+	key := map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}}
+	item := map[string]dynamodbtypes.AttributeValue{
+		"id": key["id"],
+		"l":  &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}},
+		"l1": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{
+			&dynamodbtypes.AttributeValueMemberS{Value: "a"},
+		}},
+	}
+
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(tableName), Item: item})
+	c.NoError(err)
+
+	out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName:            aws.String(tableName),
+		Key:                  key,
+		ProjectionExpression: aws.String("id, l[0], l1[1]"),
+	})
+	c.NoError(err)
+	c.Equal(map[string]dynamodbtypes.AttributeValue{"id": key["id"]}, out.Item)
+
+	var ccf *dynamodbtypes.ConditionalCheckFailedException
+
+	_, err = client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tableName),
+		Key:                       key,
+		UpdateExpression:          aws.String("SET x = :v"),
+		ConditionExpression:       aws.String("l[0] = :v"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: "a"}},
+	})
+	c.True(errors.As(err, &ccf), "%v", err)
 }

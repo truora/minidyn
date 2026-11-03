@@ -3462,3 +3462,54 @@ func TestServerTransactGetItems(t *testing.T) {
 		c.Equal("10", out.Responses[1].Item["qty"].(*ddbtypes.AttributeValueMemberN).Value)
 	})
 }
+
+func TestServerEmptyMapAndListKeepTheirType(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+
+	ctx := context.Background()
+	cli := newTestDynamoClient(t, ts.URL)
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	emptyM := &ddbtypes.AttributeValueMemberM{Value: map[string]ddbtypes.AttributeValue{}}
+	emptyL := &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{}}
+	item := map[string]ddbtypes.AttributeValue{
+		"id":     &ddbtypes.AttributeValueMemberS{Value: "001"},
+		"info":   emptyM,
+		"local":  emptyL,
+		"nested": &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{emptyM}},
+		"one":    &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{emptyM}},
+	}
+
+	_, err := cli.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String("pokemons"), Item: item})
+	require.NoError(t, err)
+
+	key := map[string]ddbtypes.AttributeValue{"id": item["id"]}
+
+	out, err := cli.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String("pokemons"), Key: key})
+	require.NoError(t, err)
+	require.Equal(t, item, out.Item)
+
+	upd, err := cli.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:        aws.String("pokemons"),
+		Key:              key,
+		UpdateExpression: aws.String("REMOVE one[0]"),
+		ReturnValues:     ddbtypes.ReturnValueAllNew,
+	})
+	require.NoError(t, err)
+	require.Equal(t, emptyL, upd.Attributes["one"])
+	require.Equal(t, emptyM, upd.Attributes["info"])
+
+	_, err = cli.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                           aws.String("pokemons"),
+		Key:                                 key,
+		UpdateExpression:                    aws.String("REMOVE info"),
+		ConditionExpression:                 aws.String("attribute_not_exists(id)"),
+		ReturnValuesOnConditionCheckFailure: ddbtypes.ReturnValuesOnConditionCheckFailureAllOld,
+	})
+
+	var ccf *ddbtypes.ConditionalCheckFailedException
+	require.ErrorAs(t, err, &ccf)
+	require.Equal(t, emptyM, ccf.Item["info"])
+	require.Equal(t, emptyL, ccf.Item["one"])
+}

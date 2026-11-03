@@ -79,6 +79,23 @@ func TestMapTypesToDDBAttributeValue(t *testing.T) {
 			}},
 		},
 		{
+			name: "empty_list",
+			it:   &types.Item{L: []*types.Item{}},
+			want: &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{}},
+		},
+		{
+			name: "empty_map",
+			it:   &types.Item{M: map[string]*types.Item{}},
+			want: &ddbtypes.AttributeValueMemberM{Value: map[string]ddbtypes.AttributeValue{}},
+		},
+		{
+			name: "empty_map_inside_list",
+			it:   &types.Item{L: []*types.Item{{M: map[string]*types.Item{}}}},
+			want: &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{
+				&ddbtypes.AttributeValueMemberM{Value: map[string]ddbtypes.AttributeValue{}},
+			}},
+		},
+		{
 			name: "default_null",
 			it:   &types.Item{},
 			want: &ddbtypes.AttributeValueMemberNULL{Value: true},

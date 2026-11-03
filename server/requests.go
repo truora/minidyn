@@ -122,6 +122,11 @@ type KeysAndAttributes struct {
 	ProjectionExpression     *string                      `json:"ProjectionExpression,omitempty"`
 }
 
+type ListTablesInput struct {
+	ExclusiveStartTableName *string `json:"ExclusiveStartTableName,omitempty"`
+	Limit                   *int32  `json:"Limit,omitempty"`
+}
+
 type Put struct {
 	Item                                map[string]*AttributeValue                   `json:"Item,omitempty"`
 	TableName                           *string                                      `json:"TableName,omitempty"`

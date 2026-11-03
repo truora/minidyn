@@ -2,7 +2,9 @@ package core
 
 import (
 	"maps"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/truora/minidyn/types"
@@ -19,6 +21,9 @@ type index struct {
 	keySchema  keySchema
 	sortedKeys []string
 	sortedRefs [][2]string // used for searching
+	// ordered is every (primary key, index key) pair sorted by index key then primary key,
+	// rebuilt lazily after a write (nil means stale) so queries can binary-search it.
+	ordered    [][2]string
 	typ        indexType
 	projection *types.Projection
 	Table      *Table
@@ -41,6 +46,7 @@ func newIndex(t *Table, typ indexType, ks keySchema) *index {
 func (i *index) Clear() {
 	i.sortedKeys = []string{}
 	i.refs = map[string]string{}
+	i.ordered = nil
 }
 
 type indexSnapshot struct {
@@ -61,6 +67,7 @@ func (i *index) snapshot() indexSnapshot {
 func (i *index) restore(s indexSnapshot) {
 	i.sortedKeys = s.sortedKeys
 	i.refs = s.refs
+	i.ordered = nil
 }
 
 // ProjectItem returns the attributes visible through this index's projection (ALL, KEYS_ONLY, INCLUDE).
@@ -112,64 +119,22 @@ func (i *index) projectInclude(item map[string]*types.Item) map[string]*types.It
 	return out
 }
 
+// putData indexes item under its index key, moving or dropping the entry an earlier
+// version of the item had.
 func (i *index) putData(key string, item map[string]*types.Item) error {
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
-	if err != nil || indexKey == "" {
+	if err != nil {
 		return err
 	}
 
-	old, exists := i.refs[key]
-
-	i.refs[key] = indexKey
-
-	if !exists {
-		i.sortedKeys = append(i.sortedKeys, indexKey)
-		sort.Strings(i.sortedKeys)
-
-		return nil
-	}
-
-	// On overwrite, reconcile sortedKeys so a changed index key does not leave
-	// a stale projection behind (and the new projection becomes searchable).
-	if old != indexKey {
-		pos := sort.SearchStrings(i.sortedKeys, old)
-		if pos >= len(i.sortedKeys) {
-			i.sortedKeys = append(i.sortedKeys, indexKey)
-		} else {
-			i.sortedKeys[pos] = indexKey
-		}
-
-		sort.Strings(i.sortedKeys)
-	}
-
-	return nil
-}
-
-func (i *index) updateData(key string, item, oldItem map[string]*types.Item) error {
-	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
-	if err != nil || indexKey == "" {
-		return err
-	}
-
-	old := i.refs[key]
-	i.refs[key] = indexKey
-
-	if old != indexKey {
-		pos := sort.SearchStrings(i.sortedKeys, old)
-		if pos >= len(i.sortedKeys) {
-			i.sortedKeys = append(i.sortedKeys, indexKey)
-		} else {
-			i.sortedKeys[pos] = indexKey
-		}
-
-		sort.Strings(i.sortedKeys)
-	}
+	i.setRef(key, indexKey)
 
 	return nil
 }
 
 func (i *index) delete(key string, item map[string]*types.Item) error {
 	delete(i.refs, key)
+	i.ordered = nil
 
 	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 	if err != nil || indexKey == "" {
@@ -188,35 +153,88 @@ func (i *index) delete(key string, item map[string]*types.Item) error {
 	return nil
 }
 
-func (i *index) lessKey(x, y int) bool {
-	if i.sortedRefs[x][1] < i.sortedRefs[y][1] {
-		return true
+// setRef points the item with primary key key at indexKey, or drops it from the index
+// when indexKey is "" (the item lacks the index key), keeping sortedKeys in step.
+func (i *index) setRef(key, indexKey string) {
+	old, exists := i.refs[key]
+	if exists && old == indexKey {
+		return
 	}
 
-	if i.sortedRefs[x][1] > i.sortedRefs[y][1] {
-		return false
+	// An item that was not indexed and still has no index key changes nothing.
+	if !exists && indexKey == "" {
+		return
 	}
 
-	return i.sortedRefs[x][0] < i.sortedRefs[y][0]
+	i.ordered = nil
+
+	if exists {
+		delete(i.refs, key)
+
+		pos := sort.SearchStrings(i.sortedKeys, old)
+		if pos < len(i.sortedKeys) && i.sortedKeys[pos] == old {
+			i.sortedKeys = slices.Delete(i.sortedKeys, pos, pos+1)
+		}
+	}
+
+	if indexKey == "" {
+		return
+	}
+
+	i.refs[key] = indexKey
+	pos := sort.SearchStrings(i.sortedKeys, indexKey)
+	i.sortedKeys = slices.Insert(i.sortedKeys, pos, indexKey)
 }
 
-func (i *index) startSearch(scanForward bool) {
-	i.sortedRefs = make([][2]string, len(i.refs))
-	pos := 0
-
-	for k, v := range i.refs {
-		i.sortedRefs[pos] = [2]string{k, v}
-		pos++
+// orderedRefs returns every (primary key, index key) pair sorted by index key, then primary
+// key, rebuilding the order only after the index changed.
+func (i *index) orderedRefs() [][2]string {
+	if i.ordered != nil {
+		return i.ordered
 	}
 
-	sort.Slice(i.sortedRefs, func(x, y int) bool {
-		less := i.lessKey(x, y)
-		if scanForward {
-			return less
+	ordered := make([][2]string, 0, len(i.refs))
+	for k, v := range i.refs {
+		ordered = append(ordered, [2]string{k, v})
+	}
+
+	sort.Slice(ordered, func(x, y int) bool {
+		if ordered[x][1] != ordered[y][1] {
+			return ordered[x][1] < ordered[y][1]
 		}
 
-		return !less
+		return ordered[x][0] < ordered[y][0]
 	})
+
+	i.ordered = ordered
+
+	return ordered
+}
+
+// startSearch prepares sortedRefs, the (primary key, index key) pairs in search order. With
+// onlyPrefix, only index keys starting with prefix are kept (see Table.fetchQueryData), which
+// must match the keys the search walks.
+func (i *index) startSearch(scanForward bool, prefix string, onlyPrefix bool) {
+	refs := i.orderedRefs()
+
+	if onlyPrefix {
+		lo := sort.Search(len(refs), func(j int) bool { return refs[j][1] >= prefix })
+		n := sort.Search(len(refs)-lo, func(j int) bool { return !strings.HasPrefix(refs[lo+j][1], prefix) })
+		refs = refs[lo : lo+n]
+	}
+
+	// sortedRefs is consumed by getPrimaryKey, so it gets its own copy.
+	i.sortedRefs = make([][2]string, len(refs))
+
+	if scanForward {
+		copy(i.sortedRefs, refs)
+
+		return
+	}
+
+	for j, r := range refs {
+		i.sortedRefs[len(refs)-1-j] = r
+	}
 }
 
 func (i *index) getPrimaryKey(indexKey string) (string, bool) {

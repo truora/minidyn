@@ -102,7 +102,7 @@ func deepCopyTypesItem(it *types.Item) *types.Item {
 	out.SS = deepCopyStringPtrSlice(it.SS)
 	out.NS = deepCopyStringPtrSlice(it.NS)
 
-	if len(it.L) > 0 {
+	if it.L != nil {
 		out.L = make([]*types.Item, len(it.L))
 
 		for i, e := range it.L {
@@ -110,9 +110,7 @@ func deepCopyTypesItem(it *types.Item) *types.Item {
 		}
 	}
 
-	if len(it.M) > 0 {
-		out.M = deepCopyItemMap(it.M)
-	}
+	out.M = deepCopyItemMap(it.M)
 
 	return out
 }

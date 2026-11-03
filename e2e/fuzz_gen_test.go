@@ -33,8 +33,9 @@ type fuzzOp struct {
 // fuzzGen generates operations. With known=false it stays away from areas with an open
 // parity issue, so a default run is green and any divergence is new. In that mode:
 //
-//   - items always have every attribute and UpdateItem only touches existing items, because
-//     functions on a missing attribute fail the request in minidyn (#143);
+//   - items always have every attribute but g (which no function reads) and UpdateItem only
+//     touches existing items, because functions on a missing attribute fail the request in
+//     minidyn (#143);
 //   - write conditions use no functions (same reason: the item may not exist yet);
 //   - every string set contains "z" and DELETE never removes it, so sets never disappear;
 //   - an update expression uses each path once and conditions have no redundant
@@ -81,12 +82,7 @@ func (g *fuzzGen) num() string {
 func (g *fuzzGen) str() string { return pick(g, "", "foo", "foobar", "bar") }
 
 func (g *fuzzGen) list() dynamodbtypes.AttributeValue {
-	n := 1 + g.rng.IntN(2)
-	if g.known {
-		n = g.rng.IntN(3) // #152: empty lists
-	}
-
-	l := make([]dynamodbtypes.AttributeValue, n)
+	l := make([]dynamodbtypes.AttributeValue, g.rng.IntN(3))
 	for i := range l {
 		l[i] = fzS(pick(g, "p", "q"))
 	}
@@ -158,7 +154,12 @@ func (g *fuzzGen) item() map[string]dynamodbtypes.AttributeValue {
 	it := g.key()
 
 	for _, a := range fuzzAttrs {
-		if !g.known || g.chance(0.6) {
+		keep := !g.known || g.chance(0.6)
+		if a == "g" && !g.known {
+			keep = g.chance(0.7) // only attribute_exists reads g, so it may be missing
+		}
+
+		if keep {
 			it[a] = g.attrValue(a)
 		}
 	}
@@ -312,7 +313,7 @@ func (g *fuzzGen) updateAction(e *fuzzExpr) (kw, action, path string) {
 }
 
 func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
-	switch g.rng.IntN(9) {
+	switch g.rng.IntN(10) {
 	case 0:
 		return "SET", e.name("n") + " = " + e.name("n") + " " + pick(g, "+", "-") + " " + e.val(fzN(g.num()))
 	case 1:
@@ -337,13 +338,9 @@ func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
 		}
 
 		return "REMOVE", e.name("m") + "." + e.name("j")
+	case 8:
+		return "REMOVE", e.name("l") + "[0]"
 	default:
-		if g.known {
-			return "REMOVE", e.name("l") + "[0]" // #152: may leave an empty list
-		}
-
-		// Items always have g outside known mode: setting it on an item without g does
-		// not index the item (#161).
 		return "SET", e.name("g") + " = " + e.val(fzS(pick(g, "g1", "g2")))
 	}
 }
@@ -444,8 +441,8 @@ func (g *fuzzGen) projection(e *fuzzExpr) *string {
 	paths := []func() string{
 		func() string { return e.name("n") },
 		func() string { return e.name("m") + "." + e.name("k") },
-		func() string { return e.name("l") + "[0]" },
 		func() string { return e.name("ss") },
+		func() string { return e.name("l") + "[0]" },
 	}
 
 	for _, p := range paths {
@@ -542,13 +539,13 @@ func (g *fuzzGen) scan() fuzzOp {
 	return fuzzOp{"Scan", func(ctx context.Context, c *dynamodb.Client) { _, _ = c.Scan(ctx, in) }}
 }
 
-// readOptions sets an optional filter and an optional limit (not both unless known, 013).
+// readOptions sets an optional filter and an optional limit.
 func (g *fuzzGen) readOptions(e *fuzzExpr, filter **string, limit **int32) {
 	if g.chance(0.4) {
 		*filter = aws.String(g.condition(e, false))
 	}
 
-	if g.chance(0.3) && (*filter == nil || g.known) { // #153: Limit + filter
+	if g.chance(0.3) {
 		*limit = aws.Int32(int32(1 + g.rng.IntN(3))) //nolint:gosec // 1..3
 	}
 }

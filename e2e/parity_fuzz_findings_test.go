@@ -38,6 +38,15 @@ func fuzzErrString(err error) string {
 	return normalizeSDKErrorString(err.Error())
 }
 
+func indexKeys(items []map[string]dynamodbtypes.AttributeValue) []string {
+	keys := make([]string, 0, len(items))
+	for _, it := range items {
+		keys = append(keys, parityAttrValueString(it["pk"])+"/"+parityAttrValueString(it["sk"]))
+	}
+
+	return keys
+}
+
 func TestE2E_FuzzFindings(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -45,8 +54,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 		fn         func(t *testing.T, client *dynamodb.Client) any
 	}{
 		{
-			name:       "UpdateItemAddsIndexKey",
-			knownIssue: "#161",
+			name: "UpdateItemAddsIndexKey",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -276,6 +284,104 @@ func TestE2E_FuzzFindings(t *testing.T) {
 				require.NoError(t, err)
 
 				return []any{len(out.Items), parityKeySignature(out.LastEvaluatedKey)}
+			},
+		},
+		{
+			// #177: indexing past the end of a list used to panic.
+			name: "ListIndexPastTheEnd",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				item := fuzzKey("a", "1")
+				item["l"] = &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}
+				item["l1"] = &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{fzS("x")}}
+				fuzzSetup(ctx, t, client, item)
+
+				got, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName:            aws.String(fuzzTable),
+					Key:                  fuzzKey("a", "1"),
+					ProjectionExpression: aws.String("sk, l[0], l1[1]"),
+				})
+				require.NoError(t, err)
+
+				_, condErr := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:                 aws.String(fuzzTable),
+					Key:                       fuzzKey("a", "1"),
+					UpdateExpression:          aws.String("SET x = :v"),
+					ConditionExpression:       aws.String("l[0] = :v"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": fzS("x")},
+				})
+
+				return []any{len(got.Item), parityAttrValueString(got.Item["sk"]), fuzzErrString(condErr)}
+			},
+		},
+		{
+			name: "PutItemDropsIndexKey",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				item := fuzzKey("a", "1")
+				item["g"] = fzS("g1")
+				fuzzSetup(ctx, t, client, item)
+
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(fuzzTable),
+					Item:      fuzzKey("a", "1"),
+				})
+				require.NoError(t, err)
+
+				scan, err := client.Scan(ctx, &dynamodb.ScanInput{
+					TableName: aws.String(fuzzTable),
+					IndexName: aws.String(fuzzGSI),
+				})
+				require.NoError(t, err)
+
+				query, err := client.Query(ctx, &dynamodb.QueryInput{
+					TableName:                 aws.String(fuzzTable),
+					IndexName:                 aws.String(fuzzGSI),
+					KeyConditionExpression:    aws.String("g = :g"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":g": fzS("g1")},
+				})
+				require.NoError(t, err)
+
+				return []any{scan.Count, indexKeys(scan.Items), query.Count, indexKeys(query.Items)}
+			},
+		},
+		{
+			name:       "UpdateItemRemovesIndexKey",
+			knownIssue: "#146",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				item := fuzzKey("a", "1")
+				item["g"] = fzS("g1")
+				fuzzSetup(ctx, t, client, item)
+
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:        aws.String(fuzzTable),
+					Key:              fuzzKey("a", "1"),
+					UpdateExpression: aws.String("REMOVE g"),
+				})
+				require.NoError(t, err)
+
+				scan, err := client.Scan(ctx, &dynamodb.ScanInput{
+					TableName: aws.String(fuzzTable),
+					IndexName: aws.String(fuzzGSI),
+				})
+				require.NoError(t, err)
+
+				query, err := client.Query(ctx, &dynamodb.QueryInput{
+					TableName:                 aws.String(fuzzTable),
+					IndexName:                 aws.String(fuzzGSI),
+					KeyConditionExpression:    aws.String("g = :g"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":g": fzS("g1")},
+				})
+				require.NoError(t, err)
+
+				return []any{scan.Count, indexKeys(scan.Items), query.Count, indexKeys(query.Items)}
 			},
 		},
 	}

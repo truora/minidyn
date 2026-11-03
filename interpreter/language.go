@@ -24,17 +24,16 @@ type Language struct {
 
 // Match evalute the item with given expression and attributes
 func (li *Language) Match(input MatchInput) (bool, error) {
-	l := language.NewLexer(input.Expression)
-	p := language.NewParser(l)
-	conditional := p.ParseConditionalExpression()
+	parsed := parseCondition(input.Expression)
+	conditional := parsed.conditional
 
-	if len(p.Errors()) != 0 {
-		detail := strings.Join(p.Errors(), "; ")
+	if len(parsed.errs) != 0 {
+		detail := strings.Join(parsed.errs, "; ")
 		if input.ExpressionType == ExpressionTypeKey {
 			return false, fmt.Errorf("Invalid KeyConditionExpression: %w; %s", ErrSyntaxError, detail) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
 		}
 
-		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(p.Errors(), "\n"))
+		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(parsed.errs, "\n"))
 	}
 
 	if conditional.Expression == nil {
@@ -45,7 +44,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, fmt.Errorf("%w: empty expression", ErrSyntaxError)
 	}
 
-	if err := ValidateExpressionAttributeNamesDeclared(matchExpressionLabel(input.ExpressionType), input.Expression, input.Aliases); err != nil {
+	if err := validateDeclaredNames(matchExpressionLabel(input.ExpressionType), parsed.names, input.Aliases); err != nil {
 		return false, err
 	}
 

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/truora/minidyn/interpreter"
@@ -343,15 +344,123 @@ func getPrimaryKey(index *index, k string) (string, bool) {
 	return pk, ok
 }
 
-func (t *Table) fetchQueryData(input QueryInput) (*index, []string) {
+// fetchQueryData returns the index to search (nil for the table) and its sorted keys. For a
+// Query whose key condition pins the partition key, only the keys of that partition are
+// returned, so the search is O(log n + partition size) instead of a walk over every key.
+// The key condition is still evaluated on each returned key.
+//
+// seeked reports whether the keys were narrowed to prefix.
+func (t *Table) fetchQueryData(input QueryInput) (idx *index, keys []string, prefix string, seeked bool) {
 	if input.Index != "" {
 		i := t.Indexes[input.Index]
-		i.startSearch(input.ScanIndexForward)
+		prefix, ok := t.partitionPrefix(input, i.keySchema)
+		i.startSearch(input.ScanIndexForward, prefix, ok)
 
-		return i, i.sortedKeys
+		if ok {
+			return i, keysWithPrefix(i.sortedKeys, prefix), prefix, true
+		}
+
+		return i, i.sortedKeys, "", false
 	}
 
-	return nil, t.SortedKeys
+	if prefix, ok := t.partitionPrefix(input, t.KeySchema); ok {
+		return nil, keysWithPrefix(t.SortedKeys, prefix), prefix, true
+	}
+
+	return nil, t.SortedKeys, "", false
+}
+
+// checkSeek keeps a seeked search equivalent to the full walk it replaces: when the
+// partition has no keys, the conditions are still evaluated once against the first item the
+// walk would have visited, so invalid conditions keep failing whether or not the partition
+// holds data.
+//
+// An ExclusiveStartKey outside the partition (or missing key attributes) is not rejected,
+// unlike DynamoDB: consumers' tests rely on that leniency, so validating it is a separate,
+// release-noted change. Such a start key is never reached, so the page is empty.
+func (t *Table) checkSeek(input QueryInput, idx *index, keys []string) error {
+	if len(keys) != 0 {
+		return nil
+	}
+
+	probe, ok := t.firstSearchItem(idx)
+	if !ok {
+		return nil
+	}
+
+	if _, _, err := t.matchKey(input, probe); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// firstSearchItem returns the first item a full walk of the table (or index) would visit.
+func (t *Table) firstSearchItem(idx *index) (map[string]*types.Item, bool) {
+	if idx != nil {
+		refs := idx.orderedRefs()
+		if len(refs) == 0 {
+			return nil, false
+		}
+
+		item, ok := t.Data[refs[0][0]]
+
+		return item, ok
+	}
+
+	if len(t.SortedKeys) == 0 {
+		return nil, false
+	}
+
+	item, ok := t.Data[t.SortedKeys[0]]
+
+	return item, ok
+}
+
+// partitionPrefix returns the prefix shared by the stored keys of the partition a Query's key
+// condition selects ("<hash>" or "<hash>." with a range key), if it selects exactly one.
+// Keys of other partitions may share the prefix (e.g. hash "a.b" for "a."): callers only use
+// it to skip keys that can't match.
+func (t *Table) partitionPrefix(input QueryInput, schema keySchema) (string, bool) {
+	if input.Scan || input.KeyConditionExpression == "" {
+		return "", false
+	}
+
+	// Stored numbers keep the text they were written with ("7" vs "7.0"), so no prefix finds
+	// every spelling of a number: numeric partition keys keep the full walk. Canonical number
+	// keys would remove this limit (#147).
+	if t.AttributesDef[schema.HashKey] == "N" {
+		return "", false
+	}
+
+	ph, ok := interpreter.KeyConditionHashPlaceholder(input.KeyConditionExpression, input.Aliases, schema.HashKey)
+	if !ok {
+		return "", false
+	}
+
+	val, ok := input.ExpressionAttributeValues[ph]
+	if !ok || val == nil {
+		return "", false
+	}
+
+	hash, err := keySchema{HashKey: schema.HashKey}.getKeyValue(t.AttributesDef, map[string]*types.Item{schema.HashKey: val})
+	if err != nil {
+		return "", false
+	}
+
+	if schema.RangeKey != "" {
+		hash += "."
+	}
+
+	return hash, true
+}
+
+// keysWithPrefix returns the contiguous run of sorted keys that start with prefix.
+func keysWithPrefix(keys []string, prefix string) []string {
+	lo := sort.SearchStrings(keys, prefix)
+	n := sort.Search(len(keys)-lo, func(j int) bool { return !strings.HasPrefix(keys[lo+j], prefix) })
+
+	return keys[lo : lo+n]
 }
 
 func prepareSearch(input *QueryInput, index *index, k, startKey string) (string, bool) {
@@ -448,7 +557,13 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 	items := []map[string]*types.Item{}
 	limit := input.Limit
 	exclusiveStartKey := input.ExclusiveStartKey
-	index, sortedKeys := t.fetchQueryData(input)
+	index, sortedKeys, _, seeked := t.fetchQueryData(input)
+
+	if seeked {
+		if err := t.checkSeek(input, index, sortedKeys); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	startKey := t.parseStartKey(t.KeySchema, exclusiveStartKey)
 	input.started = startKey == ""
@@ -482,11 +597,11 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 
 		scanned++
 
+		// Only evaluated items count toward Limit and can be the LastEvaluatedKey.
 		if shouldCountItem(expressionType, matched) {
 			count++
+			last = keyItem
 		}
-
-		last = keyItem
 
 		if shouldBreakPage(count, limit) {
 			break
@@ -563,8 +678,11 @@ func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpr
 				return interpreter.ExpressionTypeFilter, false, err
 			}
 			matched = m
+			// Only items that passed the key condition were evaluated by the filter: an item
+			// that failed it (e.g. another partition sharing the search prefix) must not count
+			// toward Limit.
+			lastMatchExpressionType = interpreter.ExpressionTypeFilter
 		}
-		lastMatchExpressionType = interpreter.ExpressionTypeFilter
 	}
 
 	if input.ConditionExpression != nil && *input.ConditionExpression != "" {
@@ -892,7 +1010,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 	// update secondary Indexes
 	for _, index := range t.Indexes {
-		err := index.updateData(key, item, oldItem)
+		err := index.putData(key, item)
 		if err != nil {
 			return nil, types.NewError("ValidationException", err.Error(), nil)
 		}

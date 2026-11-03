@@ -437,8 +437,13 @@ func (l *List) ToDynamoDB() types.Item {
 	return attr
 }
 
-// Get returns the contained object in the position
+// Get returns the contained object in the position, or UNDEFINED when the
+// position is out of range (DynamoDB treats it as a missing path).
 func (l *List) Get(position int64) Object {
+	if position < 0 || position >= int64(len(l.Value)) {
+		return UNDEFINED
+	}
+
 	obj := l.Value[position]
 	if obj == nil {
 		return UNDEFINED

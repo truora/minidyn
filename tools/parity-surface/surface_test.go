@@ -67,13 +67,14 @@ func TestAnalyzeServer(t *testing.T) {
 	}
 
 	// Gaps that are known to exist.
-	require.True(t, keys["operation ListTables"], "ListTables is not dispatched")
+	require.True(t, keys["operation CreateBackup"], "CreateBackup is not dispatched")
 	require.True(t, keys["request QueryInput.Select"], "Select is never read")
 	require.True(t, keys["response QueryOutput.ScannedCount"], "ScannedCount is never set")
 	require.True(t, keys["response TableDescription.TableStatus"], "TableStatus is never set")
 
 	// Surface that is implemented must not be reported.
 	require.False(t, keys["operation Query"])
+	require.False(t, keys["operation ListTables"])
 	require.False(t, keys["request QueryInput.KeyConditionExpression"])
 	require.False(t, keys["request UpdateItemInput.ReturnValuesOnConditionCheckFailure"])
 	require.False(t, keys["response QueryOutput.LastEvaluatedKey"])

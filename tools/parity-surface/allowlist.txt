@@ -182,7 +182,10 @@ request UpdateTableInput.TableClass
 request UpdateTableInput.WarmThroughput
 response GlobalSecondaryIndexDescription.WarmThroughput
 response TableDescription.ArchivalSummary
+response TableDescription.DisassociationProtectionEnabled
+response TableDescription.GlobalTableSettingsReplicationMode
 response TableDescription.GlobalTableVersion
+response TableDescription.GlobalTableWitnesses
 response TableDescription.LatestStreamArn
 response TableDescription.LatestStreamLabel
 response TableDescription.MultiRegionConsistency
@@ -193,3 +196,6 @@ response TableDescription.StreamSpecification
 response TableDescription.TableClassSummary
 response TableDescription.WarmThroughput
 
+# not emulated: vector search
+operation SearchVectors
+response TableDescription.VectorIndexes

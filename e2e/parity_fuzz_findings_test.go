@@ -45,8 +45,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 		fn         func(t *testing.T, client *dynamodb.Client) any
 	}{
 		{
-			name:       "UpdateItemAddsIndexKey",
-			knownIssue: "#161",
+			name: "UpdateItemAddsIndexKey",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

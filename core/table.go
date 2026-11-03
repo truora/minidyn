@@ -1010,7 +1010,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 	// update secondary Indexes
 	for _, index := range t.Indexes {
-		err := index.updateData(key, item, oldItem)
+		err := index.putData(key, item)
 		if err != nil {
 			return nil, types.NewError("ValidationException", err.Error(), nil)
 		}

@@ -33,8 +33,9 @@ type fuzzOp struct {
 // fuzzGen generates operations. With known=false it stays away from areas with an open
 // parity issue, so a default run is green and any divergence is new. In that mode:
 //
-//   - items always have every attribute and UpdateItem only touches existing items, because
-//     functions on a missing attribute fail the request in minidyn (#143);
+//   - items always have every attribute but g (which no function reads) and UpdateItem only
+//     touches existing items, because functions on a missing attribute fail the request in
+//     minidyn (#143);
 //   - write conditions use no functions (same reason: the item may not exist yet);
 //   - every string set contains "z" and DELETE never removes it, so sets never disappear;
 //   - an update expression uses each path once and conditions have no redundant
@@ -153,7 +154,12 @@ func (g *fuzzGen) item() map[string]dynamodbtypes.AttributeValue {
 	it := g.key()
 
 	for _, a := range fuzzAttrs {
-		if !g.known || g.chance(0.6) {
+		keep := !g.known || g.chance(0.6)
+		if a == "g" && !g.known {
+			keep = g.chance(0.7) // only attribute_exists reads g, so it may be missing
+		}
+
+		if keep {
 			it[a] = g.attrValue(a)
 		}
 	}
@@ -335,8 +341,6 @@ func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
 	case 8:
 		return "REMOVE", e.name("l") + "[0]"
 	default:
-		// Items always have g outside known mode: setting it on an item without g does
-		// not index the item (#161).
 		return "SET", e.name("g") + " = " + e.val(fzS(pick(g, "g1", "g2")))
 	}
 }

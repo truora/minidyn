@@ -1343,6 +1343,123 @@ func TestGSIUpdateMovesSecondaryIndexKey(t *testing.T) {
 	c.Empty(queryBySeg(aVal))
 }
 
+func newSegIndexTable(t *testing.T) (*Table, func(seg string) []map[string]*types.Item) {
+	t.Helper()
+	c := require.New(t)
+
+	table := NewTable("gsi_seg")
+	table.AttributesDef = map[string]string{"id": "S", "seg": "S"}
+	table.KeySchema = keySchema{"id", "", false}
+	table.LangInterpreter = interpreter.Language{}
+
+	idxName, allStr := "by_seg", "ALL"
+
+	err := table.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
+		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+		IndexName:             &idxName,
+		KeySchema:             []*types.KeySchemaElement{{AttributeName: "seg", KeyType: "HASH"}},
+		Projection:            &types.Projection{ProjectionType: &allStr},
+	}})
+	c.NoError(err)
+
+	query := func(seg string) []map[string]*types.Item {
+		t.Helper()
+
+		items, _, qerr := table.SearchData(QueryInput{
+			Index:                     idxName,
+			KeyConditionExpression:    "seg = :s",
+			ExpressionAttributeValues: map[string]*types.Item{":s": {S: new(seg)}},
+			ScanIndexForward:          true,
+		})
+		c.NoError(qerr)
+
+		return items
+	}
+
+	return table, query
+}
+
+func TestGSIUpdateAddsSecondaryIndexKey(t *testing.T) {
+	c := require.New(t)
+	table, query := newSegIndexTable(t)
+
+	put := func(item map[string]*types.Item) {
+		_, err := table.Put(&types.PutItemInput{TableName: aws.String(table.Name), Item: item})
+		c.NoError(err)
+	}
+
+	put(map[string]*types.Item{"id": {S: new("0")}, "seg": {S: new("other")}})
+	put(map[string]*types.Item{"id": {S: new("1")}})
+	put(map[string]*types.Item{"id": {S: new("2")}})
+
+	for _, id := range []string{"1", "2"} {
+		_, err := table.Update(&types.UpdateItemInput{
+			TableName:                 aws.String(table.Name),
+			Key:                       map[string]*types.Item{"id": {S: new(id)}},
+			UpdateExpression:          "SET seg = :s",
+			ExpressionAttributeValues: map[string]*types.Item{":s": {S: new("alpha")}},
+		})
+		c.NoError(err)
+	}
+
+	c.Len(query("alpha"), 2)
+	// The item that was already indexed keeps its entry.
+	c.Len(query("other"), 1)
+	c.Equal(int64(3), table.Indexes["by_seg"].count())
+}
+
+func TestGSIUpdateDropsRemovedSecondaryIndexKey(t *testing.T) {
+	c := require.New(t)
+	table, query := newSegIndexTable(t)
+
+	for _, id := range []string{"1", "2"} {
+		_, err := table.Put(&types.PutItemInput{
+			TableName: aws.String(table.Name),
+			Item:      map[string]*types.Item{"id": {S: new(id)}, "seg": {S: new("alpha")}},
+		})
+		c.NoError(err)
+	}
+
+	c.Len(query("alpha"), 2)
+
+	// Simulate an update whose result no longer has the index key.
+	idx := table.Indexes["by_seg"]
+	key, err := table.KeySchema.GetKey(table.AttributesDef, map[string]*types.Item{"id": {S: new("1")}})
+	c.NoError(err)
+
+	item := map[string]*types.Item{"id": {S: new("1")}}
+	table.setItem(key, item)
+	c.NoError(idx.putData(key, item))
+
+	got := query("alpha")
+	c.Len(got, 1)
+	c.Equal("2", *got[0]["id"].S)
+	c.Equal(int64(1), idx.count())
+
+	// Writing an item that never had the index key leaves the index alone.
+	c.NoError(idx.putData(key, item))
+	c.Equal(int64(1), idx.count())
+}
+
+func TestGSIPutWithoutKeyDropsSecondaryIndexEntry(t *testing.T) {
+	c := require.New(t)
+	table, query := newSegIndexTable(t)
+
+	put := func(item map[string]*types.Item) {
+		_, err := table.Put(&types.PutItemInput{TableName: aws.String(table.Name), Item: item})
+		c.NoError(err)
+	}
+
+	put(map[string]*types.Item{"id": {S: new("1")}, "seg": {S: new("alpha")}})
+	put(map[string]*types.Item{"id": {S: new("2")}, "seg": {S: new("alpha")}})
+	put(map[string]*types.Item{"id": {S: new("1")}})
+
+	got := query("alpha")
+	c.Len(got, 1)
+	c.Equal("2", *got[0]["id"].S)
+	c.Equal(int64(1), table.Indexes["by_seg"].count())
+}
+
 func TestMatchKey_errorsAndFilterBranches(t *testing.T) {
 	c := require.New(t)
 

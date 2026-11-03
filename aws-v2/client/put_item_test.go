@@ -39,3 +39,29 @@ func TestPutItemReturnValues(t *testing.T) {
 	}, put("025", "Raichu", dynamodbtypes.ReturnValueAllOld).Attributes)
 	c.Empty(put("026", "Meowth", dynamodbtypes.ReturnValueAllOld).Attributes)
 }
+
+func TestPutItemInvalidReturnValues(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+	ctx := context.Background()
+
+	c.NoError(ensurePokemonTable(client))
+
+	for _, rv := range []dynamodbtypes.ReturnValue{
+		dynamodbtypes.ReturnValueAllNew,
+		dynamodbtypes.ReturnValueUpdatedOld,
+		dynamodbtypes.ReturnValueUpdatedNew,
+		"BOGUS",
+	} {
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String(tableName),
+			Item: map[string]dynamodbtypes.AttributeValue{
+				"id": &dynamodbtypes.AttributeValueMemberS{Value: "025"},
+			},
+			ReturnValues: rv,
+		})
+		c.Error(err, string(rv))
+		c.Contains(err.Error(), "ValidationException")
+		c.Contains(err.Error(), "Return values set to invalid value")
+	}
+}

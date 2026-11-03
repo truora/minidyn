@@ -770,6 +770,10 @@ func (t *Table) Restore(s TableSnapshot) {
 // Put puts an item into the table. It returns the item it replaced when
 // ReturnValues is ALL_OLD, and nil otherwise (or when there was none).
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) { //nolint:gocognit // conditional write, key resolution, GSI updates
+	if err := validatePutItemReturnValues(input.ReturnValues); err != nil {
+		return nil, err
+	}
+
 	if err := types.ValidateItemMap(input.Item); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
@@ -827,6 +831,19 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 	}
 
 	return t.LangInterpreter.Update(input)
+}
+
+func validatePutItemReturnValues(rv *string) error {
+	if rv == nil {
+		return nil
+	}
+
+	switch *rv {
+	case "", "NONE", "ALL_OLD":
+		return nil
+	default:
+		return types.NewError("ValidationException", "Return values set to invalid value", nil)
+	}
 }
 
 func validateUpdateItemReturnValues(rv *string) error {

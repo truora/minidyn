@@ -56,4 +56,20 @@ func TestServerPutItemReturnValues(t *testing.T) {
 	_, err = srv.client.PutItem(ctx, &PutItemInput{TableName: aws.String("pokemons"), Item: moves})
 	c.NoError(err)
 	c.Equal(moves, put("004", "Charmeleon", ddbtypes.ReturnValueAllOld).Attributes)
+
+	for _, rv := range []ddbtypes.ReturnValue{
+		ddbtypes.ReturnValueAllNew,
+		ddbtypes.ReturnValueUpdatedOld,
+		ddbtypes.ReturnValueUpdatedNew,
+		"BOGUS",
+	} {
+		_, err = srv.client.PutItem(ctx, &PutItemInput{
+			TableName:    aws.String("pokemons"),
+			Item:         map[string]*AttributeValue{"id": {S: aws.String("999")}},
+			ReturnValues: rv,
+		})
+		c.Error(err, string(rv))
+		c.Contains(err.Error(), "ValidationException")
+		c.Contains(err.Error(), "Return values set to invalid value")
+	}
 }

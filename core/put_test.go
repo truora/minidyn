@@ -38,3 +38,46 @@ func TestPutReturnValues(t *testing.T) {
 	c.Error(err)
 	c.Nil(old)
 }
+
+func TestPutInvalidReturnValues(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable(tableName)
+	table.AttributesDef = map[string]string{"id": "S"}
+	table.KeySchema = keySchema{HashKey: "id"}
+
+	for _, rv := range []string{"ALL_NEW", "UPDATED_OLD", "UPDATED_NEW", "BOGUS"} {
+		old, err := table.Put(&types.PutItemInput{
+			TableName:    &table.Name,
+			Item:         map[string]*types.Item{"id": {S: new("025")}},
+			ReturnValues: new(rv),
+		})
+		c.Error(err, rv)
+		c.Nil(old)
+		c.Contains(err.Error(), "Return values set to invalid value")
+		c.Empty(table.Data)
+	}
+}
+
+func TestPutConditionFailedReturnsNoAttributes(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable(tableName)
+	table.AttributesDef = map[string]string{"id": "S"}
+	table.KeySchema = keySchema{HashKey: "id"}
+
+	_, err := table.Put(&types.PutItemInput{
+		TableName: &table.Name,
+		Item:      map[string]*types.Item{"id": {S: new("025")}, "name": {S: new("Pikachu")}},
+	})
+	c.NoError(err)
+
+	old, err := table.Put(&types.PutItemInput{
+		TableName:           &table.Name,
+		Item:                map[string]*types.Item{"id": {S: new("025")}, "name": {S: new("Raichu")}},
+		ConditionExpression: new("attribute_not_exists(id)"),
+		ReturnValues:        new("ALL_OLD"),
+	})
+	c.Error(err)
+	c.Nil(old)
+}

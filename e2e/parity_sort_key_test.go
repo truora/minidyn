@@ -289,7 +289,7 @@ func TestE2E_SortKey(t *testing.T) {
 
 				var pages [][]string
 
-				for i := 0; i < 5; i++ {
+				for range 5 {
 					out, err := client.Query(ctx, input)
 					require.NoError(t, err)
 

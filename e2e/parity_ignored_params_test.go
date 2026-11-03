@@ -34,7 +34,7 @@ func TestE2E_IgnoredParams(t *testing.T) {
 
 				var all []string
 
-				for seg := int32(0); seg < total; seg++ {
+				for seg := range int32(total) {
 					out, err := client.Scan(ctx, &dynamodb.ScanInput{
 						TableName:     aws.String(paritySortKeyTable),
 						Segment:       aws.Int32(seg),

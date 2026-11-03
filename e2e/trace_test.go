@@ -254,7 +254,7 @@ func diffEntries(kind string, m, l []traceEntry) []string {
 
 	n := min(len(m), len(l))
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if m[i].Op != l[i].Op {
 			out = append(out, fmt.Sprintf("%s #%d: operation sequence diverges (minidyn %s, dynamodb-local %s); "+
 				"later entries not compared", kind, i, m[i].Op, l[i].Op))

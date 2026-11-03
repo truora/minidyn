@@ -239,8 +239,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 			},
 		},
 		{
-			name:       "TransactionCanceledReasons",
-			knownIssue: "#154",
+			name: "TransactionCanceledReasons",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

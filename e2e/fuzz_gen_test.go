@@ -296,8 +296,8 @@ func (g *fuzzGen) putItem() fuzzOp {
 		in.ExpressionAttributeValues = e.valuesOrNil()
 	}
 
-	if g.known && g.chance(0.3) {
-		in.ReturnValues = dynamodbtypes.ReturnValueAllOld // #141
+	if g.chance(0.3) {
+		in.ReturnValues = dynamodbtypes.ReturnValueAllOld
 	}
 
 	return fuzzOp{"PutItem", func(ctx context.Context, c *dynamodb.Client) { _, _ = c.PutItem(ctx, in) }}

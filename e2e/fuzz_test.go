@@ -178,11 +178,6 @@ func fuzzNormalize(e traceEntry) traceEntry {
 	req, _ := e.Request.(map[string]any)
 
 	switch e.Op {
-	case "PutItem":
-		// #141: PutItem returns the written item even without ReturnValues.
-		if _, asked := req["ReturnValues"]; !asked {
-			delete(resp, "Attributes")
-		}
 	case "Query", "Scan":
 		// #144: ScannedCount is never set; Count 0 and empty Items are omitted.
 		delete(resp, "ScannedCount")

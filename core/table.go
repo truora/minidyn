@@ -767,21 +767,22 @@ func (t *Table) Restore(s TableSnapshot) {
 	}
 }
 
-// Put puts items into table
+// Put puts an item into the table. It returns the item it replaced when
+// ReturnValues is ALL_OLD, and nil otherwise (or when there was none).
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) { //nolint:gocognit // conditional write, key resolution, GSI updates
 	if err := types.ValidateItemMap(input.Item); err != nil {
-		return copyItem(input.Item), types.NewError("ValidationException", err.Error(), nil)
+		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
-		return copyItem(input.Item), types.NewError("ValidationException", err.Error(), nil)
+		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	item := copyItem(input.Item)
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
 	if err != nil {
-		return item, types.NewError("ValidationException", err.Error(), nil)
+		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	// support conditional writes
@@ -794,13 +795,15 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 			ConditionExpression:       input.ConditionExpression,
 		}, t.getItem(key))
 		if merr != nil {
-			return item, types.NewError("ValidationException", merr.Error(), nil)
+			return nil, types.NewError("ValidationException", merr.Error(), nil)
 		}
 
 		if !matched {
-			return item, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
+			return nil, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
 		}
 	}
+
+	old := t.Data[key]
 
 	t.setItem(key, item)
 
@@ -811,7 +814,11 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 	}
 
-	return item, nil
+	if input.ReturnValues == nil || *input.ReturnValues != "ALL_OLD" {
+		old = nil
+	}
+
+	return old, nil
 }
 
 func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {

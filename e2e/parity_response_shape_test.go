@@ -200,8 +200,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 			},
 		},
 		{
-			name:       "QueryLimitWithFilterLastEvaluatedKey",
-			knownIssue: "#153",
+			name: "QueryLimitWithFilterLastEvaluatedKey",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

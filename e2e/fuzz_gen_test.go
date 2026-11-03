@@ -542,13 +542,13 @@ func (g *fuzzGen) scan() fuzzOp {
 	return fuzzOp{"Scan", func(ctx context.Context, c *dynamodb.Client) { _, _ = c.Scan(ctx, in) }}
 }
 
-// readOptions sets an optional filter and an optional limit (not both unless known, 013).
+// readOptions sets an optional filter and an optional limit.
 func (g *fuzzGen) readOptions(e *fuzzExpr, filter **string, limit **int32) {
 	if g.chance(0.4) {
 		*filter = aws.String(g.condition(e, false))
 	}
 
-	if g.chance(0.3) && (*filter == nil || g.known) { // #153: Limit + filter
+	if g.chance(0.3) {
 		*limit = aws.Int32(int32(1 + g.rng.IntN(3))) //nolint:gosec // 1..3
 	}
 }

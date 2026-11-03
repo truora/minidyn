@@ -221,6 +221,77 @@ func TestLanguageUpdate(t *testing.T) {
 			expectedErrMsg: "SET expression must have at least one action",
 		},
 		{
+			name: "remove top-level attributes",
+			input: UpdateInput{
+				TableName:  "test",
+				Expression: "REMOVE lease_owner, lease_until",
+				Item: map[string]*types.Item{
+					"id":          {S: new("001")},
+					"lease_owner": {S: new("worker-1")},
+					"lease_until": {N: new("1700000000")},
+				},
+			},
+			output: map[string]*types.Item{
+				"id": {S: new("001")},
+			},
+		},
+		{
+			name: "set and remove with alias",
+			input: UpdateInput{
+				TableName:  "test",
+				Expression: "SET lvl = :lvl REMOVE second_type, #n",
+				Item: map[string]*types.Item{
+					"id":          {S: new("001")},
+					"lvl":         {N: new("5")},
+					"name":        {S: new("Bulbasaur")},
+					"second_type": {S: new("poison")},
+				},
+				Attributes: map[string]*types.Item{
+					":lvl": {N: new("6")},
+				},
+				Aliases: map[string]string{
+					"#n": "name",
+				},
+			},
+			output: map[string]*types.Item{
+				"id":  {S: new("001")},
+				"lvl": {N: new("6")},
+			},
+		},
+		{
+			name: "remove missing attribute is a no-op",
+			input: UpdateInput{
+				TableName:  "test",
+				Expression: "REMOVE not_there",
+				Item: map[string]*types.Item{
+					"id": {S: new("001")},
+				},
+			},
+			output: map[string]*types.Item{
+				"id": {S: new("001")},
+			},
+		},
+		{
+			name: "remove nested attribute",
+			input: UpdateInput{
+				TableName:  "test",
+				Expression: "REMOVE m.a",
+				Item: map[string]*types.Item{
+					"id": {S: new("001")},
+					"m": {M: map[string]*types.Item{
+						"a": {S: new("x")},
+						"b": {S: new("y")},
+					}},
+				},
+			},
+			output: map[string]*types.Item{
+				"id": {S: new("001")},
+				"m": {M: map[string]*types.Item{
+					"b": {S: new("y")},
+				}},
+			},
+		},
+		{
 			name: "typo",
 			input: UpdateInput{
 				TableName:  "test",

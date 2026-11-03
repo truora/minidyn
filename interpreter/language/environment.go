@@ -12,11 +12,19 @@ type Environment struct {
 	store     map[string]Object
 	Aliases   map[string]string
 	toCompact []Object
+	// removed holds the top-level names deleted with Remove, so Apply can
+	// delete them from the item as well.
+	removed map[string]bool
 }
 
 // NewEnvironment creates a new enviroment
 func NewEnvironment() *Environment {
-	return &Environment{store: map[string]Object{}, Aliases: map[string]string{}, toCompact: []Object{}}
+	return &Environment{
+		store:     map[string]Object{},
+		Aliases:   map[string]string{},
+		toCompact: []Object{},
+		removed:   map[string]bool{},
+	}
 }
 
 // AddAttributes adds the types attributes to the environment
@@ -127,11 +135,9 @@ func (e *Environment) Remove(name string) {
 		n = alias
 	}
 
-	_, ok := e.store[n]
-	if ok {
+	if _, ok := e.store[n]; ok {
 		delete(e.store, n)
-
-		return
+		e.removed[n] = true
 	}
 }
 
@@ -152,8 +158,15 @@ func (e *Environment) Compact() {
 	}
 }
 
-// Apply assigns the environment field to the item
+// Apply assigns the environment field to the item and deletes from it the
+// attributes removed from the environment
 func (e *Environment) Apply(item map[string]*types.Item, aliases map[string]string, exclude map[string]bool) {
+	for k := range e.removed {
+		if _, ok := e.store[k]; !ok {
+			delete(item, k)
+		}
+	}
+
 	for k, v := range e.store {
 		if _, ok := exclude[k]; ok {
 			continue

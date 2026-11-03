@@ -34,3 +34,28 @@ func TestApply(t *testing.T) {
 		t.Errorf("Expected 3 items, got %d", len(item))
 	}
 }
+
+func TestApplyDeletesRemovedAttributes(t *testing.T) {
+	item := map[string]*types.Item{
+		"a":    {S: new("a")},
+		"name": {S: new("n")},
+		"keep": {S: new("k")},
+	}
+
+	env := NewEnvironment()
+	env.Aliases = map[string]string{"#n": "name"}
+
+	if err := env.AddAttributes(item); err != nil {
+		t.Fatal(err)
+	}
+
+	env.Remove("a")
+	env.Remove("#n")
+	env.Remove("missing")
+
+	env.Apply(item, env.Aliases, nil)
+
+	if len(item) != 1 || item["keep"] == nil {
+		t.Errorf("expected only keep to remain, got %v", item)
+	}
+}

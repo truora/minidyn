@@ -1032,6 +1032,57 @@ func TestUpdateItem(t *testing.T) {
 	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "water"}, item["second_type"])
 }
 
+func TestUpdateItemRemoveTopLevelAttributes(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+	c.NoError(createPokemon(client, pokemon{
+		ID:   "001",
+		Type: "grass",
+		Name: "Bulbasaur",
+	}))
+
+	key := map[string]dynamodbtypes.AttributeValue{
+		"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+	}
+
+	_, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName:        aws.String(tableName),
+		Key:              key,
+		UpdateExpression: aws.String("SET lease_owner = :o, second_type = :st"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":o":  &dynamodbtypes.AttributeValueMemberS{Value: "worker-1"},
+			":st": &dynamodbtypes.AttributeValueMemberS{Value: "poison"},
+		},
+	})
+	c.NoError(err)
+
+	out, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName:        aws.String(tableName),
+		Key:              key,
+		UpdateExpression: aws.String("SET lvl = :lvl REMOVE lease_owner, #n, not_there"),
+		ExpressionAttributeNames: map[string]string{
+			"#n": "name",
+		},
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":lvl": &dynamodbtypes.AttributeValueMemberN{Value: "6"},
+		},
+		ReturnValues: dynamodbtypes.ReturnValueAllNew,
+	})
+	c.NoError(err)
+	c.NotContains(out.Attributes, "lease_owner")
+	c.NotContains(out.Attributes, "name")
+	c.Equal(&dynamodbtypes.AttributeValueMemberN{Value: "6"}, out.Attributes["lvl"])
+
+	item, err := getPokemon(client, "001")
+	c.NoError(err)
+	c.NotContains(item, "lease_owner")
+	c.NotContains(item, "name")
+	c.Equal(&dynamodbtypes.AttributeValueMemberS{Value: "poison"}, item["second_type"])
+	c.Equal(&dynamodbtypes.AttributeValueMemberN{Value: "6"}, item["lvl"])
+}
+
 func TestUpdateItemReturnValuesMatrix(t *testing.T) {
 	c := require.New(t)
 	client := setupClient(tableName)

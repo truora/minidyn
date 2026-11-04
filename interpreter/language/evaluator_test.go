@@ -1,6 +1,7 @@
 package language
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -318,6 +319,9 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 		":binA": {
 			B: []byte("a"),
 		},
+		":binASet": {BS: [][]byte{[]byte("a")}},
+		":aSet":    {SS: []*string{new("a")}},
+		":twoSet":  {NS: []*string{new("2")}},
 		":numSet": {
 			NS: []*string{new("2"), new("4")},
 		},
@@ -555,9 +559,9 @@ func TestEvalDELETEUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"DELETE :binSet :binA", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, boolFalse},
-		{"DELETE :strSet :a", ":strSet", &StringSet{Value: map[string]bool{"b": boolTrue}}, boolFalse},
-		{"DELETE :numSet :two", ":numSet", &NumberSet{Value: map[float64]bool{4: boolTrue}}, boolFalse},
+		{"DELETE :binSet :binASet", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, boolFalse},
+		{"DELETE :strSet :aSet", ":strSet", &StringSet{Value: map[string]bool{"b": boolTrue}}, boolFalse},
+		{"DELETE :numSet :twoSet", ":numSet", &NumberSet{Value: map[float64]bool{4: boolTrue}}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -590,6 +594,53 @@ func TestEvalDELETEUpdateMissingAttribute(t *testing.T) {
 
 	if got := env.Get("absent_set"); got != UNDEFINED {
 		t.Errorf("DELETE on a missing attribute must not create it, got=%v", got.Inspect())
+	}
+}
+
+func TestEvalDELETERejectsNonSetOperand(t *testing.T) {
+	const prefix = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
+		"operator: DELETE, operand type: %s, typeSet: ALLOWED_FOR_DELETE_OPERAND"
+
+	tests := []struct {
+		name    string
+		update  string
+		operand string
+	}{
+		{"string on existing set", "DELETE target :a", "STRING"},
+		{"number on existing set", "DELETE target :two", "NUMBER"},
+		{"binary on existing set", "DELETE target :binA", "BINARY"},
+		{"boolean on existing set", "DELETE target :x", "BOOLEAN"},
+		{"list on existing set", "DELETE target :list", "LIST"},
+		{"map on existing set", "DELETE target :hash", "MAP"},
+		{"string on missing attribute", "DELETE absent :a", "STRING"},
+		{"number on missing attribute", "DELETE absent :two", "NUMBER"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := startEvalUpdateEnv(t)
+
+			if err := env.AddAttributes(map[string]*types.Item{
+				"target": {SS: []*string{new("a"), new("b")}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			result := testEvalUpdate(t, tt.update, env)
+
+			errObj, ok := result.(*Error)
+			if !ok {
+				t.Fatalf("expected an error, got=%v", result.Inspect())
+			}
+
+			if want := fmt.Sprintf(prefix, tt.operand); errObj.Message != want {
+				t.Errorf("wrong message.\n got=%q\nwant=%q", errObj.Message, want)
+			}
+
+			if got, ok := env.Get("target").(*StringSet); !ok || len(got.Value) != 2 {
+				t.Errorf("target set must be unchanged, got=%v", env.Get("target").Inspect())
+			}
+		})
 	}
 }
 
@@ -952,6 +1003,7 @@ func TestEvalErrors(t *testing.T) {
 		":list": {L: []*types.Item{
 			{S: new("a")},
 		}},
+		":set": {SS: []*string{new("a")}},
 	})
 	if err != nil {
 		panic(err)
@@ -979,7 +1031,7 @@ func TestEvalErrors(t *testing.T) {
 				&ActionExpression{
 					Token: Token{Type: DELETE, Literal: "DELETE"},
 					Left:  &Identifier{Value: ":r", Token: Token{Type: IDENT, Literal: ":x"}},
-					Right: &Identifier{Value: ":r", Token: Token{Type: IDENT, Literal: ":x"}},
+					Right: &Identifier{Value: ":set", Token: Token{Type: IDENT, Literal: ":set"}},
 				},
 				env,
 			},
@@ -1095,7 +1147,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 			"the function is not allowed in an update expression; function: size",
 		},
 		{
-			"DELETE :x :list",
+			"DELETE :x :set",
 			"An operand in the update expression has an incorrect data type",
 		},
 		{
@@ -1128,6 +1180,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		":list": {L: []*types.Item{
 			{S: new("a")},
 		}},
+		":set": {SS: []*string{new("a")}},
 	})
 	if err != nil {
 		panic(err)
@@ -1255,4 +1308,21 @@ func testEvalUpdate(t *testing.T, input string, env *Environment) Object {
 	}
 
 	return EvalUpdate(update, env)
+}
+
+func TestDynamoDBTypeName(t *testing.T) {
+	tests := map[ObjectType]string{
+		ObjectTypeString:    "STRING",
+		ObjectTypeNull:      "NULL",
+		ObjectTypeStringSet: "STRING_SET",
+		ObjectTypeNumberSet: "NUMBER_SET",
+		ObjectTypeBinarySet: "BINARY_SET",
+		ObjectTypeFunction:  "FN",
+	}
+
+	for in, want := range tests {
+		if got := dynamoDBTypeName(in); got != want {
+			t.Errorf("dynamoDBTypeName(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

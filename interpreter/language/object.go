@@ -593,25 +593,14 @@ func (ss *StringSet) Add(obj Object) Object {
 	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
 }
 
-// Delete if the obj is an string it removes the value from the Set
+// Delete if the obj is a string set it removes the value from the Set
 func (ss *StringSet) Delete(obj Object) Object {
-	switch obj.Type() {
-	case ObjectTypeStringSet:
-		ssInput, ok := obj.(*StringSet)
-		if ok {
-			for str := range ssInput.Value {
-				delete(ss.Value, str)
-			}
-
-			return UNDEFINED
+	if ssInput, ok := obj.(*StringSet); ok {
+		for str := range ssInput.Value {
+			delete(ss.Value, str)
 		}
-	case ObjectTypeString:
-		str, ok := obj.(*String)
-		if ok {
-			delete(ss.Value, str.Value)
 
-			return UNDEFINED
-		}
+		return UNDEFINED
 	}
 
 	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
@@ -707,23 +696,12 @@ func (bs *BinarySet) Size() int64 {
 	return int64(len(bs.Value))
 }
 
-// Delete if the obj is an binary it removes the value from the Set
+// Delete if the obj is a binary set it removes the value from the Set
 func (bs *BinarySet) Delete(obj Object) Object {
-	switch obj.Type() {
-	case ObjectTypeBinarySet:
-		bsInput, ok := obj.(*BinarySet)
-		if ok {
-			bs.Value = removeBinaries(bs.Value, bsInput.Value)
+	if bsInput, ok := obj.(*BinarySet); ok {
+		bs.Value = removeBinaries(bs.Value, bsInput.Value)
 
-			return UNDEFINED
-		}
-	case ObjectTypeBinary:
-		bin, ok := obj.(*Binary)
-		if ok {
-			bs.Value = removeBinaries(bs.Value, [][]byte{bin.Value})
-
-			return UNDEFINED
-		}
+		return UNDEFINED
 	}
 
 	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
@@ -865,25 +843,14 @@ func (ns *NumberSet) Add(obj Object) Object {
 	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
 }
 
-// Delete if the obj is an number or number set it removes the value from the Set
+// Delete if the obj is a number set it removes the value from the Set
 func (ns *NumberSet) Delete(obj Object) Object {
-	switch obj.Type() {
-	case ObjectTypeNumberSet:
-		nsInput, ok := obj.(*NumberSet)
-		if ok {
-			for n := range nsInput.Value {
-				delete(ns.Value, n)
-			}
-
-			return UNDEFINED
+	if nsInput, ok := obj.(*NumberSet); ok {
+		for n := range nsInput.Value {
+			delete(ns.Value, n)
 		}
-	case ObjectTypeNumber:
-		n, ok := obj.(*Number)
-		if ok {
-			delete(ns.Value, n.Value)
 
-			return UNDEFINED
-		}
+		return UNDEFINED
 	}
 
 	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())

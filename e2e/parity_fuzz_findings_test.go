@@ -112,6 +112,32 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			},
 		},
 		{
+			name: "DeleteLastElementsRemovesSet",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				item := fuzzKey("a", "1")
+				item["ss"] = &dynamodbtypes.AttributeValueMemberSS{Value: []string{"x"}}
+				fuzzSetup(ctx, t, client, item)
+
+				out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:        aws.String(fuzzTable),
+					Key:              fuzzKey("a", "1"),
+					UpdateExpression: aws.String("DELETE ss :v"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":v": &dynamodbtypes.AttributeValueMemberSS{Value: []string{"x"}},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueAllNew,
+				})
+				require.NoError(t, err)
+
+				_, hasSet := out.Attributes["ss"]
+
+				return hasSet
+			},
+		},
+		{
 			name:       "EmptyStringKeyConditionValue",
 			knownIssue: "#163",
 			fn: func(t *testing.T, client *dynamodb.Client) any {

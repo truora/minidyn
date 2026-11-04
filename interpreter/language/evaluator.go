@@ -964,6 +964,15 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 		return val
 	}
 
+	// DELETE only takes a set operand, whether or not the target exists.
+	if !isSetObject(val) {
+		return newError(
+			"Invalid UpdateExpression: Incorrect operand type for operator or function; "+
+				"operator: DELETE, operand type: %s, typeSet: ALLOWED_FOR_DELETE_OPERAND",
+			dynamoDBTypeName(val.Type()),
+		)
+	}
+
 	id, ok := node.Left.(*Identifier)
 	if ok {
 		// We need to validate left hand side is not a keyword
@@ -996,6 +1005,37 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 	}
 
 	return UNDEFINED
+}
+
+func isSetObject(obj Object) bool {
+	switch obj.(type) {
+	case *StringSet, *NumberSet, *BinarySet:
+		return true
+	}
+
+	return false
+}
+
+// dynamoDBTypeName returns the long type name DynamoDB uses in validation messages.
+func dynamoDBTypeName(t ObjectType) string {
+	names := map[ObjectType]string{
+		ObjectTypeString:    "STRING",
+		ObjectTypeNumber:    "NUMBER",
+		ObjectTypeBinary:    "BINARY",
+		ObjectTypeBoolean:   "BOOLEAN",
+		ObjectTypeNull:      "NULL",
+		ObjectTypeList:      "LIST",
+		ObjectTypeMap:       "MAP",
+		ObjectTypeStringSet: "STRING_SET",
+		ObjectTypeNumberSet: "NUMBER_SET",
+		ObjectTypeBinarySet: "BINARY_SET",
+	}
+
+	if name, ok := names[t]; ok {
+		return name
+	}
+
+	return string(t)
 }
 
 func isEmptySet(obj Object) bool {

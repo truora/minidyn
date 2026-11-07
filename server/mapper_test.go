@@ -305,3 +305,11 @@ func TestMapDDBAttributeValueToWire_allMembers(t *testing.T) {
 		require.Equal(t, aws.String("z"), out["x"].S)
 	})
 }
+
+func TestMapTypesTableThroughputNil(t *testing.T) {
+	t.Parallel()
+	require.Nil(t, mapTypesTableThroughput(nil))
+	require.Nil(t, mapTypesBillingModeSummary(nil))
+	require.Nil(t, mapTypesOnDemandThroughput(nil))
+	require.Nil(t, mapTypesAttributeDefinitions(nil))
+}

@@ -88,6 +88,20 @@ type ProvisionedThroughput struct {
 	WriteCapacityUnits int64    `min:"1" type:"long" required:"true"`
 }
 
+// OnDemandThroughput represents the maximum read and write request units of an on-demand
+// table or index. -1 means no limit.
+type OnDemandThroughput struct {
+	_                    struct{} `type:"structure"`
+	MaxReadRequestUnits  *int64   `type:"long"`
+	MaxWriteRequestUnits *int64   `type:"long"`
+}
+
+// BillingModeSummary represents the billing mode of a table.
+type BillingModeSummary struct {
+	_           struct{} `type:"structure"`
+	BillingMode string   `type:"string" enum:"BillingMode"`
+}
+
 // CreateTableInput input to create a table
 type CreateTableInput struct {
 	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
@@ -150,15 +164,17 @@ type LocalSecondaryIndex struct {
 
 // GlobalSecondaryIndexDescription represents the properties of a global secondary index.
 type GlobalSecondaryIndexDescription struct {
-	_              struct{}           `type:"structure"`
-	Backfilling    *bool              `type:"boolean"`
-	IndexArn       *string            `type:"string"`
-	IndexName      *string            `min:"3" type:"string"`
-	IndexSizeBytes *int64             `type:"long"`
-	IndexStatus    *string            `type:"string" enum:"IndexStatus"`
-	ItemCount      int64              `type:"long"`
-	KeySchema      []KeySchemaElement `min:"1" type:"list"`
-	Projection     *Projection        `type:"structure"`
+	_                     struct{}               `type:"structure"`
+	Backfilling           *bool                  `type:"boolean"`
+	IndexArn              *string                `type:"string"`
+	IndexName             *string                `min:"3" type:"string"`
+	IndexSizeBytes        *int64                 `type:"long"`
+	IndexStatus           *string                `type:"string" enum:"IndexStatus"`
+	ItemCount             int64                  `type:"long"`
+	KeySchema             []KeySchemaElement     `min:"1" type:"list"`
+	OnDemandThroughput    *OnDemandThroughput    `type:"structure"`
+	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
+	Projection            *Projection            `type:"structure"`
 }
 
 // LocalSecondaryIndexDescription represents the properties of a local secondary index.
@@ -301,19 +317,23 @@ type AttributeValueUpdate struct {
 
 // TableDescription represents the properties of a table.
 type TableDescription struct {
-	_                      struct{}                          `type:"structure"`
-	GlobalSecondaryIndexes []GlobalSecondaryIndexDescription `type:"list"`
-	GlobalTableVersion     string                            `type:"string"`
-	ItemCount              int64                             `type:"long"`
-	KeySchema              []KeySchemaElement                `min:"1" type:"list"`
-	LatestStreamArn        string                            `min:"37" type:"string"`
-	LatestStreamLabel      string                            `type:"string"`
-	LocalSecondaryIndexes  []LocalSecondaryIndexDescription  `type:"list"`
-	TableArn               string                            `type:"string"`
-	TableID                string                            `type:"string"`
-	TableName              string                            `min:"3" type:"string"`
-	TableSizeBytes         int64                             `type:"long"`
-	TableStatus            string                            `type:"string" enum:"TableStatus"`
+	_                         struct{}                          `type:"structure"`
+	AttributeDefinitions      []AttributeDefinition             `type:"list"`
+	BillingModeSummary        *BillingModeSummary               `type:"structure"`
+	DeletionProtectionEnabled *bool                             `type:"boolean"`
+	ProvisionedThroughput     *ProvisionedThroughput            `type:"structure"`
+	GlobalSecondaryIndexes    []GlobalSecondaryIndexDescription `type:"list"`
+	GlobalTableVersion        string                            `type:"string"`
+	ItemCount                 int64                             `type:"long"`
+	KeySchema                 []KeySchemaElement                `min:"1" type:"list"`
+	LatestStreamArn           string                            `min:"37" type:"string"`
+	LatestStreamLabel         string                            `type:"string"`
+	LocalSecondaryIndexes     []LocalSecondaryIndexDescription  `type:"list"`
+	TableArn                  string                            `type:"string"`
+	TableID                   string                            `type:"string"`
+	TableName                 string                            `min:"3" type:"string"`
+	TableSizeBytes            int64                             `type:"long"`
+	TableStatus               string                            `type:"string" enum:"TableStatus"`
 }
 
 // StringValue returns the string value of a string pointer

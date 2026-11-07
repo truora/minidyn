@@ -5,18 +5,10 @@
 # line is removed; a new gap (e.g. a field added by an SDK bump) fails until it
 # is implemented, covered by a parity test or listed here.
 
-# table description (#151)
-response GlobalSecondaryIndexDescription.Backfilling
-response GlobalSecondaryIndexDescription.OnDemandThroughput
-response GlobalSecondaryIndexDescription.ProvisionedThroughput
-response TableDescription.AttributeDefinitions
-response TableDescription.BillingModeSummary
-response TableDescription.DeletionProtectionEnabled
+# table-level on-demand throughput not reported (DynamoDB Local omits it too)
 response TableDescription.OnDemandThroughput
-response TableDescription.ProvisionedThroughput
-response TableDescription.TableStatus
 
-# table settings not stored (#151)
+# table settings not stored (#199)
 request CreateTableInput.DeletionProtectionEnabled
 request CreateTableInput.OnDemandThroughput
 request UpdateTableInput.BillingMode

@@ -460,11 +460,51 @@ func mapTypesToDynamoTableDescription(input *types.TableDescription) *dynamodbty
 	}
 
 	return &dynamodbtypes.TableDescription{
-		TableName:              toString(input.TableName),
-		ItemCount:              aws.Int64(input.ItemCount),
-		KeySchema:              mapTypesToDynamoKeySchemaElements(input.KeySchema),
-		GlobalSecondaryIndexes: mapTypesToDynamoTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes),
-		LocalSecondaryIndexes:  mapTypesToDynamoLocalSecondaryIndexes(input.LocalSecondaryIndexes),
+		TableName:                 toString(input.TableName),
+		TableStatus:               dynamodbtypes.TableStatus(input.TableStatus),
+		AttributeDefinitions:      mapTypesToDynamoAttributeDefinitions(input.AttributeDefinitions),
+		BillingModeSummary:        mapTypesToDynamoBillingModeSummary(input.BillingModeSummary),
+		ProvisionedThroughput:     mapTypesToDynamoTableThroughput(input.ProvisionedThroughput),
+		DeletionProtectionEnabled: input.DeletionProtectionEnabled,
+		ItemCount:                 aws.Int64(input.ItemCount),
+		KeySchema:                 mapTypesToDynamoKeySchemaElements(input.KeySchema),
+		GlobalSecondaryIndexes:    mapTypesToDynamoTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes),
+		LocalSecondaryIndexes:     mapTypesToDynamoLocalSecondaryIndexes(input.LocalSecondaryIndexes),
+	}
+}
+
+func mapTypesToDynamoAttributeDefinitions(input []types.AttributeDefinition) []dynamodbtypes.AttributeDefinition {
+	if len(input) == 0 {
+		return nil
+	}
+
+	output := make([]dynamodbtypes.AttributeDefinition, len(input))
+	for i, def := range input {
+		output[i] = dynamodbtypes.AttributeDefinition{
+			AttributeName: def.AttributeName,
+			AttributeType: dynamodbtypes.ScalarAttributeType(aws.ToString(def.AttributeType)),
+		}
+	}
+
+	return output
+}
+
+func mapTypesToDynamoBillingModeSummary(input *types.BillingModeSummary) *dynamodbtypes.BillingModeSummary {
+	if input == nil {
+		return nil
+	}
+
+	return &dynamodbtypes.BillingModeSummary{BillingMode: dynamodbtypes.BillingMode(input.BillingMode)}
+}
+
+func mapTypesToDynamoOnDemandThroughput(input *types.OnDemandThroughput) *dynamodbtypes.OnDemandThroughput {
+	if input == nil {
+		return nil
+	}
+
+	return &dynamodbtypes.OnDemandThroughput{
+		MaxReadRequestUnits:  input.MaxReadRequestUnits,
+		MaxWriteRequestUnits: input.MaxWriteRequestUnits,
 	}
 }
 
@@ -517,6 +557,9 @@ func mapTypesToDynamoGlobalSecondaryIndex(input types.GlobalSecondaryIndexDescri
 		IndexSizeBytes: input.IndexSizeBytes,
 		IndexStatus:    dynamodbtypes.IndexStatus(aws.ToString(input.IndexStatus)),
 		ItemCount:      aws.Int64(input.ItemCount),
+
+		OnDemandThroughput:    mapTypesToDynamoOnDemandThroughput(input.OnDemandThroughput),
+		ProvisionedThroughput: mapTypesToDynamoProvisionedThroughput(input.ProvisionedThroughput),
 	}
 }
 
@@ -527,7 +570,19 @@ func mapTypesToDynamoProjection(input *types.Projection) *dynamodbtypes.Projecti
 
 	return &dynamodbtypes.Projection{
 		NonKeyAttributes: mapTypesToDynamoStringSlice(input.NonKeyAttributes),
+		ProjectionType:   dynamodbtypes.ProjectionType(aws.ToString(input.ProjectionType)),
 	}
+}
+
+// mapTypesToDynamoTableThroughput maps the table-level capacity, which DynamoDB reports with
+// the number of decreases made today (always 0: minidyn does not support UpdateTable throughput).
+func mapTypesToDynamoTableThroughput(input *types.ProvisionedThroughput) *dynamodbtypes.ProvisionedThroughputDescription {
+	output := mapTypesToDynamoProvisionedThroughput(input)
+	if output != nil {
+		output.NumberOfDecreasesToday = aws.Int64(0)
+	}
+
+	return output
 }
 
 func mapTypesToDynamoProvisionedThroughput(input *types.ProvisionedThroughput) *dynamodbtypes.ProvisionedThroughputDescription {

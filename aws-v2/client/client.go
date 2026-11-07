@@ -326,17 +326,16 @@ func (fd *Client) UpdateTable(ctx context.Context, input *dynamodb.UpdateTableIn
 		table.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions))
 	}
 
+	changes := make([]*mtypes.GlobalSecondaryIndexUpdate, 0, len(input.GlobalSecondaryIndexUpdates))
 	for _, change := range input.GlobalSecondaryIndexUpdates {
-		if err := table.ApplyIndexChange(mapDynamoTotypesGlobalSecondaryIndexUpdate(change)); err != nil {
-			return &dynamodb.UpdateTableOutput{
-				TableDescription: mapTypesToDynamoTableDescription(table.Description(tableName)),
-			}, mapKnownError(err)
-		}
+		changes = append(changes, mapDynamoTotypesGlobalSecondaryIndexUpdate(change))
 	}
 
+	desc, err := table.ApplyIndexChanges(tableName, changes)
+
 	return &dynamodb.UpdateTableOutput{
-		TableDescription: mapTypesToDynamoTableDescription(table.Description(tableName)),
-	}, nil
+		TableDescription: mapTypesToDynamoTableDescription(desc),
+	}, mapKnownError(err)
 }
 
 // DescribeTable returns information about the table

@@ -323,11 +323,73 @@ func mapTableDescriptionToDDB(td *types.TableDescription) *ddbtypes.TableDescrip
 	}
 
 	return &ddbtypes.TableDescription{
-		TableName:              aws.String(td.TableName),
-		ItemCount:              aws.Int64(td.ItemCount),
-		KeySchema:              mapTypesKeySchema(td.KeySchema),
-		GlobalSecondaryIndexes: mapTypesGSI(td.GlobalSecondaryIndexes),
-		LocalSecondaryIndexes:  mapTypesLSI(td.LocalSecondaryIndexes),
+		TableName:                 aws.String(td.TableName),
+		TableStatus:               ddbtypes.TableStatus(td.TableStatus),
+		AttributeDefinitions:      mapTypesAttributeDefinitions(td.AttributeDefinitions),
+		BillingModeSummary:        mapTypesBillingModeSummary(td.BillingModeSummary),
+		ProvisionedThroughput:     mapTypesTableThroughput(td.ProvisionedThroughput),
+		DeletionProtectionEnabled: td.DeletionProtectionEnabled,
+		ItemCount:                 aws.Int64(td.ItemCount),
+		KeySchema:                 mapTypesKeySchema(td.KeySchema),
+		GlobalSecondaryIndexes:    mapTypesGSI(td.GlobalSecondaryIndexes),
+		LocalSecondaryIndexes:     mapTypesLSI(td.LocalSecondaryIndexes),
+	}
+}
+
+func mapTypesAttributeDefinitions(in []types.AttributeDefinition) []ddbtypes.AttributeDefinition {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]ddbtypes.AttributeDefinition, len(in))
+	for i, a := range in {
+		out[i] = ddbtypes.AttributeDefinition{
+			AttributeName: a.AttributeName,
+			AttributeType: ddbtypes.ScalarAttributeType(aws.ToString(a.AttributeType)),
+		}
+	}
+
+	return out
+}
+
+func mapTypesBillingModeSummary(in *types.BillingModeSummary) *ddbtypes.BillingModeSummary {
+	if in == nil {
+		return nil
+	}
+
+	return &ddbtypes.BillingModeSummary{BillingMode: ddbtypes.BillingMode(in.BillingMode)}
+}
+
+// mapTypesTableThroughput maps the table-level capacity, which DynamoDB reports with the
+// number of decreases made today (always 0: minidyn does not support UpdateTable throughput).
+func mapTypesTableThroughput(in *types.ProvisionedThroughput) *ddbtypes.ProvisionedThroughputDescription {
+	out := mapTypesProvisionedThroughput(in)
+	if out != nil {
+		out.NumberOfDecreasesToday = aws.Int64(0)
+	}
+
+	return out
+}
+
+func mapTypesProvisionedThroughput(in *types.ProvisionedThroughput) *ddbtypes.ProvisionedThroughputDescription {
+	if in == nil {
+		return nil
+	}
+
+	return &ddbtypes.ProvisionedThroughputDescription{
+		ReadCapacityUnits:  aws.Int64(in.ReadCapacityUnits),
+		WriteCapacityUnits: aws.Int64(in.WriteCapacityUnits),
+	}
+}
+
+func mapTypesOnDemandThroughput(in *types.OnDemandThroughput) *ddbtypes.OnDemandThroughput {
+	if in == nil {
+		return nil
+	}
+
+	return &ddbtypes.OnDemandThroughput{
+		MaxReadRequestUnits:  in.MaxReadRequestUnits,
+		MaxWriteRequestUnits: in.MaxWriteRequestUnits,
 	}
 }
 
@@ -358,10 +420,13 @@ func mapTypesGSI(in []types.GlobalSecondaryIndexDescription) []ddbtypes.GlobalSe
 	for i, g := range in {
 		gCopy := g
 		out[i] = ddbtypes.GlobalSecondaryIndexDescription{
-			IndexName:   gCopy.IndexName,
-			ItemCount:   aws.Int64(gCopy.ItemCount),
-			KeySchema:   mapTypesKeySchema(gCopy.KeySchema),
-			IndexStatus: ddbtypes.IndexStatus(aws.ToString(gCopy.IndexStatus)),
+			IndexName:             gCopy.IndexName,
+			ItemCount:             aws.Int64(gCopy.ItemCount),
+			KeySchema:             mapTypesKeySchema(gCopy.KeySchema),
+			IndexStatus:           ddbtypes.IndexStatus(aws.ToString(gCopy.IndexStatus)),
+			Backfilling:           gCopy.Backfilling,
+			OnDemandThroughput:    mapTypesOnDemandThroughput(gCopy.OnDemandThroughput),
+			ProvisionedThroughput: mapTypesProvisionedThroughput(gCopy.ProvisionedThroughput),
 			Projection: &ddbtypes.Projection{
 				NonKeyAttributes: fromStringPtrs(gCopy.Projection.NonKeyAttributes),
 				ProjectionType:   ddbtypes.ProjectionType(aws.ToString(gCopy.Projection.ProjectionType)),

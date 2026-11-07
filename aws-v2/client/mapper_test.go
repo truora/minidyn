@@ -165,3 +165,10 @@ func TestMapEmptyMapAndListBothWays(t *testing.T) {
 	c.Equal(dynamo, mapTypesToDynamoMapItem(typed))
 	c.Equal(&dynamodbtypes.AttributeValueMemberNULL{Value: true}, mapTypesToDynamoItem(&types.Item{}))
 }
+
+func TestMapTypesToDynamoTableThroughputNil(t *testing.T) {
+	require.Nil(t, mapTypesToDynamoTableThroughput(nil))
+	require.Nil(t, mapTypesToDynamoBillingModeSummary(nil))
+	require.Nil(t, mapTypesToDynamoOnDemandThroughput(nil))
+	require.Nil(t, mapTypesToDynamoAttributeDefinitions(nil))
+}

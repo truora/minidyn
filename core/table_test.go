@@ -2097,3 +2097,32 @@ func TestSearchData_wrongFunctionOperandCount(t *testing.T) {
 		})
 	}
 }
+
+func TestStoredItemReturnsACopyOfTheStoredItem(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
+	_, err = table.Put(&types.PutItemInput{Item: item})
+	c.NoError(err)
+
+	key := map[string]*types.Item{"id": item["id"], "name": item["name"]}
+
+	stored := table.StoredItem(key)
+	c.Equal(item, stored)
+
+	// An update changes the stored item in place; the copy keeps the item as it was.
+	name := "ivysaur"
+	stored["name"] = &types.Item{S: &name}
+
+	c.Equal("bulbasaur", *table.StoredItem(key)["name"].S)
+
+	// A whole item resolves to the same stored item as its key.
+	c.Equal(table.StoredItem(key), table.StoredItem(item))
+
+	// Missing item and invalid key both yield nil.
+	c.Nil(table.StoredItem(map[string]*types.Item{"id": {S: aws.String("absent")}, "name": item["name"]}))
+	c.Nil(table.StoredItem(map[string]*types.Item{}))
+}

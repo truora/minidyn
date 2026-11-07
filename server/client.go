@@ -342,11 +342,11 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 
 	putItem := mapAttributeValueMapToTypes(input.Item)
 
-	newSize := capacity.Size(putItem)
+	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
-	oldSize := 0
-	if key, kerr := table.KeySchema.GetKey(table.AttributesDef, putItem); kerr == nil {
-		oldSize = capacity.Size(table.Data[key])
+	var before map[string]*types.Item
+	if mode != capacity.ModeNone {
+		before = table.StoredItem(putItem)
 	}
 
 	item, err := table.Put(&types.PutItemInput{
@@ -366,10 +366,8 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 
 	return &PutItemOutput{
 		Attributes: mapTypesMapToAttributeValue(item),
-		ConsumedCapacity: toWireConsumed(capacity.ForWrite(
-			consumedMode(string(input.ReturnConsumedCapacity)),
-			aws.ToString(input.TableName), max(oldSize, newSize),
-			indexWrites(table, putItem),
+		ConsumedCapacity: toWireConsumed(writeConsumed(
+			mode, table, aws.ToString(input.TableName), putItem, before, putItem,
 		)),
 	}, nil
 }
@@ -398,10 +396,12 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 
 	deleteKey := mapAttributeValueMapToTypes(input.Key)
 
-	// Delete only returns the old item for ALL_OLD, so size it up front.
+	// Delete only returns the old item for ALL_OLD, so measure it before deleting.
+	mode := consumedMode(string(input.ReturnConsumedCapacity))
+
 	var stored map[string]*types.Item
-	if key, kerr := table.KeySchema.GetKey(table.AttributesDef, deleteKey); kerr == nil {
-		stored = table.Data[key]
+	if mode != capacity.ModeNone {
+		stored = table.StoredItem(deleteKey)
 	}
 
 	item, err := table.Delete(&types.DeleteItemInput{
@@ -417,15 +417,8 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 		return nil, mapKnownError(err)
 	}
 
-	sizeSource := stored
-	if len(sizeSource) == 0 {
-		sizeSource = deleteKey
-	}
-
-	consumed := toWireConsumed(capacity.ForWrite(
-		consumedMode(string(input.ReturnConsumedCapacity)),
-		aws.ToString(input.TableName), capacity.Size(sizeSource),
-		indexWrites(table, sizeSource),
+	consumed := toWireConsumed(writeConsumed(
+		mode, table, aws.ToString(input.TableName), deleteKey, stored, nil,
 	))
 
 	if item == nil {
@@ -460,11 +453,11 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 
 	updateKeyMap := mapAttributeValueMapToTypes(input.Key)
 
-	updateKey, keyErr := table.KeySchema.GetKey(table.AttributesDef, updateKeyMap)
+	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
-	beforeSize := 0
-	if keyErr == nil {
-		beforeSize = capacity.Size(table.Data[updateKey])
+	var before map[string]*types.Item
+	if mode != capacity.ModeNone {
+		before = table.StoredItem(updateKeyMap)
 	}
 
 	item, err := table.Update(&types.UpdateItemInput{
@@ -482,17 +475,15 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, mapKnownError(err)
 	}
 
-	afterSize := beforeSize
-	if keyErr == nil {
-		afterSize = capacity.Size(table.Data[updateKey])
+	var after map[string]*types.Item
+	if mode != capacity.ModeNone {
+		after = table.StoredItem(updateKeyMap)
 	}
 
 	return &UpdateItemOutput{
 		Attributes: mapTypesMapToAttributeValue(item),
-		ConsumedCapacity: toWireConsumed(capacity.ForWrite(
-			consumedMode(string(input.ReturnConsumedCapacity)),
-			aws.ToString(input.TableName), max(beforeSize, afterSize),
-			indexWrites(table, table.Data[updateKey]),
+		ConsumedCapacity: toWireConsumed(writeConsumed(
+			mode, table, aws.ToString(input.TableName), updateKeyMap, before, after,
 		)),
 	}, nil
 }
@@ -750,6 +741,7 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 	}
 
 	unprocessed := map[string][]WriteRequest{}
+	mode := consumedMode(string(input.ReturnConsumedCapacity))
 	acc := capacity.NewWriteAccumulator()
 
 	for tableName, reqs := range input.RequestItems {
@@ -758,6 +750,15 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 				unprocessed[tableName] = append(unprocessed[tableName], req)
 
 				continue
+			}
+
+			// Sizes are measured before the request is applied: a delete bills the item it
+			// removes and a put the larger of the item it replaces and the item it writes.
+			var target, before map[string]*types.Item
+
+			if mode != capacity.ModeNone {
+				target = batchWriteTarget(req)
+				before = c.storedItemLocked(tableName, target)
 			}
 
 			var err error
@@ -779,38 +780,38 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 				return nil, err
 			}
 
-			item := batchWriteRequestItem(req)
-			acc.Add(tableName, capacity.Size(item), c.tableIndexWrites(tableName, item), 1)
+			if mode != capacity.ModeNone {
+				size, indexes := c.billWriteLocked(tableName, target, before, batchWriteAfter(req, target))
+				acc.Add(tableName, size, indexes, 1)
+			}
 		}
 	}
 
 	return &BatchWriteItemOutput{
 		UnprocessedItems: unprocessed,
-		ConsumedCapacity: wireConsumedList(acc.Consumed(consumedMode(string(input.ReturnConsumedCapacity)))),
+		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
 	}, nil
 }
 
-// tableIndexWrites returns the per-index write footprint of writing item to the named table, or
-// nil when the table is unknown. A nil/key-only item (e.g. a batch delete) yields no index
-// entries, matching the existing size-from-request approximation for deletes.
-func (c *Client) tableIndexWrites(tableName string, item map[string]*types.Item) []capacity.IndexWrite {
-	table, err := c.getTable(tableName)
-	if err != nil {
-		return nil
-	}
-
-	return indexWrites(table, item)
-}
-
-// batchWriteRequestItem returns the internal item used to size a write request: the put
-// item, or the delete key when sizing a delete.
-func batchWriteRequestItem(req WriteRequest) map[string]*types.Item {
+// batchWriteTarget returns the put item or the delete key of a write request. Both identify the
+// stored item the request replaces or removes.
+func batchWriteTarget(req WriteRequest) map[string]*types.Item {
 	if req.PutRequest != nil {
 		return mapAttributeValueMapToTypes(req.PutRequest.Item)
 	}
 
 	if req.DeleteRequest != nil {
 		return mapAttributeValueMapToTypes(req.DeleteRequest.Key)
+	}
+
+	return nil
+}
+
+// batchWriteAfter returns the item a write request leaves behind: the put item, nothing for a
+// delete.
+func batchWriteAfter(req WriteRequest, target map[string]*types.Item) map[string]*types.Item {
+	if req.PutRequest != nil {
+		return target
 	}
 
 	return nil
@@ -1006,6 +1007,15 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 		return nil, err
 	}
 
+	mode := consumedMode(string(input.ReturnConsumedCapacity))
+
+	// Sizes are measured before the writes: a delete bills the item it removes and an update
+	// the larger of the item before and after.
+	var targets []transactWriteTarget
+	if mode != capacity.ModeNone {
+		targets = c.transactWriteTargets(input.TransactItems)
+	}
+
 	var execErr error
 
 	defer func() {
@@ -1027,86 +1037,67 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 
 	acc := capacity.NewWriteAccumulator()
 
-	for _, item := range input.TransactItems {
-		tableName, size := c.transactWriteSize(item)
-		if tableName == "" {
-			continue
-		}
-
-		acc.Add(tableName, size, c.transactWriteIndexWrites(item), 2)
+	for _, target := range targets {
+		size, indexes := c.transactWriteBill(target)
+		acc.Add(target.table, size, indexes, 2)
 	}
 
 	return &TransactWriteItemsOutput{
-		ConsumedCapacity: wireConsumedList(acc.Consumed(consumedMode(string(input.ReturnConsumedCapacity)))),
+		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
 	}, nil
 }
 
-// transactWriteIndexWrites returns the per-index write footprint of a transactional write item.
-// Put projects the written item and Update the stored item after the update; Delete and
-// ConditionCheck carry no per-index entries (matching the size-from-key approximation).
-func (c *Client) transactWriteIndexWrites(item TransactWriteItem) []capacity.IndexWrite {
-	switch {
-	case item.Put != nil:
-		return c.tableIndexWrites(aws.ToString(item.Put.TableName), mapAttributeValueMapToTypes(item.Put.Item))
-	case item.Update != nil:
-		return c.tableIndexWrites(aws.ToString(item.Update.TableName), c.storedItemByKey(aws.ToString(item.Update.TableName), item.Update.Key))
-	default:
-		return nil
-	}
+// transactWriteTarget is a transactional write item and the state needed to bill it: the stored
+// item before the transaction ran and, for a Put, the item it writes.
+type transactWriteTarget struct {
+	table  string
+	key    map[string]*types.Item // the key, or the whole item for a Put
+	before map[string]*types.Item
+	put    map[string]*types.Item
+	update bool
 }
 
-// storedItemByKey returns the stored item for a key, or nil when the table or item is absent.
-func (c *Client) storedItemByKey(tableName string, key map[string]*AttributeValue) map[string]*types.Item {
-	table, err := c.getTable(tableName)
-	if err != nil {
-		return nil
+// transactWriteTargets measures the stored item of every write in the transaction. It must run
+// before the writes are applied. A ConditionCheck is billed by its key.
+func (c *Client) transactWriteTargets(items []TransactWriteItem) []transactWriteTarget {
+	targets := make([]transactWriteTarget, 0, len(items))
+
+	for _, item := range items {
+		var t transactWriteTarget
+
+		switch {
+		case item.Put != nil:
+			t.table, t.key = aws.ToString(item.Put.TableName), mapAttributeValueMapToTypes(item.Put.Item)
+			t.put = t.key
+			t.before = c.storedItem(t.table, t.key)
+		case item.Update != nil:
+			t.table, t.key = aws.ToString(item.Update.TableName), mapAttributeValueMapToTypes(item.Update.Key)
+			t.update = true
+			t.before = c.storedItem(t.table, t.key)
+		case item.Delete != nil:
+			t.table, t.key = aws.ToString(item.Delete.TableName), mapAttributeValueMapToTypes(item.Delete.Key)
+			t.before = c.storedItem(t.table, t.key)
+		case item.ConditionCheck != nil:
+			t.table, t.key = aws.ToString(item.ConditionCheck.TableName), mapAttributeValueMapToTypes(item.ConditionCheck.Key)
+		default:
+			continue
+		}
+
+		targets = append(targets, t)
 	}
 
-	k, err := table.KeySchema.GetKey(table.AttributesDef, mapAttributeValueMapToTypes(key))
-	if err != nil {
-		return nil
-	}
-
-	return table.Data[k]
+	return targets
 }
 
-// transactWriteSize returns the table name and byte size used to bill a transact write item.
-// Update sizes the stored item after the update; Delete/ConditionCheck size the key.
-func (c *Client) transactWriteSize(item TransactWriteItem) (string, int) {
-	switch {
-	case item.Put != nil:
-		return aws.ToString(item.Put.TableName), capacity.Size(mapAttributeValueMapToTypes(item.Put.Item))
-	case item.Update != nil:
-		return aws.ToString(item.Update.TableName), c.itemSizeByKey(aws.ToString(item.Update.TableName), item.Update.Key)
-	case item.Delete != nil:
-		return aws.ToString(item.Delete.TableName), capacity.Size(mapAttributeValueMapToTypes(item.Delete.Key))
-	case item.ConditionCheck != nil:
-		return aws.ToString(item.ConditionCheck.TableName), capacity.Size(mapAttributeValueMapToTypes(item.ConditionCheck.Key))
-	default:
-		return "", 0
-	}
-}
-
-// itemSizeByKey returns the byte size of the stored item for a key, falling back to the
-// key's own size when the table or item is not found.
-func (c *Client) itemSizeByKey(tableName string, key map[string]*AttributeValue) int {
-	keyMap := mapAttributeValueMapToTypes(key)
-
-	table, err := c.getTable(tableName)
-	if err != nil {
-		return capacity.Size(keyMap)
+// transactWriteBill returns the base size and per-index footprint of a transactional write item
+// once the transaction has been applied.
+func (c *Client) transactWriteBill(t transactWriteTarget) (int, []capacity.IndexWrite) {
+	after := t.put
+	if t.update {
+		after = c.storedItem(t.table, t.key)
 	}
 
-	k, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
-	if err != nil {
-		return capacity.Size(keyMap)
-	}
-
-	if stored := table.Data[k]; len(stored) > 0 {
-		return capacity.Size(stored)
-	}
-
-	return capacity.Size(keyMap)
+	return c.billWrite(t.table, t.key, t.before, after)
 }
 
 func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {

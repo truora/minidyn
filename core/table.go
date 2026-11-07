@@ -126,6 +126,23 @@ func (t *Table) WriteIndexProjections(item map[string]*types.Item) []IndexProjec
 	return out
 }
 
+// StoredItem returns a copy of the item stored under the primary key of keyOrItem (a key map or
+// a whole item), or nil when there is none. It is a copy because an update changes the stored
+// item in place; callers use it to measure an item before a write is applied.
+func (t *Table) StoredItem(keyOrItem map[string]*types.Item) map[string]*types.Item {
+	key, err := t.KeySchema.GetKey(t.AttributesDef, keyOrItem)
+	if err != nil {
+		return nil
+	}
+
+	item, ok := t.Data[key]
+	if !ok {
+		return nil
+	}
+
+	return deepCopyItemMap(item)
+}
+
 // SetAttributeDefinition sets the attribute definition of a table
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {

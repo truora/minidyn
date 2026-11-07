@@ -10,6 +10,7 @@ import (
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/require"
 	"github.com/truora/minidyn/capacity"
+	mtypes "github.com/truora/minidyn/types"
 )
 
 func setupCapacityClient(t *testing.T) *Client {
@@ -66,29 +67,21 @@ func TestSDKConsumedSlice(t *testing.T) {
 	c.Equal(2.0, aws.ToFloat64(out[0].WriteCapacityUnits))
 }
 
-func TestTableIndexWritesAndStoredItem(t *testing.T) {
+func TestStoredItemAndBillWriteTolerateUnknownTables(t *testing.T) {
 	c := require.New(t)
 	client := setupCapacityClient(t)
 
-	// Unknown table -> nil from both helpers.
-	c.Nil(client.tableIndexWrites("missing", nil))
-	c.Nil(client.storedItemByKey("missing", keyID("001")))
+	key := map[string]*mtypes.Item{"id": {S: aws.String("001")}}
 
-	// Bad key (no key attributes) -> GetKey error -> nil.
-	c.Nil(client.storedItemByKey(tableName, map[string]dynamodbtypes.AttributeValue{}))
+	c.Nil(client.storedItem("missing", key))
+	c.NotNil(client.storedItem(tableName, key))
+	c.Nil(client.storedItem(tableName, map[string]*mtypes.Item{}))
+	c.NotNil(client.storedItemLocked(tableName, key))
 
-	// Stored item present -> non-nil.
-	c.NotNil(client.storedItemByKey(tableName, keyID("001")))
-}
-
-func TestItemSizeByKey(t *testing.T) {
-	c := require.New(t)
-	client := setupCapacityClient(t)
-
-	c.Greater(client.itemSizeByKey(tableName, keyID("001")), 0)                                     // stored item
-	c.Greater(client.itemSizeByKey(tableName, keyID("absent")), 0)                                  // missing item -> key size
-	c.Greater(client.itemSizeByKey("no-such-table", keyID("001")), 0)                               // missing table -> key size
-	c.GreaterOrEqual(client.itemSizeByKey(tableName, map[string]dynamodbtypes.AttributeValue{}), 0) // bad key -> key size
+	// An unknown table is billed by size alone, without index entries.
+	size, indexes := client.billWriteLocked("missing", key, nil, nil)
+	c.Positive(size)
+	c.Nil(indexes)
 }
 
 func TestTransactWriteItemsConsumedCapacityUpdate(t *testing.T) {

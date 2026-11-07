@@ -8,6 +8,7 @@ import (
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/require"
 	"github.com/truora/minidyn/capacity"
+	"github.com/truora/minidyn/types"
 )
 
 func TestToWireConsumedBreakdowns(t *testing.T) {
@@ -68,7 +69,7 @@ func newServerWithPokemonTable(t *testing.T) *Client {
 	return c
 }
 
-func TestServerTableIndexWritesAndStoredItem(t *testing.T) {
+func TestServerStoredItemAndBillWriteTolerateUnknownTables(t *testing.T) {
 	c := require.New(t)
 	client := newServerWithPokemonTable(t)
 
@@ -78,36 +79,17 @@ func TestServerTableIndexWritesAndStoredItem(t *testing.T) {
 	})
 	c.NoError(err)
 
-	// Unknown table -> nil from both helpers.
-	c.Nil(client.tableIndexWrites("missing", nil))
-	c.Nil(client.storedItemByKey("missing", map[string]*AttributeValue{"id": {S: aws.String("001")}}))
+	key := map[string]*types.Item{"id": {S: aws.String("001")}}
 
-	// Bad key (no key attributes) -> GetKey error -> nil.
-	c.Nil(client.storedItemByKey("pokemons", map[string]*AttributeValue{}))
+	c.Nil(client.storedItem("missing", key))
+	c.NotNil(client.storedItem("pokemons", key))
+	c.Nil(client.storedItem("pokemons", map[string]*types.Item{}))
+	c.NotNil(client.storedItemLocked("pokemons", key))
 
-	// Stored item present -> non-nil.
-	c.NotNil(client.storedItemByKey("pokemons", map[string]*AttributeValue{"id": {S: aws.String("001")}}))
-}
-
-func TestServerItemSizeByKey(t *testing.T) {
-	c := require.New(t)
-	client := newServerWithPokemonTable(t)
-
-	_, err := client.PutItem(context.Background(), &PutItemInput{
-		TableName: aws.String("pokemons"),
-		Item: map[string]*AttributeValue{
-			"id": {S: aws.String("001")},
-			"n":  {S: aws.String("bulbasaur")},
-		},
-	})
-	c.NoError(err)
-
-	key := map[string]*AttributeValue{"id": {S: aws.String("001")}}
-
-	c.Greater(client.itemSizeByKey("pokemons", key), 0)                                                         // stored item
-	c.Greater(client.itemSizeByKey("pokemons", map[string]*AttributeValue{"id": {S: aws.String("absent")}}), 0) // missing item
-	c.Greater(client.itemSizeByKey("no-such-table", key), 0)                                                    // missing table
-	c.GreaterOrEqual(client.itemSizeByKey("pokemons", map[string]*AttributeValue{}), 0)                         // bad key
+	// An unknown table is billed by size alone, without index entries.
+	size, indexes := client.billWriteLocked("missing", key, nil, nil)
+	c.Positive(size)
+	c.Nil(indexes)
 }
 
 func TestServerTransactWriteUpdateConsumedCapacity(t *testing.T) {

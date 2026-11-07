@@ -12,6 +12,58 @@ func consumedMode(s string) capacity.Mode {
 	return capacity.ParseMode(s)
 }
 
+// writeConsumed bills a single-item write to table: before is the item as measured ahead of the
+// write and after the item it left (nil for a delete). See capacity.WriteBilling.
+func writeConsumed(mode capacity.Mode, table *core.Table, name string, key, before, after map[string]*types.Item) *capacity.Consumed {
+	if mode == capacity.ModeNone {
+		return nil
+	}
+
+	size, indexed := capacity.WriteBilling(key, before, after)
+
+	return capacity.ForWrite(mode, name, size, indexWrites(table, indexed))
+}
+
+// storedItem returns a copy of the item stored under the key of keyOrItem in the named table, or
+// nil when the table or item is absent. The caller must hold c.mu.
+func (c *Client) storedItem(tableName string, keyOrItem map[string]*types.Item) map[string]*types.Item {
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return nil
+	}
+
+	return table.StoredItem(keyOrItem)
+}
+
+// storedItemLocked is storedItem for callers that do not hold c.mu.
+func (c *Client) storedItemLocked(tableName string, keyOrItem map[string]*types.Item) map[string]*types.Item {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.storedItem(tableName, keyOrItem)
+}
+
+// billWrite returns the base size and per-index footprint of a write to the named table (see
+// capacity.WriteBilling). The caller must hold c.mu.
+func (c *Client) billWrite(tableName string, key, before, after map[string]*types.Item) (int, []capacity.IndexWrite) {
+	size, indexed := capacity.WriteBilling(key, before, after)
+
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return size, nil
+	}
+
+	return size, indexWrites(table, indexed)
+}
+
+// billWriteLocked is billWrite for callers that do not hold c.mu.
+func (c *Client) billWriteLocked(tableName string, key, before, after map[string]*types.Item) (int, []capacity.IndexWrite) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.billWrite(tableName, key, before, after)
+}
+
 // wireConsumedList maps a per-table Consumed list (e.g. a WriteAccumulator's output) into the
 // server's JSON ConsumedCapacity slice. Returns nil when nothing is reported.
 func wireConsumedList(cs []*capacity.Consumed) []ConsumedCapacity {

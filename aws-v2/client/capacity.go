@@ -25,6 +25,58 @@ func indexWrites(table *core.Table, item map[string]*mtypes.Item) []capacity.Ind
 	return out
 }
 
+// writeConsumed bills a single-item write to table: before is the item as measured ahead of the
+// write and after the item it left (nil for a delete). See capacity.WriteBilling.
+func writeConsumed(mode capacity.Mode, table *core.Table, name string, key, before, after map[string]*mtypes.Item) *capacity.Consumed {
+	if mode == capacity.ModeNone {
+		return nil
+	}
+
+	size, indexed := capacity.WriteBilling(key, before, after)
+
+	return capacity.ForWrite(mode, name, size, indexWrites(table, indexed))
+}
+
+// storedItem returns a copy of the item stored under the key of keyOrItem in the named table, or
+// nil when the table or item is absent. The caller must hold fd.mu.
+func (fd *Client) storedItem(tableName string, keyOrItem map[string]*mtypes.Item) map[string]*mtypes.Item {
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return nil
+	}
+
+	return table.StoredItem(keyOrItem)
+}
+
+// storedItemLocked is storedItem for callers that do not hold fd.mu.
+func (fd *Client) storedItemLocked(tableName string, keyOrItem map[string]*mtypes.Item) map[string]*mtypes.Item {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	return fd.storedItem(tableName, keyOrItem)
+}
+
+// billWrite returns the base size and per-index footprint of a write to the named table (see
+// capacity.WriteBilling). The caller must hold fd.mu.
+func (fd *Client) billWrite(tableName string, key, before, after map[string]*mtypes.Item) (int, []capacity.IndexWrite) {
+	size, indexed := capacity.WriteBilling(key, before, after)
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return size, nil
+	}
+
+	return size, indexWrites(table, indexed)
+}
+
+// billWriteLocked is billWrite for callers that do not hold fd.mu.
+func (fd *Client) billWriteLocked(tableName string, key, before, after map[string]*mtypes.Item) (int, []capacity.IndexWrite) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	return fd.billWrite(tableName, key, before, after)
+}
+
 // toSDKConsumed maps a capacity.Consumed into the AWS SDK ConsumedCapacity shape.
 // It returns nil for a nil input (ReturnConsumedCapacity=NONE/unset), so callers can
 // assign the result directly and leave the field omitted.

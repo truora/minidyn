@@ -3,6 +3,8 @@ package capacity
 import (
 	"math"
 	"sort"
+
+	"github.com/truora/minidyn/types"
 )
 
 const (
@@ -294,4 +296,22 @@ func (tw *tableWrite) consumed(mode Mode, table string) *Consumed {
 	}
 
 	return c
+}
+
+// WriteBilling returns how a write is billed: the base item size and the item whose secondary
+// index projections are charged. DynamoDB bills a write by the larger of the item before and
+// after it (a delete has no item after, so it bills the deleted item), and charges the indexes
+// the written item lands in, or the ones a deleted item leaves. Before and after must be
+// measured around the write, key is the fallback size for a delete of a missing item.
+func WriteBilling(key, before, after map[string]*types.Item) (int, map[string]*types.Item) {
+	size := max(Size(before), Size(after))
+	if size == 0 {
+		size = Size(key)
+	}
+
+	if len(after) > 0 {
+		return size, after
+	}
+
+	return size, before
 }

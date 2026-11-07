@@ -68,7 +68,6 @@ func TestAnalyzeServer(t *testing.T) {
 
 	// Gaps that are known to exist.
 	require.True(t, keys["operation CreateBackup"], "CreateBackup is not dispatched")
-	require.True(t, keys["response TableDescription.TableStatus"], "TableStatus is never set")
 
 	// Surface that is implemented must not be reported.
 	require.False(t, keys["operation Query"])
@@ -79,6 +78,7 @@ func TestAnalyzeServer(t *testing.T) {
 	require.False(t, keys["request QueryInput.Select"])
 	require.False(t, keys["response QueryOutput.ScannedCount"])
 	require.False(t, keys["response TableDescription.KeySchema"])
+	require.False(t, keys["response TableDescription.TableStatus"])
 }
 
 // TestAllowlistUpToDate is `go run ./tools/parity-surface -check` as a unit test, so CI

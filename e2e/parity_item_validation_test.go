@@ -685,6 +685,58 @@ func TestE2E_ItemValidation(t *testing.T) {
 			name: "FunctionArgumentCount",
 			fn:   parityFunctionArgumentCount,
 		},
+		{
+			// ADD on a set needs a set operand of the same type, not one element (#191).
+			name: "UpdateItemAddScalarOnSet",
+			fn:   parityUpdateItemAddScalarOnSet,
+		},
+		{
+			name: "QueryScanSelectValidation",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySelectTable(ctx, t, client)
+
+				// run returns the error text, or the sorted attribute names of the items.
+				run := func(scan bool, index string, sel dynamodbtypes.Select, withProjection bool) any {
+					return paritySelectRun(ctx, client, scan, index, sel, withProjection)
+				}
+
+				var results []any
+
+				for _, scan := range []bool{false, true} {
+					results = append(results,
+						// Table: every Select against no projection, then against one.
+						run(scan, "", "SPECIFIC_ATTRIBUTES", false),
+						run(scan, "", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "", "BOGUS", false),
+						run(scan, "", "COUNT", false),
+						run(scan, "", "ALL_ATTRIBUTES", false),
+						run(scan, "", "", false),
+						run(scan, "", "SPECIFIC_ATTRIBUTES", true),
+						run(scan, "", "ALL_PROJECTED_ATTRIBUTES", true),
+						run(scan, "", "BOGUS", true),
+						run(scan, "", "COUNT", true),
+						run(scan, "", "ALL_ATTRIBUTES", true),
+						run(scan, "", "", true),
+						// Index projections: ALL_PROJECTED_ATTRIBUTES returns the projected
+						// attributes, ALL_ATTRIBUTES is rejected for a GSI that does not project all.
+						run(scan, "gko", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "ginc", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "lko", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "linc", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "gko", "ALL_ATTRIBUTES", false),
+						run(scan, "ginc", "ALL_ATTRIBUTES", false),
+						run(scan, "gko", "SPECIFIC_ATTRIBUTES", false),
+						run(scan, "lko", "COUNT", true),
+						run(scan, "gko", "BOGUS", false),
+					)
+				}
+
+				return results
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -766,4 +818,56 @@ func parityFunctionArgumentCount(t *testing.T, client *dynamodb.Client) any {
 	}
 
 	return out
+}
+
+// parityUpdateItemAddScalarOnSet checks that ADD on a set needs a set operand of the same type (#191).
+func parityUpdateItemAddScalarOnSet(t *testing.T, client *dynamodb.Client) any {
+	t.Helper()
+	ctx := context.Background()
+
+	paritySeedStarters(ctx, t, client)
+
+	key := map[string]dynamodbtypes.AttributeValue{
+		"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"},
+	}
+
+	_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:        aws.String(parityPokemonTable),
+		Key:              key,
+		UpdateExpression: aws.String("SET ns = :ns, bs = :bs"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":ns": &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}},
+			":bs": &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("a")}},
+		},
+	})
+	require.NoError(t, err)
+
+	add := func(attr string, v dynamodbtypes.AttributeValue) string {
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String(parityPokemonTable),
+			Key:                       key,
+			UpdateExpression:          aws.String("ADD " + attr + " :v"),
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": v},
+		})
+		if err == nil {
+			return "accepted"
+		}
+
+		return normalizeSDKErrorString(err.Error())
+	}
+
+	return []any{
+		// A single element of the set's type.
+		add("moves", &dynamodbtypes.AttributeValueMemberS{Value: "y"}),
+		add("ns", &dynamodbtypes.AttributeValueMemberN{Value: "2"}),
+		add("bs", &dynamodbtypes.AttributeValueMemberB{Value: []byte("b")}),
+		// A set operand on a number target.
+		add("lvl", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}}),
+		add("lvl", &dynamodbtypes.AttributeValueMemberSS{Value: []string{"1"}}),
+		// A set of the right type still works.
+		add("moves", &dynamodbtypes.AttributeValueMemberSS{Value: []string{"y"}}),
+		add("ns", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"2"}}),
+		add("bs", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}}),
+		parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
+	}
 }

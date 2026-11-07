@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"context"
+	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -223,8 +225,7 @@ func TestE2E_SortKey(t *testing.T) {
 			},
 		},
 		{
-			name:       "QueryKeyConditionOnSortKeyOnly",
-			knownIssue: "#145",
+			name: "QueryKeyConditionOnSortKeyOnly",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -244,8 +245,7 @@ func TestE2E_SortKey(t *testing.T) {
 			},
 		},
 		{
-			name:       "QueryNonKeyAttributeInKeyCondition",
-			knownIssue: "#145",
+			name: "QueryNonKeyAttributeInKeyCondition",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -266,6 +266,81 @@ func TestE2E_SortKey(t *testing.T) {
 				require.Error(t, err)
 
 				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			// Conditions without exactly one attribute name, and nested operations: the
+			// order in which DynamoDB reports each against the other checks is pinned too.
+			name: "QueryKeyConditionShapes",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				parityCreateOrdersTable(ctx, t, client)
+
+				var out []string
+
+				for _, expr := range []string{
+					"customer = :c AND :a = :b",
+					"customer = :c AND :a < :b",
+					":a = :b AND customer = :c",
+					":a = :b",
+					"customer = :c AND :a BETWEEN :b AND :d",
+					"customer = :c AND sk = customer",
+					"customer = :c AND sk < customer",
+					"customer = :c AND #s = sk",
+					"customer = :c AND size(sk) = :a",
+					"customer = :c AND :a = size(sk)",
+					"size(customer) = :c",
+					"size(customer) = :c AND sk = :a",
+					"customer = :c AND begins_with(sk, customer)",
+					"customer = :c AND #s = :a AND :b = :d",
+					"customer = :c AND sk = :a AND :b = :d",
+					"customer = :c AND sk = customer AND sk = :a",
+					"customer = :c AND size(sk) = :a AND size(sk) = :b",
+					"customer = :c OR :a = :b",
+					"customer = :c OR size(sk) = :a",
+					"sk = :a AND sk = customer",
+					"customer > :c AND :a = :b",
+					"customer > :c AND size(sk) = :a",
+					"customer > :c AND sk = customer",
+					"#s = :a AND size(sk) = :b",
+					"#s = :a AND sk = customer",
+					":a = :b AND size(sk) = :c",
+					"size(sk) = :c AND :a = :b",
+					"sk = customer AND :a = :b",
+					":a = :b AND sk = customer",
+					"size(sk) = :c AND sk = customer",
+					"sk = customer AND size(sk) = :c",
+					"customer = :c AND sk <> :a AND sk = customer",
+					"customer = :c AND sk = customer AND sk <> :a",
+					"customer = :c AND sk BETWEEN customer AND :b",
+					"customer = :c AND sk BETWEEN :a AND customer",
+					"customer = :c AND :a BETWEEN sk AND :b",
+					"customer = :c AND sk BETWEEN :a AND size(sk)",
+					"customer = :c AND begins_with(:a, :b)",
+					"customer = :c AND size(sk) BETWEEN :a AND :b",
+				} {
+					input := &dynamodb.QueryInput{
+						TableName:                 aws.String(paritySortKeyTable),
+						KeyConditionExpression:    aws.String(expr),
+						ExpressionAttributeNames:  map[string]string{"#s": "status"},
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{},
+					}
+
+					for _, ph := range regexp.MustCompile(`:[a-z]+`).FindAllString(expr, -1) {
+						input.ExpressionAttributeValues[ph] = &dynamodbtypes.AttributeValueMemberS{Value: "x"}
+					}
+
+					if !strings.Contains(expr, "#s") {
+						input.ExpressionAttributeNames = nil
+					}
+
+					_, err := client.Query(ctx, input)
+					out = append(out, expr+": "+fuzzErrString(err))
+				}
+
+				return out
 			},
 		},
 		{

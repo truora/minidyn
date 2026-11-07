@@ -559,8 +559,9 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 		return nil, mapKnownError(err)
 	}
 
+	// ScannedCount is never smaller than Count, so checking it covers both conversions.
 	count := len(res.Items)
-	if count > math.MaxInt32 {
+	if res.ScannedCount > math.MaxInt32 {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: "Result count exceeds maximum allowed value"}
 	}
 
@@ -613,8 +614,9 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		return nil, mapKnownError(err)
 	}
 
+	// ScannedCount is never smaller than Count, so checking it covers both conversions.
 	count := len(res.Items)
-	if count > math.MaxInt32 {
+	if res.ScannedCount > math.MaxInt32 {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: "Result count exceeds maximum allowed value"}
 	}
 

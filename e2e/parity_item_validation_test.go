@@ -690,6 +690,53 @@ func TestE2E_ItemValidation(t *testing.T) {
 			name: "UpdateItemAddScalarOnSet",
 			fn:   parityUpdateItemAddScalarOnSet,
 		},
+		{
+			name: "QueryScanSelectValidation",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySelectTable(ctx, t, client)
+
+				// run returns the error text, or the sorted attribute names of the items.
+				run := func(scan bool, index string, sel dynamodbtypes.Select, withProjection bool) any {
+					return paritySelectRun(ctx, client, scan, index, sel, withProjection)
+				}
+
+				var results []any
+
+				for _, scan := range []bool{false, true} {
+					results = append(results,
+						// Table: every Select against no projection, then against one.
+						run(scan, "", "SPECIFIC_ATTRIBUTES", false),
+						run(scan, "", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "", "BOGUS", false),
+						run(scan, "", "COUNT", false),
+						run(scan, "", "ALL_ATTRIBUTES", false),
+						run(scan, "", "", false),
+						run(scan, "", "SPECIFIC_ATTRIBUTES", true),
+						run(scan, "", "ALL_PROJECTED_ATTRIBUTES", true),
+						run(scan, "", "BOGUS", true),
+						run(scan, "", "COUNT", true),
+						run(scan, "", "ALL_ATTRIBUTES", true),
+						run(scan, "", "", true),
+						// Index projections: ALL_PROJECTED_ATTRIBUTES returns the projected
+						// attributes, ALL_ATTRIBUTES is rejected for a GSI that does not project all.
+						run(scan, "gko", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "ginc", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "lko", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "linc", "ALL_PROJECTED_ATTRIBUTES", false),
+						run(scan, "gko", "ALL_ATTRIBUTES", false),
+						run(scan, "ginc", "ALL_ATTRIBUTES", false),
+						run(scan, "gko", "SPECIFIC_ATTRIBUTES", false),
+						run(scan, "lko", "COUNT", true),
+						run(scan, "gko", "BOGUS", false),
+					)
+				}
+
+				return results
+			},
+		},
 	}
 
 	for _, tt := range tests {

@@ -26,10 +26,12 @@ type QueryInput struct {
 	ConditionExpression       *string
 	FilterExpression          string
 	ProjectionExpression      string
-	Aliases                   map[string]string
-	ScanIndexForward          bool
-	Scan                      bool
-	started                   bool
+	// Select is validated against the other fields; the front ends honor COUNT.
+	Select           string
+	Aliases          map[string]string
+	ScanIndexForward bool
+	Scan             bool
+	started          bool
 }
 
 // Table struct to mock a dynamodb table
@@ -618,6 +620,10 @@ type SearchResult struct {
 
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+	if err := t.validateSelect(input); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := validateSearchInputMaps(input); err != nil {
 		return SearchResult{}, err
 	}

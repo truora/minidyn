@@ -434,6 +434,10 @@ func (t *Table) fetchQueryData(input QueryInput) (idx *index, keys []string, pre
 // walk would have visited, so invalid conditions keep failing whether or not the partition
 // holds data.
 //
+// The key condition's shape and value types are already validated up front by
+// validateKeyCondition, so this only surfaces errors that need an evaluation: in the
+// FilterExpression, or in the key condition at run time (e.g. an undefined placeholder).
+//
 // An ExclusiveStartKey outside the partition (or missing key attributes) is not rejected,
 // unlike DynamoDB: consumers' tests rely on that leniency, so validating it is a separate,
 // release-noted change. Such a start key is never reached, so the page is empty.

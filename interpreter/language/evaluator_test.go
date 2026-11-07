@@ -321,6 +321,9 @@ func startEvalUpdateEnv(t *testing.T) *Environment {
 		},
 		":binASet": {BS: [][]byte{[]byte("a")}},
 		":aSet":    {SS: []*string{new("a")}},
+		":textSet": {SS: []*string{new("text")}},
+		":oneSet":  {NS: []*string{new("1")}},
+		":binCSet": {BS: [][]byte{[]byte("c")}},
 		":twoSet":  {NS: []*string{new("2")}},
 		":numSet": {
 			NS: []*string{new("2"), new("4")},
@@ -493,9 +496,9 @@ func TestEvalAddUpdate(t *testing.T) {
 		keepEnv  bool
 	}{
 		{"ADD :one :one", ":one", &Number{Value: 2}, boolFalse},
-		{"ADD :numSet :one", ":numSet", &NumberSet{Value: map[float64]bool{1: boolTrue, 2: boolTrue, 4: boolTrue}}, boolFalse},
-		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, boolFalse},
-		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": boolTrue, "b": boolTrue, "text": boolTrue}}, boolFalse},
+		{"ADD :numSet :oneSet", ":numSet", &NumberSet{Value: map[float64]bool{1: boolTrue, 2: boolTrue, 4: boolTrue}}, boolFalse},
+		{"ADD :binSet :binCSet", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, boolFalse},
+		{"ADD :strSet :textSet", ":strSet", &StringSet{Value: map[string]bool{"a": boolTrue, "b": boolTrue, "text": boolTrue}}, boolFalse},
 		{"ADD newVal :one", "newVal", &Number{Value: 1}, boolFalse},
 	}
 
@@ -652,6 +655,9 @@ func TestEvalADDRejectsInvalidOperand(t *testing.T) {
 		{"ADD :one :list", fmt.Sprintf(typeSetMsg, "LIST")},
 		{"ADD :numSet :hash", fmt.Sprintf(typeSetMsg, "MAP")},
 		{"ADD :binSet :val", fmt.Sprintf(typeSetMsg, "STRING")},
+		{"ADD :strSet :val", fmt.Sprintf(typeSetMsg, "STRING")},
+		{"ADD :binSet :bin", fmt.Sprintf(typeSetMsg, "BINARY")},
+		{"ADD :numSet :one", fmt.Sprintf(dataTypeMsg, "NS", "N")},
 		{"ADD :strSet :hash", fmt.Sprintf(typeSetMsg, "MAP")},
 		{"ADD :strSet :one", fmt.Sprintf(dataTypeMsg, "SS", "N")},
 		{"ADD :numSet :strSet", fmt.Sprintf(dataTypeMsg, "NS", "SS")},

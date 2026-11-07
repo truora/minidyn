@@ -569,28 +569,18 @@ func (ss *StringSet) Size() int64 {
 	return int64(len(ss.Value))
 }
 
-// Add if the obj is an string it adds the value to Set
+// Add adds the elements of a string set operand to the Set; DynamoDB rejects a single value.
 func (ss *StringSet) Add(obj Object) Object {
-	switch obj.Type() {
-	case ObjectTypeStringSet:
-		ssInput, ok := obj.(*StringSet)
-		if ok {
-			for str := range ssInput.Value {
-				ss.Value[str] = true
-			}
-
-			return UNDEFINED
-		}
-	case ObjectTypeString:
-		str, ok := obj.(*String)
-		if ok {
-			ss.Value[str.Value] = true
-
-			return UNDEFINED
-		}
+	ssInput, ok := obj.(*StringSet)
+	if !ok {
+		return newIncorrectAddOperandError(ss, obj)
 	}
 
-	return newIncorrectAddOperandError(ss, obj)
+	for str := range ssInput.Value {
+		ss.Value[str] = true
+	}
+
+	return UNDEFINED
 }
 
 // Delete if the obj is a string set it removes the value from the Set
@@ -717,26 +707,16 @@ func (bs *BinarySet) addBinarySetValues(binaryValues [][]byte) {
 	}
 }
 
-// Add if the obj is a binary it adds the value to Set
+// Add adds the elements of a binary set operand to the Set; DynamoDB rejects a single value.
 func (bs *BinarySet) Add(obj Object) Object {
-	switch obj.Type() {
-	case ObjectTypeBinarySet:
-		bsInput, ok := obj.(*BinarySet)
-		if ok {
-			bs.addBinarySetValues(bsInput.Value)
-		}
-
-		return UNDEFINED
-	case ObjectTypeBinary:
-		bin, ok := obj.(*Binary)
-		if ok && !bs.Contains(bin) {
-			bs.Value = append(bs.Value, bin.Value)
-		}
-
-		return UNDEFINED
+	bsInput, ok := obj.(*BinarySet)
+	if !ok {
+		return newIncorrectAddOperandError(bs, obj)
 	}
 
-	return newIncorrectAddOperandError(bs, obj)
+	bs.addBinarySetValues(bsInput.Value)
+
+	return UNDEFINED
 }
 
 // NumberSet is the representation of a number set
@@ -819,28 +799,18 @@ func (ns *NumberSet) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeNumber || objType == ObjectTypeNumberSet
 }
 
-// Add if the obj is an number or number set it adds the value to Set
+// Add adds the elements of a number set operand to the Set; DynamoDB rejects a single value.
 func (ns *NumberSet) Add(obj Object) Object {
-	switch obj.Type() {
-	case ObjectTypeNumberSet:
-		nsInput, ok := obj.(*NumberSet)
-		if ok {
-			for n := range nsInput.Value {
-				ns.Value[n] = true
-			}
-
-			return UNDEFINED
-		}
-	case ObjectTypeNumber:
-		n, ok := obj.(*Number)
-		if ok {
-			ns.Value[n.Value] = true
-
-			return UNDEFINED
-		}
+	nsInput, ok := obj.(*NumberSet)
+	if !ok {
+		return newIncorrectAddOperandError(ns, obj)
 	}
 
-	return newIncorrectAddOperandError(ns, obj)
+	for n := range nsInput.Value {
+		ns.Value[n] = true
+	}
+
+	return UNDEFINED
 }
 
 // Delete if the obj is a number set it removes the value from the Set

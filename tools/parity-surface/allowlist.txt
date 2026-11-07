@@ -43,12 +43,6 @@ request ScanInput.ScanFilter
 request UpdateItemInput.AttributeUpdates
 request UpdateItemInput.Expected
 
-# ReturnValuesOnConditionCheckFailure ignored (#157)
-request Delete.ReturnValuesOnConditionCheckFailure
-request DeleteItemInput.ReturnValuesOnConditionCheckFailure
-request Put.ReturnValuesOnConditionCheckFailure
-request PutItemInput.ReturnValuesOnConditionCheckFailure
-
 # not emulated: PartiQL
 operation BatchExecuteStatement
 operation ExecuteStatement

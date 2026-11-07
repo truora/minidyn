@@ -383,6 +383,10 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(aws.String(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -427,6 +431,10 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(aws.String(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -435,30 +443,6 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
-	}
-
-	// core.Table.Delete validates this too, but the conditional pre-check below runs first:
-	// DynamoDB rejects an invalid ReturnValues before evaluating the condition.
-	if verr := core.ValidateNoneOrAllOldReturnValues(aws.String(string(input.ReturnValues))); verr != nil {
-		return nil, mapKnownError(verr)
-	}
-
-	// support conditional writes
-	if input.ConditionExpression != nil {
-		res, serr := table.SearchData(core.QueryInput{
-			Index:                     core.PrimaryIndexName,
-			ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
-			Aliases:                   input.ExpressionAttributeNames,
-			Limit:                     aws.ToInt64(aws.Int64(1)),
-			ConditionExpression:       input.ConditionExpression,
-		})
-		if serr != nil {
-			return nil, mapKnownError(serr)
-		}
-
-		if len(res.Items) == 0 {
-			return &dynamodb.DeleteItemOutput{}, &types.ConditionalCheckFailedException{Message: aws.String(core.ErrConditionalRequestFailed.Error())}
-		}
 	}
 
 	deleteInput := mapDynamoToTypesDeleteItemInput(input)

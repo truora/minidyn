@@ -332,6 +332,10 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(toStringPtr(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	if err := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
@@ -353,15 +357,16 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	}
 
 	item, err := table.Put(&types.PutItemInput{
-		TableName:                   input.TableName,
-		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         toStringPtr(string(input.ConditionalOperator)),
-		ExpressionAttributeNames:    input.ExpressionAttributeNames,
-		ExpressionAttributeValues:   mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Item:                        putItem,
-		ReturnConsumedCapacity:      toStringPtr(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: toStringPtr(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                toStringPtr(string(input.ReturnValues)),
+		TableName:                           input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ConditionalOperator:                 toStringPtr(string(input.ConditionalOperator)),
+		ExpressionAttributeNames:            input.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
+		Item:                                putItem,
+		ReturnConsumedCapacity:              toStringPtr(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics:         toStringPtr(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                        toStringPtr(string(input.ReturnValues)),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(input.ReturnValuesOnConditionCheckFailure)),
 	})
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -389,6 +394,10 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(toStringPtr(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	if err := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
@@ -411,13 +420,14 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	}
 
 	item, err := table.Delete(&types.DeleteItemInput{
-		TableName:                 input.TableName,
-		ConditionExpression:       input.ConditionExpression,
-		ConditionalOperator:       toStringPtr(string(input.ConditionalOperator)),
-		ExpressionAttributeNames:  toStringPtrMap(input.ExpressionAttributeNames),
-		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Key:                       deleteKey,
-		ReturnValues:              toStringPtr(string(input.ReturnValues)),
+		TableName:                           input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ConditionalOperator:                 toStringPtr(string(input.ConditionalOperator)),
+		ExpressionAttributeNames:            toStringPtrMap(input.ExpressionAttributeNames),
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
+		Key:                                 deleteKey,
+		ReturnValues:                        toStringPtr(string(input.ReturnValues)),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(input.ReturnValuesOnConditionCheckFailure)),
 	})
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -1263,11 +1273,12 @@ func (c *Client) runTransactPut(i, n int, put *Put) error {
 	}
 
 	if _, opErr := table.Put(&types.PutItemInput{
-		TableName:                 put.TableName,
-		ConditionExpression:       put.ConditionExpression,
-		ExpressionAttributeNames:  put.ExpressionAttributeNames,
-		ExpressionAttributeValues: mapAttributeValueMapToTypes(put.ExpressionAttributeValues),
-		Item:                      mapAttributeValueMapToTypes(put.Item),
+		TableName:                           put.TableName,
+		ConditionExpression:                 put.ConditionExpression,
+		ExpressionAttributeNames:            put.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(put.ExpressionAttributeValues),
+		Item:                                mapAttributeValueMapToTypes(put.Item),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(put.ReturnValuesOnConditionCheckFailure)),
 	}); opErr != nil {
 		return newServerTransactionCancelledError(i, n, opErr)
 	}
@@ -1316,11 +1327,12 @@ func (c *Client) runTransactDelete(i, n int, del *Delete) error {
 	}
 
 	if _, opErr := table.Delete(&types.DeleteItemInput{
-		TableName:                 del.TableName,
-		ConditionExpression:       del.ConditionExpression,
-		ExpressionAttributeNames:  toStringPtrMap(del.ExpressionAttributeNames),
-		ExpressionAttributeValues: mapAttributeValueMapToTypes(del.ExpressionAttributeValues),
-		Key:                       mapAttributeValueMapToTypes(del.Key),
+		TableName:                           del.TableName,
+		ConditionExpression:                 del.ConditionExpression,
+		ExpressionAttributeNames:            toStringPtrMap(del.ExpressionAttributeNames),
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(del.ExpressionAttributeValues),
+		Key:                                 mapAttributeValueMapToTypes(del.Key),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(del.ReturnValuesOnConditionCheckFailure)),
 	}); opErr != nil {
 		return newServerTransactionCancelledError(i, n, opErr)
 	}

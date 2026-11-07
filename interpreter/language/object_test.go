@@ -237,7 +237,7 @@ func TestStringSetContains(t *testing.T) {
 func TestStringSetAdd(t *testing.T) {
 	ss := StringSet{Value: map[string]bool{"Cookies": true}}
 
-	obj := ss.Add(&String{Value: "Orange"})
+	obj := ss.Add(&StringSet{Value: map[string]bool{"Orange": true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
@@ -338,7 +338,7 @@ func TestBinaryAdd(t *testing.T) {
 		},
 	}
 
-	obj := bs.Add(&Binary{Value: []byte("Coffee")})
+	obj := bs.Add(&BinarySet{Value: [][]byte{[]byte("Coffee")}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
@@ -447,7 +447,7 @@ func TestNumberSetContains(t *testing.T) {
 func TestNumberSetAdd(t *testing.T) {
 	ns := NumberSet{Value: map[float64]bool{1: true}}
 
-	obj := ns.Add(&Number{Value: 2})
+	obj := ns.Add(&NumberSet{Value: map[float64]bool{2: true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
@@ -597,5 +597,31 @@ func TestGetListOutOfRange(t *testing.T) {
 	empty := List{Value: []Object{}}
 	if res := empty.Get(0); res != UNDEFINED {
 		t.Errorf("Get(0) on empty list: expected UNDEFINED got=%s", res)
+	}
+}
+
+func TestSetAddRejectsSingleValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  AppendableObject
+		operand Object
+	}{
+		{"string set", &StringSet{Value: map[string]bool{"a": true}}, &String{Value: "b"}},
+		{"number set", &NumberSet{Value: map[float64]bool{1: true}}, &Number{Value: 2}},
+		{"binary set", &BinarySet{Value: [][]byte{[]byte("a")}}, &Binary{Value: []byte("b")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := tt.target.Inspect()
+
+			if _, ok := tt.target.Add(tt.operand).(*Error); !ok {
+				t.Fatalf("expected an error adding a single value to a %s", tt.name)
+			}
+
+			if tt.target.Inspect() != before {
+				t.Fatalf("set changed: got=%q, want=%q", tt.target.Inspect(), before)
+			}
+		})
 	}
 }

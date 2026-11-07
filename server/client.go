@@ -780,37 +780,8 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 				continue
 			}
 
-			// Sizes are measured before the request is applied: a delete bills the item it
-			// removes and a put the larger of the item it replaces and the item it writes.
-			var target, before map[string]*types.Item
-
-			if mode != capacity.ModeNone {
-				target = batchWriteTarget(req)
-				before = c.storedItemLocked(tableName, target)
-			}
-
-			var err error
-			if req.PutRequest != nil {
-				_, err = c.PutItem(ctx, &PutItemInput{
-					TableName: aws.String(tableName),
-					Item:      req.PutRequest.Item,
-				})
-			}
-
-			if req.DeleteRequest != nil {
-				_, err = c.DeleteItem(ctx, &DeleteItemInput{
-					TableName: aws.String(tableName),
-					Key:       req.DeleteRequest.Key,
-				})
-			}
-
-			if err != nil {
+			if err := c.applyBatchWriteRequest(ctx, tableName, req, mode, acc); err != nil {
 				return nil, err
-			}
-
-			if mode != capacity.ModeNone {
-				size, indexes := c.billWriteLocked(tableName, target, before, batchWriteAfter(req, target))
-				acc.Add(tableName, size, indexes, 1)
 			}
 		}
 	}
@@ -819,6 +790,44 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 		UnprocessedItems: unprocessed,
 		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
 	}, nil
+}
+
+// applyBatchWriteRequest runs one put or delete sub-request and, when consumed capacity is
+// reported, bills it into acc. Sizes are measured before the request is applied: a delete bills
+// the item it removes and a put the larger of the item it replaces and the item it writes.
+func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, req WriteRequest, mode capacity.Mode, acc *capacity.WriteAccumulator) error {
+	var target, before map[string]*types.Item
+
+	if mode != capacity.ModeNone {
+		target = batchWriteTarget(req)
+		before = c.storedItemLocked(tableName, target)
+	}
+
+	var err error
+	if req.PutRequest != nil {
+		_, err = c.PutItem(ctx, &PutItemInput{
+			TableName: aws.String(tableName),
+			Item:      req.PutRequest.Item,
+		})
+	}
+
+	if req.DeleteRequest != nil {
+		_, err = c.DeleteItem(ctx, &DeleteItemInput{
+			TableName: aws.String(tableName),
+			Key:       req.DeleteRequest.Key,
+		})
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if mode != capacity.ModeNone {
+		size, indexes := c.billWriteLocked(tableName, target, before, batchWriteAfter(req, target))
+		acc.Add(tableName, size, indexes, 1)
+	}
+
+	return nil
 }
 
 // batchWriteTarget returns the put item or the delete key of a write request. Both identify the

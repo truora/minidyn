@@ -189,8 +189,7 @@ func TestE2E_QuerySeek(t *testing.T) {
 		{
 			// minidyn rejects it while evaluating ("right operand is not a string"); DynamoDB
 			// checks placeholder types against the key schema up front.
-			name:       "InvalidConditionOnEmptyPartition",
-			knownIssue: "#145",
+			name: "InvalidConditionOnEmptyPartition",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

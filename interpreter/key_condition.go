@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/truora/minidyn/interpreter/language"
+	"github.com/truora/minidyn/types"
 )
 
 // KeyConditionHashPlaceholder returns the expression attribute value placeholder (":v") that a
@@ -70,4 +71,178 @@ func placeholder(e language.Expression) (string, bool) {
 	}
 
 	return id.Value, true
+}
+
+// KeyConditionError is a key condition DynamoDB rejects for the key schema it is queried with.
+// Message is DynamoDB Local's text; Detail is minidyn-only debug detail.
+type KeyConditionError struct {
+	Message string
+	Detail  []string
+}
+
+func (e *KeyConditionError) Error() string { return types.WithDetail(e.Message, e.Detail...) }
+
+const (
+	keyConditionMissedKeySchema = "Query condition missed key schema element"
+	keyConditionNotSupported    = "Query key condition not supported"
+	keyConditionOnePerKey       = "KeyConditionExpressions must only contain one condition per key"
+	keyConditionTooLong         = "Conditions can be of length 1 or 2 only"
+	keyConditionInvalidOperator = "Invalid operator used in KeyConditionExpression: "
+)
+
+// keyCondition is one top-level AND operand of a key condition.
+type keyCondition struct {
+	attribute string
+	operator  string   // "=" for equality, anything else for a range comparison
+	values    []string // value placeholders (":v") the attribute is compared to
+}
+
+// ValidateKeyCondition checks a Query key condition against the key schema of the table or
+// index being queried: exactly one equality condition on hashKey, plus optionally one
+// condition (=, <, <=, >, >=, BETWEEN, begins_with) on rangeKey ("" for none). Aliases
+// resolve "#name" references. The first violation is returned as a *KeyConditionError;
+// syntax errors return nil, as evaluating the condition reports them.
+func ValidateKeyCondition(expr string, aliases map[string]string, hashKey, rangeKey string) error {
+	parsed := parseCondition(expr)
+	if len(parsed.errs) != 0 || parsed.conditional == nil || parsed.conditional.Expression == nil {
+		return nil
+	}
+
+	conds, err := collectKeyConditions(parsed.conditional.Expression, aliases, nil)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[string]bool, len(conds))
+
+	for _, c := range conds {
+		if seen[c.attribute] {
+			return &KeyConditionError{Message: keyConditionOnePerKey, Detail: []string{"attribute", c.attribute}}
+		}
+
+		seen[c.attribute] = true
+	}
+
+	if len(conds) > 2 {
+		return &KeyConditionError{Message: keyConditionTooLong}
+	}
+
+	return checkKeySchema(conds, hashKey, rangeKey)
+}
+
+func checkKeySchema(conds []keyCondition, hashKey, rangeKey string) error {
+	hashFound := false
+
+	for _, c := range conds {
+		if c.attribute != hashKey {
+			continue
+		}
+
+		hashFound = true
+
+		if c.operator != "=" {
+			return &KeyConditionError{Message: keyConditionNotSupported, Detail: []string{"attribute", hashKey}}
+		}
+	}
+
+	if !hashFound {
+		return &KeyConditionError{Message: keyConditionMissedKeySchema, Detail: []string{"missing", hashKey}}
+	}
+
+	for _, c := range conds {
+		if c.attribute != hashKey && c.attribute != rangeKey {
+			return &KeyConditionError{Message: keyConditionMissedKeySchema, Detail: []string{"attribute", c.attribute, "schema", keySchemaDetail(hashKey, rangeKey)}}
+		}
+	}
+
+	return nil
+}
+
+func keySchemaDetail(hashKey, rangeKey string) string {
+	if rangeKey == "" {
+		return hashKey
+	}
+
+	return hashKey + ", " + rangeKey
+}
+
+// collectKeyConditions flattens the top-level AND operands of e into conds, rejecting any
+// operand that is not a key condition operator.
+func collectKeyConditions(e language.Expression, aliases map[string]string, conds []keyCondition) ([]keyCondition, error) {
+	switch n := e.(type) {
+	case *language.InfixExpression:
+		op := strings.ToUpper(n.Operator)
+
+		switch op {
+		case "AND":
+			left, err := collectKeyConditions(n.Left, aliases, conds)
+			if err != nil {
+				return nil, err
+			}
+
+			return collectKeyConditions(n.Right, aliases, left)
+		case "=", "<", "<=", ">", ">=":
+			attr := attributeName(n.Left, aliases)
+			if attr == "" {
+				attr = attributeName(n.Right, aliases)
+			}
+
+			return append(conds, keyCondition{attribute: attr, operator: op, values: placeholders(n.Left, n.Right)}), nil
+		}
+
+		return nil, invalidKeyOperator(n.Operator)
+	case *language.BetweenExpression:
+		return append(conds, keyCondition{attribute: attributeName(n.Left, aliases), operator: "BETWEEN", values: placeholders(n.Range[0], n.Range[1])}), nil
+	case *language.CallExpression:
+		if name := n.Function.String(); strings.EqualFold(name, "begins_with") && len(n.Arguments) > 0 {
+			return append(conds, keyCondition{attribute: attributeName(n.Arguments[0], aliases), operator: "begins_with", values: placeholders(n.Arguments[1:]...)}), nil
+		}
+
+		return nil, invalidKeyOperator(n.Function.String())
+	case *language.PrefixExpression:
+		return nil, invalidKeyOperator(n.Operator)
+	case *language.InExpression:
+		return nil, invalidKeyOperator("IN")
+	}
+
+	return nil, invalidKeyOperator(e.String())
+}
+
+func invalidKeyOperator(op string) error {
+	return &KeyConditionError{Message: keyConditionInvalidOperator + strings.TrimSpace(op)}
+}
+
+// placeholders returns the value placeholders (":v") among the operands.
+func placeholders(operands ...language.Expression) []string {
+	var out []string
+
+	for _, o := range operands {
+		if ph, ok := placeholder(o); ok {
+			out = append(out, ph)
+		}
+	}
+
+	return out
+}
+
+// KeyConditionPlaceholders returns, by attribute, the value placeholders (":v") a key condition
+// compares that attribute to, as in "pk = :p AND sk BETWEEN :a AND :b". Aliases resolve
+// "#name" references. Invalid conditions return nil: ValidateKeyCondition reports them.
+func KeyConditionPlaceholders(expr string, aliases map[string]string) map[string][]string {
+	parsed := parseCondition(expr)
+	if len(parsed.errs) != 0 || parsed.conditional == nil || parsed.conditional.Expression == nil {
+		return nil
+	}
+
+	conds, err := collectKeyConditions(parsed.conditional.Expression, aliases, nil)
+	if err != nil {
+		return nil
+	}
+
+	out := make(map[string][]string, len(conds))
+	for _, c := range conds {
+		out[c.attribute] = append(out[c.attribute], c.values...)
+	}
+
+	return out
 }

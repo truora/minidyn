@@ -223,8 +223,7 @@ func TestE2E_SortKey(t *testing.T) {
 			},
 		},
 		{
-			name:       "QueryKeyConditionOnSortKeyOnly",
-			knownIssue: "#145",
+			name: "QueryKeyConditionOnSortKeyOnly",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -244,8 +243,7 @@ func TestE2E_SortKey(t *testing.T) {
 			},
 		},
 		{
-			name:       "QueryNonKeyAttributeInKeyCondition",
-			knownIssue: "#145",
+			name: "QueryNonKeyAttributeInKeyCondition",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

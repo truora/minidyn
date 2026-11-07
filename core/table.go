@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -320,6 +321,57 @@ func validateSearchExpressionAttributeNames(input QueryInput) error {
 	return nil
 }
 
+// validateKeyCondition rejects up front a Query key condition that does not match the key
+// schema of the table, or of the index being queried, as DynamoDB does: even when the table
+// is empty, and once per request rather than per item.
+func (t *Table) validateKeyCondition(input QueryInput) error {
+	if input.Scan || input.KeyConditionExpression == "" {
+		return nil
+	}
+
+	schema := t.KeySchema
+
+	if input.Index != "" {
+		idx, ok := t.Indexes[input.Index]
+		if !ok {
+			return nil
+		}
+
+		schema = idx.keySchema
+	}
+
+	if err := interpreter.ValidateKeyCondition(input.KeyConditionExpression, input.Aliases, schema.HashKey, schema.RangeKey); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := t.validateKeyConditionTypes(input); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// errKeyConditionType is a key condition value whose type differs from the key attribute's.
+const errKeyConditionType = "One or more parameter values were invalid: Condition parameter type does not match schema type"
+
+// validateKeyConditionTypes checks the values a (structurally valid) key condition compares
+// key attributes to against the types declared for them. Missing placeholders are left to
+// the evaluation, which reports them.
+func (t *Table) validateKeyConditionTypes(input QueryInput) error {
+	for attr, phs := range interpreter.KeyConditionPlaceholders(input.KeyConditionExpression, input.Aliases) {
+		want := t.AttributesDef[attr]
+
+		for _, ph := range phs {
+			actual := itemTypeName(input.ExpressionAttributeValues[ph])
+			if actual != "" && want != "" && actual != want {
+				return errors.New(types.WithDetail(errKeyConditionType, "attribute", attr, "expected", want, "actual", actual))
+			}
+		}
+	}
+
+	return nil
+}
+
 func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
 	if err := types.ValidateItemMap(input.Key); err != nil {
 		return types.NewError("ValidationException", err.Error(), nil)
@@ -567,6 +619,10 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 	}
 
 	if err := validateSearchExpressionAttributeNames(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	if err := t.validateKeyCondition(input); err != nil {
 		return SearchResult{}, err
 	}
 

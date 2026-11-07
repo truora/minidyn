@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -320,6 +321,57 @@ func validateSearchExpressionAttributeNames(input QueryInput) error {
 	return nil
 }
 
+// validateKeyCondition rejects up front a Query key condition that does not match the key
+// schema of the table, or of the index being queried, as DynamoDB does: even when the table
+// is empty, and once per request rather than per item.
+func (t *Table) validateKeyCondition(input QueryInput) error {
+	if input.Scan || input.KeyConditionExpression == "" {
+		return nil
+	}
+
+	schema := t.KeySchema
+
+	if input.Index != "" {
+		idx, ok := t.Indexes[input.Index]
+		if !ok {
+			return nil
+		}
+
+		schema = idx.keySchema
+	}
+
+	if err := interpreter.ValidateKeyCondition(input.KeyConditionExpression, input.Aliases, schema.HashKey, schema.RangeKey); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := t.validateKeyConditionTypes(input); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// errKeyConditionType is a key condition value whose type differs from the key attribute's.
+const errKeyConditionType = "One or more parameter values were invalid: Condition parameter type does not match schema type"
+
+// validateKeyConditionTypes checks the values a (structurally valid) key condition compares
+// key attributes to against the types declared for them. Missing placeholders are left to
+// the evaluation, which reports them.
+func (t *Table) validateKeyConditionTypes(input QueryInput) error {
+	for attr, phs := range interpreter.KeyConditionPlaceholders(input.KeyConditionExpression, input.Aliases) {
+		want := t.AttributesDef[attr]
+
+		for _, ph := range phs {
+			actual := itemTypeName(input.ExpressionAttributeValues[ph])
+			if actual != "" && want != "" && actual != want {
+				return errors.New(types.WithDetail(errKeyConditionType, "attribute", attr, "expected", want, "actual", actual))
+			}
+		}
+	}
+
+	return nil
+}
+
 func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
 	if err := types.ValidateItemMap(input.Key); err != nil {
 		return types.NewError("ValidationException", err.Error(), nil)
@@ -381,6 +433,10 @@ func (t *Table) fetchQueryData(input QueryInput) (idx *index, keys []string, pre
 // partition has no keys, the conditions are still evaluated once against the first item the
 // walk would have visited, so invalid conditions keep failing whether or not the partition
 // holds data.
+//
+// The key condition's shape and value types are already validated up front by
+// validateKeyCondition, so this only surfaces errors that need an evaluation: in the
+// FilterExpression, or in the key condition at run time (e.g. an undefined placeholder).
 //
 // An ExclusiveStartKey outside the partition (or missing key attributes) is not rejected,
 // unlike DynamoDB: consumers' tests rely on that leniency, so validating it is a separate,
@@ -567,6 +623,10 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 	}
 
 	if err := validateSearchExpressionAttributeNames(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	if err := t.validateKeyCondition(input); err != nil {
 		return SearchResult{}, err
 	}
 

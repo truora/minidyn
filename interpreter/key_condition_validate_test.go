@@ -35,6 +35,26 @@ func TestValidateKeyCondition(t *testing.T) {
 		{"pk = :p AND contains(sk, :a)", "sk", "Invalid operator used in KeyConditionExpression: contains", ""},
 		{"pk = :p AND sk IN (:a, :b)", "sk", "Invalid operator used in KeyConditionExpression: IN", ""},
 		{"pk = :p AND attribute_exists(sk)", "sk", "Invalid operator used in KeyConditionExpression: attribute_exists", ""},
+
+		{"pk = :p AND :a = :b", "", "Invalid condition in KeyConditionExpression: No key attribute specified", ""},
+		{"pk = :p AND :a < :b", "sk", "Invalid condition in KeyConditionExpression: No key attribute specified", ""},
+		{":a = :b AND pk = :p", "sk", "Invalid condition in KeyConditionExpression: No key attribute specified", ""},
+		{"pk = :p AND sk = pk", "sk", "Invalid condition in KeyConditionExpression: Multiple attribute names used in one condition", ""},
+		{"pk = :p AND #s < pk", "sk", "Invalid condition in KeyConditionExpression: Multiple attribute names used in one condition", ""},
+		{"pk = :p AND sk BETWEEN pk AND :b", "sk", "Invalid condition in KeyConditionExpression: Multiple attribute names used in one condition", ""},
+		{"pk = :p AND begins_with(sk, pk)", "sk", "Invalid condition in KeyConditionExpression: Multiple attribute names used in one condition", ""},
+		{"pk = :p AND :a BETWEEN sk AND :b", "sk", "Invalid condition in KeyConditionExpression: BETWEEN operator must have the key attribute as its first operand", ""},
+		{"pk = :p AND begins_with(:a, :b)", "sk", "Invalid condition in KeyConditionExpression: begins_with operator must have the key attribute as its first operand", ""},
+		{"pk = :p AND size(sk) = :a", "sk", "KeyConditionExpressions cannot contain nested operations", ""},
+		{"pk = :p AND :a = size(sk)", "sk", "KeyConditionExpressions cannot contain nested operations", ""},
+		{"pk = :p AND sk BETWEEN :a AND size(sk)", "sk", "KeyConditionExpressions cannot contain nested operations", ""},
+		{"size(pk) = :p AND sk = :a", "sk", "KeyConditionExpressions cannot contain nested operations", ""},
+		// the first failing condition, left to right, is the one reported
+		{":a = :b AND size(sk) = :c", "sk", "Invalid condition in KeyConditionExpression: No key attribute specified", ""},
+		{"size(sk) = :c AND :a = :b", "sk", "KeyConditionExpressions cannot contain nested operations", ""},
+		{"sk = pk AND size(sk) = :c", "sk", "Invalid condition in KeyConditionExpression: Multiple attribute names used in one condition", ""},
+		{"pk = :p AND sk <> :a AND sk = pk", "sk", "Invalid operator used in KeyConditionExpression: <>", ""},
+		{"pk = :p AND sk = pk AND sk <> :a", "sk", "Invalid condition in KeyConditionExpression: Multiple attribute names used in one condition", ""},
 	}
 
 	for _, tt := range tests {

@@ -141,3 +141,76 @@ func TestReturnConsumedCapacityRejectedBeforeWriting(t *testing.T) {
 	c.NoError(err)
 	c.Empty(out.Item)
 }
+
+// An invalid ReturnConsumedCapacity is rejected before any write is applied, on every write
+// operation: the seeded item is left as it was and no new item appears.
+func TestReturnConsumedCapacityRejectedBeforeAnyWriteOperationApplies(t *testing.T) {
+	ctx := context.Background()
+	str := func(v string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberS{Value: v} }
+
+	ops := map[string]func(client *Client) error{
+		"PutItem": func(client *Client) error {
+			_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+				TableName: aws.String(tableName), Item: bigPokemon("new", 1), ReturnConsumedCapacity: "FOO",
+			})
+
+			return err
+		},
+		"UpdateItem": func(client *Client) error {
+			_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+				TableName: aws.String(tableName), Key: keyID("001"), UpdateExpression: aws.String("SET #n = :n"),
+				ExpressionAttributeNames:  map[string]string{"#n": "name"},
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":n": str("changed")},
+				ReturnConsumedCapacity:    "FOO",
+			})
+
+			return err
+		},
+		"DeleteItem": func(client *Client) error {
+			_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: aws.String(tableName), Key: keyID("001"), ReturnConsumedCapacity: "FOO",
+			})
+
+			return err
+		},
+		"BatchWriteItem": func(client *Client) error {
+			_, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+				ReturnConsumedCapacity: "FOO",
+				RequestItems: map[string][]dynamodbtypes.WriteRequest{tableName: {
+					{PutRequest: &dynamodbtypes.PutRequest{Item: bigPokemon("new", 1)}},
+					{DeleteRequest: &dynamodbtypes.DeleteRequest{Key: keyID("001")}},
+				}},
+			})
+
+			return err
+		},
+		"TransactWriteItems": func(client *Client) error {
+			_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+				ReturnConsumedCapacity: "FOO",
+				TransactItems: []dynamodbtypes.TransactWriteItem{
+					{Put: &dynamodbtypes.Put{TableName: aws.String(tableName), Item: bigPokemon("new", 1)}},
+					{Delete: &dynamodbtypes.Delete{TableName: aws.String(tableName), Key: keyID("001")}},
+				},
+			})
+
+			return err
+		},
+	}
+
+	for name, op := range ops {
+		t.Run(name, func(t *testing.T) {
+			c := require.New(t)
+			client := setupCapacityClient(t)
+
+			c.Error(op(client))
+
+			seeded, err := client.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tableName), Key: keyID("001")})
+			c.NoError(err)
+			c.Equal("Bulbasaur", seeded.Item["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
+
+			created, err := client.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tableName), Key: keyID("new")})
+			c.NoError(err)
+			c.Empty(created.Item)
+		})
+	}
+}

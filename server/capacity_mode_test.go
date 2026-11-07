@@ -110,3 +110,73 @@ func TestServerReturnConsumedCapacityOutsideEnumIsRejected(t *testing.T) {
 		}
 	}
 }
+
+// An invalid ReturnConsumedCapacity is rejected before any write is applied, on every write
+// operation: the seeded item is left as it was and no new item appears.
+func TestServerReturnConsumedCapacityRejectedBeforeAnyWriteOperationApplies(t *testing.T) {
+	ctx := context.Background()
+	table := aws.String("pokemons")
+
+	ops := map[string]func(client *Client) error{
+		"PutItem": func(client *Client) error {
+			_, err := client.PutItem(ctx, &PutItemInput{TableName: table, Item: bigPokemonItem("new", 1), ReturnConsumedCapacity: "FOO"})
+
+			return err
+		},
+		"UpdateItem": func(client *Client) error {
+			_, err := client.UpdateItem(ctx, &UpdateItemInput{
+				TableName: table, Key: idKey("001"), UpdateExpression: aws.String("SET #n = :n"),
+				ExpressionAttributeNames:  map[string]string{"#n": "name"},
+				ExpressionAttributeValues: map[string]*AttributeValue{":n": {S: aws.String("changed")}},
+				ReturnConsumedCapacity:    "FOO",
+			})
+
+			return err
+		},
+		"DeleteItem": func(client *Client) error {
+			_, err := client.DeleteItem(ctx, &DeleteItemInput{TableName: table, Key: idKey("001"), ReturnConsumedCapacity: "FOO"})
+
+			return err
+		},
+		"BatchWriteItem": func(client *Client) error {
+			_, err := client.BatchWriteItem(ctx, &BatchWriteItemInput{
+				ReturnConsumedCapacity: "FOO",
+				RequestItems: map[string][]WriteRequest{"pokemons": {
+					{PutRequest: &PutRequest{Item: bigPokemonItem("new", 1)}},
+					{DeleteRequest: &DeleteRequest{Key: idKey("001")}},
+				}},
+			})
+
+			return err
+		},
+		"TransactWriteItems": func(client *Client) error {
+			_, err := client.TransactWriteItems(ctx, &TransactWriteItemsInput{
+				ReturnConsumedCapacity: "FOO",
+				TransactItems: []TransactWriteItem{
+					{Put: &Put{TableName: table, Item: bigPokemonItem("new", 1)}},
+					{Delete: &Delete{TableName: table, Key: idKey("001")}},
+				},
+			})
+
+			return err
+		},
+	}
+
+	for name, op := range ops {
+		t.Run(name, func(t *testing.T) {
+			c := require.New(t)
+			client := newServerWithPokemonTable(t)
+			putBigPokemonItem(t, client, "001", 5)
+
+			c.Error(op(client))
+
+			seeded, err := client.GetItem(ctx, &GetItemInput{TableName: table, Key: idKey("001")})
+			c.NoError(err)
+			c.Len(aws.ToString(seeded.Item["name"].S), 5)
+
+			created, err := client.GetItem(ctx, &GetItemInput{TableName: table, Key: idKey("new")})
+			c.NoError(err)
+			c.Empty(created.Item)
+		})
+	}
+}

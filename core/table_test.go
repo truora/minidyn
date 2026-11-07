@@ -2045,7 +2045,7 @@ func TestSearchData_wrongFunctionOperandCount(t *testing.T) {
 			c.NoError(err)
 
 			// Empty table: no item is ever evaluated, so the count is validated up front.
-			_, _, err = newTable.SearchData(tc.input)
+			_, err = newTable.SearchData(tc.input)
 			c.Error(err)
 
 			var apiErr types.Error

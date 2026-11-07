@@ -10,11 +10,9 @@ import (
 func billingItem(id string, pad int) map[string]*types.Item {
 	return map[string]*types.Item{
 		"id":   {S: &id},
-		"name": {S: strPtr(strings.Repeat("x", pad))},
+		"name": {S: new(strings.Repeat("x", pad))},
 	}
 }
-
-func strPtr(s string) *string { return &s }
 
 func TestWriteBilling(t *testing.T) {
 	key := billingItem("k", 0)

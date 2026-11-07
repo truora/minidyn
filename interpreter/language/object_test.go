@@ -259,16 +259,26 @@ func TestStringSetAdd(t *testing.T) {
 func TestStringSetDelete(t *testing.T) {
 	ss := StringSet{Value: map[string]bool{"Cookies": true, "Orange": true, "Milk": true}}
 
+	// DELETE only accepts sets; scalar operands are rejected and leave the set unchanged.
 	obj := ss.Delete(&String{Value: "Orange"})
+	if !isError(obj) {
+		t.Fatalf("a scalar operand should be rejected, got=%q", obj.Inspect())
+	}
+
+	if len(ss.Value) != 3 {
+		t.Fatalf("set should be unchanged, got=%q", ss.Inspect())
+	}
+
+	obj = ss.Delete(&StringSet{Value: map[string]bool{"Milk": true, "Orange": true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
-	if len(ss.Value) != 2 {
-		t.Fatalf("result object should have 2 elements, got=%q", ss.Inspect())
+	if len(ss.Value) != 1 {
+		t.Fatalf("result object should have 1 element, got=%q", ss.Inspect())
 	}
 
-	obj = ss.Delete(&StringSet{Value: map[string]bool{"Milk": true, "Cookies": true}})
+	obj = ss.Delete(&StringSet{Value: map[string]bool{"Cookies": true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
@@ -363,19 +373,21 @@ func TestBinarySetRemove(t *testing.T) {
 		},
 	}
 
+	// DELETE only accepts sets; scalar operands are rejected and leave the set unchanged.
 	obj := bs.Delete(&Binary{Value: []byte("Coffee")})
-	if obj != UNDEFINED {
-		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	if !isError(obj) {
+		t.Fatalf("a scalar operand should be rejected, got=%q", obj.Inspect())
 	}
 
-	if len(bs.Value) != 2 {
-		t.Fatalf("result object should have 2 elements, got=%q", bs.Inspect())
+	if len(bs.Value) != 3 {
+		t.Fatalf("set should be unchanged, got=%q", bs.Inspect())
 	}
 
 	rest := &BinarySet{
 		Value: [][]byte{
 			[]byte("Cookies"),
 			[]byte("Milk"),
+			[]byte("Coffee"),
 		},
 	}
 
@@ -457,16 +469,17 @@ func TestNumberSetAdd(t *testing.T) {
 func TestNumberSetDelete(t *testing.T) {
 	ns := NumberSet{Value: map[float64]bool{1: true, 2: true, 3: true}}
 
+	// DELETE only accepts sets; scalar operands are rejected and leave the set unchanged.
 	obj := ns.Delete(&Number{Value: 2})
-	if obj != UNDEFINED {
-		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
+	if !isError(obj) {
+		t.Fatalf("a scalar operand should be rejected, got=%q", obj.Inspect())
 	}
 
-	if len(ns.Value) != 2 {
-		t.Fatalf("result object should have 2 elements, got=%q", ns.Inspect())
+	if len(ns.Value) != 3 {
+		t.Fatalf("set should be unchanged, got=%q", ns.Inspect())
 	}
 
-	obj = ns.Delete(&NumberSet{Value: map[float64]bool{1: true, 3: true}})
+	obj = ns.Delete(&NumberSet{Value: map[float64]bool{1: true, 2: true, 3: true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}

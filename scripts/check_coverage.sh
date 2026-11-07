@@ -2,7 +2,13 @@
 
 # We are evaluating all files for now (later we could change it so it only uses changed files)
 # pkgs_to_test=`git diff --name-status $diff |  grep -E '^(A|M|R)'  | awk '{ print $NF }' | grep '\.go$' | xargs -n1 dirname | sort -u`
-pkgs_to_test=`find . -type f -name '*.go' | grep -v -E '^\./(tools|e2e)/' | xargs -n1 dirname | sort -u`
+# go list only returns this module's packages: it skips nested modules and directories
+# starting with "." (e.g. git worktrees under .claude/worktrees).
+pkgs_to_test=`go list -f '{{.Dir}}' ./... | sed "s|^$PWD|.|" | grep -v -E '^\./(tools|e2e)(/|$)' | sort -u`
+if [[ -z "$pkgs_to_test" ]]; then
+    echo "No packages to test" >&2
+    exit 1
+fi
 
 
 function parse_test {
@@ -49,9 +55,11 @@ do
 
     test_file=$coverage_dir/test.out
     go test -gcflags=all=-d=checkptr=0 -race -cover -coverprofile=$coverage_file -timeout=$timeout -short $pkg &> $test_file
+    test_status=$?
 
     parse_test
-    if [[ $? != 0 ]]; then
+    # A build or setup failure prints no "--- FAIL" line, so go test's status counts too.
+    if [[ $? != 0 || $test_status != 0 ]]; then
         exit_code=1
     fi
 

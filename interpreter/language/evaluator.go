@@ -964,6 +964,16 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 		return val
 	}
 
+	// DELETE only takes a set operand, whether or not the target exists. Sets are the only
+	// DetachableObjects.
+	if _, ok := val.(DetachableObject); !ok {
+		return newError(
+			"Invalid UpdateExpression: Incorrect operand type for operator or function; "+
+				"operator: DELETE, operand type: %s, typeSet: ALLOWED_FOR_DELETE_OPERAND",
+			dynamoDBTypeName(val.Type()),
+		)
+	}
+
 	id, ok := node.Left.(*Identifier)
 	if ok {
 		// We need to validate left hand side is not a keyword
@@ -972,20 +982,52 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
+		// Deleting from a set that doesn't exist leaves the item unchanged.
 		if obj == UNDEFINED {
-			env.Set(id.Value, val)
 			return obj
 		}
 
 		addObj, ok := obj.(DetachableObject)
 		if !ok {
-			return newError("An operand in the update expression has an incorrect data type")
+			return newIncorrectDeleteOperandError(obj, val)
 		}
 
-		return addObj.Delete(val)
+		result := addObj.Delete(val)
+		if isError(result) {
+			return result
+		}
+
+		// DynamoDB does not keep empty sets: removing the last elements removes the attribute.
+		if sized, ok := obj.(SizableObject); ok && sized.Size() == 0 {
+			env.Remove(id.Value)
+		}
+
+		return result
 	}
 
 	return UNDEFINED
+}
+
+// dynamoDBTypeName returns the long type name DynamoDB uses in validation messages.
+func dynamoDBTypeName(t ObjectType) string {
+	names := map[ObjectType]string{
+		ObjectTypeString:    "STRING",
+		ObjectTypeNumber:    "NUMBER",
+		ObjectTypeBinary:    "BINARY",
+		ObjectTypeBoolean:   "BOOLEAN",
+		ObjectTypeNull:      "NULL",
+		ObjectTypeList:      "LIST",
+		ObjectTypeMap:       "MAP",
+		ObjectTypeStringSet: "STRING_SET",
+		ObjectTypeNumberSet: "NUMBER_SET",
+		ObjectTypeBinarySet: "BINARY_SET",
+	}
+
+	if name, ok := names[t]; ok {
+		return name
+	}
+
+	return string(t)
 }
 
 func evalActionRemove(node *ActionExpression, env *Environment) Object {

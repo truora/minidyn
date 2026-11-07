@@ -1027,6 +1027,79 @@ func TestUpdateInvalidReturnValues(t *testing.T) {
 	newTable.Clear()
 }
 
+func TestUpdateDeleteFromMissingSet(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+
+	_, err = newTable.Put(&types.PutItemInput{Item: item, TableName: &newTable.Name})
+	c.NoError(err)
+
+	deleteFromMoves := func(key map[string]*types.Item) map[string]*types.Item {
+		got, uErr := newTable.Update(&types.UpdateItemInput{
+			TableName:        &newTable.Name,
+			Key:              key,
+			UpdateExpression: "DELETE moves :m",
+			ExpressionAttributeValues: map[string]*types.Item{
+				":m": {SS: []*string{aws.String("tackle")}},
+			},
+			ReturnValues: aws.String("ALL_NEW"),
+		})
+		c.NoError(uErr)
+
+		return got
+	}
+
+	got := deleteFromMoves(primaryKeyFromPokemonItem(item))
+	c.NotContains(got, "moves")
+	c.Equal(item, got)
+
+	missingKey := map[string]*types.Item{"id": {S: aws.String("002")}, "name": {S: aws.String("Ivysaur")}}
+
+	got = deleteFromMoves(missingKey)
+	c.Equal(missingKey, got)
+}
+
+func TestUpdateDeleteLastSetElementsRemovesAttribute(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	item["moves"] = &types.Item{SS: []*string{aws.String("tackle")}}
+
+	_, err = newTable.Put(&types.PutItemInput{Item: item, TableName: &newTable.Name})
+	c.NoError(err)
+
+	got, err := newTable.Update(&types.UpdateItemInput{
+		TableName:        &newTable.Name,
+		Key:              primaryKeyFromPokemonItem(item),
+		UpdateExpression: "DELETE moves :m",
+		ExpressionAttributeValues: map[string]*types.Item{
+			":m": {SS: []*string{aws.String("tackle")}},
+		},
+		ReturnValues: aws.String("ALL_NEW"),
+	})
+	c.NoError(err)
+	c.NotContains(got, "moves")
+
+	stored, err := newTable.Update(&types.UpdateItemInput{
+		TableName:        &newTable.Name,
+		Key:              primaryKeyFromPokemonItem(item),
+		UpdateExpression: "SET nickname = :n",
+		ExpressionAttributeValues: map[string]*types.Item{
+			":n": {S: aws.String("bulba")},
+		},
+		ReturnValues: aws.String("ALL_NEW"),
+	})
+	c.NoError(err)
+	c.NotContains(stored, "moves")
+}
+
 func TestUpdateDuplicateClauseKeywordError(t *testing.T) {
 	c := require.New(t)
 

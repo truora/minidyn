@@ -509,6 +509,45 @@ func TestE2E_ItemValidation(t *testing.T) {
 				return []any{errors.As(err, &ccf), normalizeSDKErrorString(err.Error()), len(parityGetPokemon(ctx, t, client, "007")) > 0}
 			},
 		},
+		{
+			name: "UpdateItemDeleteInvalidOperand",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				// Compare the full message: normalizeSDKErrorString drops the text after ';',
+				// which carries the operator and operand type.
+				deleteErr := func(attr string, v dynamodbtypes.AttributeValue) string {
+					_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+						TableName: aws.String(parityPokemonTable),
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"},
+						},
+						UpdateExpression:          aws.String("DELETE " + attr + " :v"),
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": v},
+					})
+					require.Error(t, err)
+
+					return strings.TrimSpace(sdkErrRequestIDRE.ReplaceAllString(err.Error(), "RequestID: , "))
+				}
+
+				return []any{
+					deleteErr("moves", &dynamodbtypes.AttributeValueMemberS{Value: "ember"}),
+					deleteErr("absent", &dynamodbtypes.AttributeValueMemberN{Value: "1"}),
+					deleteErr("absent", &dynamodbtypes.AttributeValueMemberB{Value: []byte("b")}),
+					deleteErr("moves", &dynamodbtypes.AttributeValueMemberBOOL{Value: true}),
+					deleteErr("moves", &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}),
+					deleteErr("absent", &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}),
+					// A set of another type than the target's string set. DynamoDB's message has no
+					// "; " detail here, and minidyn's debug detail is cut by the normalizer.
+					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}})),
+					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}})),
+					parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

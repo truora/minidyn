@@ -37,7 +37,8 @@ type fuzzOp struct {
 //     touches existing items, because functions on a missing attribute fail the request in
 //     minidyn (#143);
 //   - write conditions use no functions (same reason: the item may not exist yet);
-//   - every string set contains "z" and DELETE never removes it, so sets never disappear;
+//   - every string set contains "z" and DELETE never removes it, so sets never disappear and
+//     functions never read a missing ss (#143);
 //   - an update expression uses each path once and conditions have no redundant
 //     parentheses (#164: minidyn accepts invalid expressions).
 type fuzzGen struct {
@@ -402,8 +403,8 @@ func (g *fuzzGen) updateItem() fuzzOp {
 		conds = append(conds, g.condition(e, true))
 	}
 
-	// Only update existing (complete) items, see fuzzGen. In known mode, upserts also
-	// exercise DELETE on a missing set, which creates it in minidyn (#162).
+	// Only update existing (complete) items, see fuzzGen (#143). In known mode, upserts also
+	// exercise DELETE on a missing set.
 	if !g.known {
 		conds = append(conds, "attribute_exists("+e.name("pk")+")")
 	}

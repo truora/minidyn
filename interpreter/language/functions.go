@@ -11,6 +11,7 @@ import (
 type Function struct {
 	Name      string
 	Value     func(...Object) Object
+	Arity     int // the exact number of operands DynamoDB accepts
 	ForUpdate bool
 }
 
@@ -32,35 +33,43 @@ func (fn *Function) ToDynamoDB() types.Item {
 var functions = map[string]*Function{
 	"attribute_exists": {
 		Name:  "attribute_exists",
+		Arity: 1,
 		Value: attributeExists,
 	},
 	"attribute_not_exists": {
 		Name:  "attribute_not_exists",
+		Arity: 1,
 		Value: attributeNotExists,
 	},
 	"attribute_type": {
 		Name:  "attribute_type",
+		Arity: 2,
 		Value: attributeType,
 	},
 	"begins_with": {
 		Name:  "begins_with",
+		Arity: 2,
 		Value: beginsWith,
 	},
 	"contains": {
 		Name:  "contains",
+		Arity: 2,
 		Value: contains,
 	},
 	"size": {
 		Name:  "size",
+		Arity: 1,
 		Value: objectSize,
 	},
 	"if_not_exists": {
 		Name:      "if_not_exists",
+		Arity:     2,
 		Value:     ifNotExists,
 		ForUpdate: true,
 	},
 	"list_append": {
 		Name:      "list_append",
+		Arity:     2,
 		Value:     listAppend,
 		ForUpdate: true,
 	},

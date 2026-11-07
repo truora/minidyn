@@ -48,6 +48,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, err
 	}
 
+	if parsed.operandErr != nil {
+		return false, &operandCountError{expressionType: matchExpressionLabel(input.ExpressionType), cause: parsed.operandErr}
+	}
+
 	env := language.NewEnvironment()
 
 	aliases := map[string]string{}
@@ -178,6 +182,10 @@ func (li *Language) Update(input UpdateInput) error {
 
 	if err := ValidateExpressionAttributeNamesDeclared("UpdateExpression", input.Expression, aliases); err != nil {
 		return err
+	}
+
+	if opErr := language.FindOperandCountError(update); opErr != nil {
+		return &operandCountError{expressionType: "UpdateExpression", cause: opErr}
 	}
 
 	item := map[string]*types.Item{}

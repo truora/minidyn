@@ -2018,3 +2018,40 @@ func TestRestore(t *testing.T) {
 	c.Contains(table.Data, "001.Bulbasaur")
 	c.NotContains(table.Data, "004.Charmander")
 }
+
+func TestSearchData_wrongFunctionOperandCount(t *testing.T) {
+	cases := []struct {
+		name  string
+		input QueryInput
+		want  string
+	}{
+		{
+			name:  "FilterExpressionTooFew",
+			input: QueryInput{Scan: true, FilterExpression: "contains(a)"},
+			want:  "Invalid FilterExpression: Incorrect number of operands for operator or function; operator or function: contains, number of operands: 1",
+		},
+		{
+			name:  "FilterExpressionTooMany",
+			input: QueryInput{Scan: true, FilterExpression: "attribute_exists(a, a)"},
+			want:  "Invalid FilterExpression: Incorrect number of operands for operator or function; operator or function: attribute_exists, number of operands: 2",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := require.New(t)
+
+			newTable, err := createPokemonTable()
+			c.NoError(err)
+
+			// Empty table: no item is ever evaluated, so the count is validated up front.
+			_, _, err = newTable.SearchData(tc.input)
+			c.Error(err)
+
+			var apiErr types.Error
+			c.True(errors.As(err, &apiErr))
+			c.Equal("ValidationException", apiErr.Code())
+			c.Equal(tc.want, apiErr.Message())
+		})
+	}
+}

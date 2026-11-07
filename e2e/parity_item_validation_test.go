@@ -581,6 +581,10 @@ func TestE2E_ItemValidation(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "FunctionArgumentCount",
+			fn:   parityFunctionArgumentCount,
+		},
 	}
 
 	for _, tt := range tests {
@@ -588,4 +592,78 @@ func TestE2E_ItemValidation(t *testing.T) {
 			RunE2EKnown(t, tt.knownIssue, tt.fn)
 		})
 	}
+}
+
+// parityFunctionArgumentCount sends built-in functions with too few and too many operands
+// through every expression context DynamoDB validates them in.
+func parityFunctionArgumentCount(t *testing.T, client *dynamodb.Client) any {
+	t.Helper()
+	ctx := context.Background()
+
+	// The table is empty, so the count must be rejected before any item is read.
+	parityCreatePokemonTable(ctx, t, client)
+
+	vals := map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: "x"}}
+	key := map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"}}
+	table := aws.String(parityPokemonTable)
+
+	// Expressions use :v only when they mention it, as DynamoDB rejects unused values.
+	withVals := func(expr string) map[string]dynamodbtypes.AttributeValue {
+		if strings.Contains(expr, ":v") {
+			return vals
+		}
+
+		return nil
+	}
+
+	errString := func(op string, err error) string {
+		require.Error(t, err, "%s accepted the expression", op)
+
+		return normalizeSDKErrorString(err.Error())
+	}
+
+	exprs := []string{
+		"contains(a)", "contains(a, :v, :v)", "begins_with(a)", "begins_with(a, :v, :v)",
+		"attribute_type(a)", "attribute_type(a, :v, :v)", "attribute_exists(a, a)",
+		"attribute_not_exists(a, a)", "size(a, a) > :v",
+	}
+
+	out := []any{}
+
+	for _, expr := range exprs {
+		_, scanErr := client.Scan(ctx, &dynamodb.ScanInput{
+			TableName: table, FilterExpression: aws.String(expr), ExpressionAttributeValues: withVals(expr),
+		})
+		_, putErr := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: table, Item: key, ConditionExpression: aws.String(expr),
+			ExpressionAttributeValues: withVals(expr),
+		})
+		_, deleteErr := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName: table, Key: key, ConditionExpression: aws.String(expr),
+			ExpressionAttributeValues: withVals(expr),
+		})
+		_, updateErr := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName: table, Key: key, ConditionExpression: aws.String(expr),
+			UpdateExpression:          aws.String("SET b = :v"),
+			ExpressionAttributeValues: vals,
+		})
+
+		out = append(out, expr,
+			errString("Scan "+expr, scanErr), errString("PutItem "+expr, putErr),
+			errString("DeleteItem "+expr, deleteErr), errString("UpdateItem "+expr, updateErr))
+	}
+
+	for _, expr := range []string{
+		"SET a = if_not_exists(a)", "SET a = if_not_exists(a, :v, :v)",
+		"SET a = list_append(a)", "SET a = list_append(a, a, a)",
+	} {
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName: table, Key: key, UpdateExpression: aws.String(expr),
+			ExpressionAttributeValues: withVals(expr),
+		})
+
+		out = append(out, expr, errString("UpdateItem "+expr, err))
+	}
+
+	return out
 }

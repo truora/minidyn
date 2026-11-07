@@ -822,6 +822,10 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 		return newError("the function is not allowed in a condition expression; function: %s", funcObj.Name)
 	}
 
+	if err := operandCountError(funcObj, len(node.Arguments)); err != nil {
+		return newError("%s", err.Error())
+	}
+
 	args := evalExpressions(node.Arguments, env)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
@@ -848,6 +852,10 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 
 	if !funcObj.ForUpdate {
 		return newError("the function is not allowed in an update expression; function: %s", funcObj.Name)
+	}
+
+	if err := operandCountError(funcObj, len(node.Arguments)); err != nil {
+		return newError("%s", err.Error())
 	}
 
 	args := evalUpdateExpressions(node.Arguments, env)

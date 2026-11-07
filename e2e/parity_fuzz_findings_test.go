@@ -408,6 +408,11 @@ func TestE2E_FuzzFindings(t *testing.T) {
 				return []any{scan.Count, indexKeys(scan.Items), query.Count, indexKeys(query.Items)}
 			},
 		},
+		{
+			// DELETE and ADD on nested document paths were silently ignored (#184).
+			name: "NestedDeleteAndAdd",
+			fn:   fuzzNestedDeleteAdd,
+		},
 	}
 
 	for _, tt := range tests {

@@ -124,6 +124,14 @@ func (g *fuzzGen) mapVal() dynamodbtypes.AttributeValue {
 		m["j"] = fzN(g.num())
 	}
 
+	if g.chance(0.5) {
+		m["ss"] = g.strSet()
+	}
+
+	if g.chance(0.5) {
+		m["n"] = fzN(g.num())
+	}
+
 	return &dynamodbtypes.AttributeValueMemberM{Value: m}
 }
 
@@ -314,7 +322,7 @@ func (g *fuzzGen) updateAction(e *fuzzExpr) (kw, action, path string) {
 }
 
 func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
-	switch g.rng.IntN(10) {
+	switch g.rng.IntN(12) {
 	case 0:
 		return "SET", e.name("n") + " = " + e.name("n") + " " + pick(g, "+", "-") + " " + e.val(fzN(g.num()))
 	case 1:
@@ -348,6 +356,15 @@ func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
 		return "REMOVE", e.name("m") + "." + e.name("j")
 	case 8:
 		return "REMOVE", e.name("l") + "[0]"
+	case 9:
+		// Nested DELETE/ADD, which minidyn used to ignore (#184). The map may lack the key.
+		if g.chance(0.5) {
+			return "DELETE", e.name("m") + "." + e.name("ss") + " " + e.val(g.deletableSet())
+		}
+
+		return "ADD", e.name("m") + "." + e.name("ss") + " " + e.val(g.strSet())
+	case 10:
+		return "ADD", e.name("m") + "." + e.name("n") + " " + e.val(fzN(g.num()))
 	default:
 		return "SET", e.name("g") + " = " + e.val(fzS(pick(g, "g1", "g2")))
 	}

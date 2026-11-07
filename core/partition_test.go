@@ -93,7 +93,7 @@ func TestSearchData_otherPartitionsSharingThePrefix(t *testing.T) {
 	// count toward Limit nor become the LastEvaluatedKey.
 	table := seekTestTable(t, false, seekItem("alice", ""), seekItem("alicex", ""), seekItem("alicez", ""), seekItem("bob", ""))
 
-	items, last, err := table.SearchData(QueryInput{
+	items, last, err := searchData(table, QueryInput{
 		KeyConditionExpression:    "pk = :p",
 		FilterExpression:          "f = :f",
 		ExpressionAttributeValues: map[string]*types.Item{":p": {S: aws.String("alice")}, ":f": {S: aws.String("yes")}},
@@ -106,7 +106,7 @@ func TestSearchData_otherPartitionsSharingThePrefix(t *testing.T) {
 
 	composite := seekTestTable(t, true, seekItem("a", "1"), seekItem("a", "2"), seekItem("a.b", "1"), seekItem("a.b", "2"))
 
-	items, last, err = composite.SearchData(QueryInput{
+	items, last, err = searchData(composite, QueryInput{
 		KeyConditionExpression:    "pk = :p",
 		FilterExpression:          "f = :f",
 		ExpressionAttributeValues: map[string]*types.Item{":p": {S: aws.String("a")}, ":f": {S: aws.String("yes")}},
@@ -123,7 +123,7 @@ func TestSearchData_invalidKeyConditionOnEmptyPartition(t *testing.T) {
 	// partition must not turn an invalid key condition into an empty success.
 	table := seekTestTable(t, true, seekItem("a", "1"))
 
-	_, _, err := table.SearchData(QueryInput{
+	_, _, err := searchData(table, QueryInput{
 		KeyConditionExpression:    "pk = :p AND sk > :n",
 		ExpressionAttributeValues: map[string]*types.Item{":p": {S: aws.String("zzz")}, ":n": {N: aws.String("1")}},
 		ScanIndexForward:          true,
@@ -136,7 +136,7 @@ func TestSearchData_exclusiveStartKeyFromAnotherPartition(t *testing.T) {
 	// and returns an empty page, since the start key is never reached.
 	table := seekTestTable(t, true, seekItem("a", "1"), seekItem("b", "1"))
 
-	items, last, err := table.SearchData(QueryInput{
+	items, last, err := searchData(table, QueryInput{
 		KeyConditionExpression:    "pk = :p",
 		ExpressionAttributeValues: map[string]*types.Item{":p": {S: aws.String("b")}},
 		ExclusiveStartKey:         map[string]*types.Item{"pk": {S: aws.String("a")}, "sk": {S: aws.String("1")}},

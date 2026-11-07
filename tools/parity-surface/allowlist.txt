@@ -5,14 +5,6 @@
 # line is removed; a new gap (e.g. a field added by an SDK bump) fails until it
 # is implemented, covered by a parity test or listed here.
 
-# ScannedCount never set (#144)
-response QueryOutput.ScannedCount
-response ScanOutput.ScannedCount
-
-# Select: COUNT not honored (#144)
-request QueryInput.Select
-request ScanInput.Select
-
 # table description (#151)
 response GlobalSecondaryIndexDescription.Backfilling
 response GlobalSecondaryIndexDescription.OnDemandThroughput

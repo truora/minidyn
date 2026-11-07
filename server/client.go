@@ -513,7 +513,7 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		input.ScanIndexForward = aws.Bool(true)
 	}
 
-	items, last, err := table.SearchData(core.QueryInput{
+	res, err := table.SearchData(core.QueryInput{
 		Index:                     aws.ToString(input.IndexName),
 		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
 		Aliases:                   input.ExpressionAttributeNames,
@@ -528,13 +528,17 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		return nil, mapKnownError(err)
 	}
 
-	count := int32(len(items))
+	out := &QueryOutput{
+		Count:            int32(len(res.Items)),
+		ScannedCount:     int32(res.ScannedCount),
+		LastEvaluatedKey: mapTypesMapToAttributeValue(res.LastEvaluatedKey),
+	}
 
-	return &QueryOutput{
-		Items:            mapTypesSliceToAttributeValue(items),
-		Count:            count,
-		LastEvaluatedKey: mapTypesMapToAttributeValue(last),
-	}, nil
+	if input.Select != ddbtypes.SelectCount {
+		out.Items = mapTypesSliceToAttributeValue(res.Items)
+	}
+
+	return out, nil
 }
 
 // Scan iterates items (optionally filtered) and returns a page of results.
@@ -560,7 +564,7 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, err
 	}
 
-	items, last, err := table.SearchData(core.QueryInput{
+	res, err := table.SearchData(core.QueryInput{
 		Index:                     aws.ToString(input.IndexName),
 		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
 		Aliases:                   input.ExpressionAttributeNames,
@@ -575,13 +579,17 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, mapKnownError(err)
 	}
 
-	count := int32(len(items))
+	out := &ScanOutput{
+		Count:            int32(len(res.Items)),
+		ScannedCount:     int32(res.ScannedCount),
+		LastEvaluatedKey: mapTypesMapToAttributeValue(res.LastEvaluatedKey),
+	}
 
-	return &ScanOutput{
-		Items:            mapTypesSliceToAttributeValue(items),
-		Count:            count,
-		LastEvaluatedKey: mapTypesMapToAttributeValue(last),
-	}, nil
+	if input.Select != ddbtypes.SelectCount {
+		out.Items = mapTypesSliceToAttributeValue(res.Items)
+	}
+
+	return out, nil
 }
 
 const (
@@ -1171,10 +1179,6 @@ func newServerTransactionCancelledError(i, n int, opErr error) error {
 
 // Utilities
 func mapTypesSliceToAttributeValue(items []map[string]*types.Item) []map[string]*AttributeValue {
-	if len(items) == 0 {
-		return nil
-	}
-
 	out := make([]map[string]*AttributeValue, len(items))
 	for i, it := range items {
 		out[i] = mapTypesMapToAttributeValue(it)

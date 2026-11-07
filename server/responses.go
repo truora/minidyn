@@ -52,17 +52,19 @@ type GetItemOutput struct {
 
 // QueryOutput mirrors DynamoDB QueryOutput.
 type QueryOutput struct {
-	Items            []map[string]*AttributeValue `json:"Items,omitempty"`
-	Count            int32                        `json:"Count,omitempty"`
-	ScannedCount     int32                        `json:"ScannedCount,omitempty"`
+	// Items is nil (and omitted) for Select COUNT; otherwise it is sent even when empty.
+	Items            []map[string]*AttributeValue `json:"Items,omitzero"`
+	Count            int32                        `json:"Count"`
+	ScannedCount     int32                        `json:"ScannedCount"`
 	LastEvaluatedKey map[string]*AttributeValue   `json:"LastEvaluatedKey,omitempty"`
 }
 
 // ScanOutput mirrors DynamoDB ScanOutput.
 type ScanOutput struct {
-	Items            []map[string]*AttributeValue `json:"Items,omitempty"`
-	Count            int32                        `json:"Count,omitempty"`
-	ScannedCount     int32                        `json:"ScannedCount,omitempty"`
+	// Items is nil (and omitted) for Select COUNT; otherwise it is sent even when empty.
+	Items            []map[string]*AttributeValue `json:"Items,omitzero"`
+	Count            int32                        `json:"Count"`
+	ScannedCount     int32                        `json:"ScannedCount"`
 	LastEvaluatedKey map[string]*AttributeValue   `json:"LastEvaluatedKey,omitempty"`
 }
 

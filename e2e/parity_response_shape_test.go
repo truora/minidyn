@@ -273,8 +273,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 			},
 		},
 		{
-			name:       "QueryNoMatchesItemsAndCount",
-			knownIssue: "#144",
+			name: "QueryNoMatchesItemsAndCount",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

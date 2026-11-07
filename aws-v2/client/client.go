@@ -415,7 +415,7 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 
 	// support conditional writes
 	if input.ConditionExpression != nil {
-		items, _, serr := table.SearchData(core.QueryInput{
+		res, serr := table.SearchData(core.QueryInput{
 			Index:                     core.PrimaryIndexName,
 			ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
 			Aliases:                   input.ExpressionAttributeNames,
@@ -426,7 +426,7 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 			return nil, mapKnownError(serr)
 		}
 
-		if len(items) == 0 {
+		if len(res.Items) == 0 {
 			return &dynamodb.DeleteItemOutput{}, &types.ConditionalCheckFailedException{Message: aws.String(core.ErrConditionalRequestFailed.Error())}
 		}
 	}
@@ -554,20 +554,25 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 		input.ScanIndexForward = aws.Bool(true)
 	}
 
-	items, lastKey, err := table.SearchData(mapDynamoToTypesQueryInput(input, indexName))
+	res, err := table.SearchData(mapDynamoToTypesQueryInput(input, indexName))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	count := len(items)
-	if count > math.MaxInt32 {
+	// ScannedCount is never smaller than Count, so checking it covers both conversions.
+	count := len(res.Items)
+	if res.ScannedCount > math.MaxInt32 {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: "Result count exceeds maximum allowed value"}
 	}
 
 	output := &dynamodb.QueryOutput{
-		Items:            mapTypesToDynamoSliceMapItem(items),
 		Count:            int32(count),
-		LastEvaluatedKey: mapTypesToDynamoMapItem(lastKey),
+		ScannedCount:     int32(res.ScannedCount),
+		LastEvaluatedKey: mapTypesToDynamoMapItem(res.LastEvaluatedKey),
+	}
+
+	if input.Select != types.SelectCount {
+		output.Items = mapTypesToDynamoSliceMapItem(res.Items)
 	}
 
 	return output, nil
@@ -594,7 +599,7 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 
 	indexName := aws.ToString(input.IndexName)
 
-	items, lastKey, err := table.SearchData(core.QueryInput{
+	res, err := table.SearchData(core.QueryInput{
 		Index:                     indexName,
 		ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
 		Aliases:                   input.ExpressionAttributeNames,
@@ -609,15 +614,20 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		return nil, mapKnownError(err)
 	}
 
-	count := len(items)
-	if count > math.MaxInt32 {
+	// ScannedCount is never smaller than Count, so checking it covers both conversions.
+	count := len(res.Items)
+	if res.ScannedCount > math.MaxInt32 {
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: "Result count exceeds maximum allowed value"}
 	}
 
 	output := &dynamodb.ScanOutput{
-		Items:            mapTypesToDynamoSliceMapItem(items),
 		Count:            int32(count),
-		LastEvaluatedKey: mapTypesToDynamoMapItem(lastKey),
+		ScannedCount:     int32(res.ScannedCount),
+		LastEvaluatedKey: mapTypesToDynamoMapItem(res.LastEvaluatedKey),
+	}
+
+	if input.Select != types.SelectCount {
+		output.Items = mapTypesToDynamoSliceMapItem(res.Items)
 	}
 
 	return output, nil

@@ -544,14 +544,23 @@ func GetKeyAt(sortedKeys []string, size int64, pos int64, forward bool) string {
 	return sortedKeys[pos]
 }
 
+// SearchResult is one page of results from SearchData.
+type SearchResult struct {
+	Items            []map[string]*types.Item
+	LastEvaluatedKey map[string]*types.Item
+	// ScannedCount is the number of items read on this page before the filter
+	// expression ran: items before the start key, or outside the key condition, are not read.
+	ScannedCount int64
+}
+
 // SearchData queries the table based on the input.
-func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[string]*types.Item, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
 	if err := validateSearchInputMaps(input); err != nil {
-		return nil, nil, err
+		return SearchResult{}, err
 	}
 
 	if err := validateSearchExpressionAttributeNames(input); err != nil {
-		return nil, nil, err
+		return SearchResult{}, err
 	}
 
 	items := []map[string]*types.Item{}
@@ -561,7 +570,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 
 	if seeked {
 		if err := t.checkSeek(input, index, sortedKeys); err != nil {
-			return nil, nil, err
+			return SearchResult{}, err
 		}
 	}
 
@@ -588,7 +597,7 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 
 		item, keyItem, expressionType, matched, gerr := t.getMatchedItemAndCount(&input, pk, startKey, index)
 		if gerr != nil {
-			return nil, nil, types.NewError("ValidationException", gerr.Error(), nil)
+			return SearchResult{}, types.NewError("ValidationException", gerr.Error(), nil)
 		}
 
 		if matched {
@@ -597,7 +606,8 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 
 		scanned++
 
-		// Only evaluated items count toward Limit and can be the LastEvaluatedKey.
+		// Only evaluated items are read: they count toward Limit and ScannedCount, and can be
+		// the LastEvaluatedKey.
 		if shouldCountItem(expressionType, matched) {
 			count++
 			last = keyItem
@@ -608,7 +618,11 @@ func (t *Table) SearchData(input QueryInput) ([]map[string]*types.Item, map[stri
 		}
 	}
 
-	return items, t.getLastKey(last, limit, count, scanned, sortedKeysSize, index), nil
+	return SearchResult{
+		Items:            items,
+		LastEvaluatedKey: t.getLastKey(last, limit, count, scanned, sortedKeysSize, index),
+		ScannedCount:     count,
+	}, nil
 }
 
 func (t *Table) getLastKey(item map[string]*types.Item, limit, count, scanned, keysSize int64, index *index) map[string]*types.Item {

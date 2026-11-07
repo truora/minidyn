@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -58,7 +59,9 @@ func validateExpressionAttributes(exprNames map[string]string, exprValueKeys []s
 		return err
 	}
 
-	if len(missingValues) > 0 {
+	// An undefined placeholder is reported by the core, with its expression label, ahead of
+	// an unused value, as DynamoDB does.
+	if len(missingValues) > 0 && !hasUndefinedValue(genericExpression, exprValueKeys) {
 		if genericExpression == "" {
 			return &smithy.GenericAPIError{Code: "ValidationException", Message: expressionAttributeValuesOnlyWithExpressionsMsg}
 		}
@@ -137,4 +140,12 @@ func getItemAttributesForOutput(table *core.Table, stored map[string]*types.Item
 	}
 
 	return mapTypesMapToAttributeValue(projected), nil
+}
+
+// hasUndefinedValue reports whether the expressions use a value placeholder that is not among
+// the declared ExpressionAttributeValues keys.
+func hasUndefinedValue(expression string, declared []string) bool {
+	return interpreter.HasUndeclaredExpressionAttributeValues(expression, func(name string) bool {
+		return slices.Contains(declared, name)
+	})
 }

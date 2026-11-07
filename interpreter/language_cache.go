@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/truora/minidyn/interpreter/language"
+	"github.com/truora/minidyn/types"
 )
 
 // maxParsedExpressions bounds the parsed-expression cache. Expressions in tests are usually a
@@ -18,6 +19,8 @@ type parsedCondition struct {
 	// names are the #names the expression uses, in order of first appearance, so alias
 	// validation doesn't need to lex the expression again.
 	names []string
+	// values are the :values the expression uses, in order of first appearance.
+	values []string
 	// operandErr is the first built-in call with the wrong number of operands, if any.
 	operandErr *language.OperandCountError
 }
@@ -43,6 +46,7 @@ func parseCondition(expr string) *parsedCondition {
 		conditional: p.ParseConditionalExpression(),
 		errs:        p.Errors(),
 		names:       language.UndeclaredExpressionAttributeNames(expr, nil),
+		values:      language.UndeclaredExpressionAttributeValues(expr, func(string) bool { return false }),
 	}
 
 	if len(pc.errs) == 0 && pc.conditional != nil {
@@ -72,6 +76,18 @@ func validateDeclaredNames(expressionType string, names []string, aliases map[st
 	for _, name := range names {
 		if _, ok := aliases[name]; !ok {
 			return &undeclaredAttributeNameError{expressionType: expressionType, name: name}
+		}
+	}
+
+	return nil
+}
+
+// validateDeclaredValues is ValidateExpressionAttributeValuesDeclared for an already parsed
+// expression: the first :value missing from values is reported.
+func validateDeclaredValues(expressionType string, placeholders []string, values map[string]*types.Item) error {
+	for _, name := range placeholders {
+		if _, ok := values[name]; !ok {
+			return &undeclaredAttributeValueError{expressionType: expressionType, value: name}
 		}
 	}
 

@@ -438,6 +438,54 @@ func validateSearchExpressionAttributeNames(input QueryInput) error {
 	return nil
 }
 
+// labeledExpression is an expression with the DynamoDB label used in its error messages.
+type labeledExpression struct {
+	label      string
+	expression string
+}
+
+// validateExpressionValuesDeclared rejects up front any expression that references a value
+// placeholder (:value) missing from values, reporting the first one in the order given.
+// DynamoDB validates this before reading any item, so it must error even when the table is
+// empty or the condition would never be evaluated.
+func validateExpressionValuesDeclared(values map[string]*types.Item, exprs ...labeledExpression) error {
+	for _, e := range exprs {
+		if err := interpreter.ValidateExpressionAttributeValuesDeclared(e.label, e.expression, values); err != nil {
+			return types.NewError("ValidationException", err.Error(), nil)
+		}
+	}
+
+	return nil
+}
+
+// validateSearchExpressionAttributeValues applies validateExpressionValuesDeclared to a
+// Query/Scan. DynamoDB reports the filter before the key condition.
+func validateSearchExpressionAttributeValues(input QueryInput) error {
+	return validateExpressionValuesDeclared(input.ExpressionAttributeValues,
+		labeledExpression{"FilterExpression", input.FilterExpression},
+		labeledExpression{"KeyConditionExpression", input.KeyConditionExpression},
+		// Front ends run write conditions through SearchData as a pre-check.
+		labeledExpression{"ConditionExpression", derefString(input.ConditionExpression)},
+	)
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+
+	return *s
+}
+
+// validateConditionValues applies validateExpressionValuesDeclared to an optional condition.
+func validateConditionValues(values map[string]*types.Item, condition *string) error {
+	if condition == nil {
+		return nil
+	}
+
+	return validateExpressionValuesDeclared(values, labeledExpression{"ConditionExpression", *condition})
+}
+
 // validateKeyCondition rejects up front a Query key condition that does not match the key
 // schema of the table, or of the index being queried, as DynamoDB does: even when the table
 // is empty, and once per request rather than per item.
@@ -747,6 +795,10 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		return SearchResult{}, err
 	}
 
+	if err := validateSearchExpressionAttributeValues(input); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := t.validateKeyCondition(input); err != nil {
 		return SearchResult{}, err
 	}
@@ -984,6 +1036,10 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
+	if err := validateConditionValues(input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
+		return nil, err
+	}
+
 	item := copyItem(input.Item)
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
@@ -1163,6 +1219,14 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
+	// DynamoDB reports the update expression before the condition.
+	if err := validateExpressionValuesDeclared(input.ExpressionAttributeValues,
+		labeledExpression{"UpdateExpression", input.UpdateExpression},
+		labeledExpression{"ConditionExpression", derefString(input.ConditionExpression)},
+	); err != nil {
+		return nil, err
+	}
+
 	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
@@ -1261,6 +1325,10 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 
 	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := validateConditionValues(input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
+		return nil, err
 	}
 
 	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {

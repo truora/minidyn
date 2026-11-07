@@ -34,6 +34,24 @@ func (e *undeclaredAttributeNameError) Error() string {
 
 func (e *undeclaredAttributeNameError) Unwrap() error { return ErrSyntaxError }
 
+// undeclaredAttributeValueError reports an expression that references an attribute value
+// placeholder (:value) not declared in ExpressionAttributeValues. Like
+// undeclaredAttributeNameError it unwraps to ErrSyntaxError.
+type undeclaredAttributeValueError struct {
+	expressionType string
+	value          string
+}
+
+func (e *undeclaredAttributeValueError) Error() string {
+	//nolint:stylecheck,staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
+	return fmt.Sprintf(
+		"Invalid %s: An expression attribute value used in expression is not defined; attribute value: %s",
+		e.expressionType, e.value,
+	)
+}
+
+func (e *undeclaredAttributeValueError) Unwrap() error { return ErrSyntaxError }
+
 // operandCountError reports a built-in function called with the wrong number of operands. Its
 // message mirrors DynamoDB's ValidationException wording; like undeclaredAttributeNameError it
 // unwraps to ErrSyntaxError so the same gating maps it to ValidationException.
@@ -73,6 +91,30 @@ func ValidateExpressionAttributeNamesDeclared(expressionType, expression string,
 	}
 
 	return &undeclaredAttributeNameError{expressionType: expressionType, name: undeclared[0]}
+}
+
+// ValidateExpressionAttributeValuesDeclared returns an error when expression references an
+// attribute value placeholder (:value) that is absent from values (ExpressionAttributeValues),
+// matching DynamoDB which reports the first undefined value. expressionType is the DynamoDB
+// expression label used in the message (e.g. "UpdateExpression", "FilterExpression").
+func ValidateExpressionAttributeValuesDeclared(expressionType, expression string, values map[string]*types.Item) error {
+	undeclared := language.UndeclaredExpressionAttributeValues(expression, func(name string) bool {
+		_, ok := values[name]
+
+		return ok
+	})
+	if len(undeclared) == 0 {
+		return nil
+	}
+
+	return &undeclaredAttributeValueError{expressionType: expressionType, value: undeclared[0]}
+}
+
+// HasUndeclaredExpressionAttributeValues reports whether expression references a value
+// placeholder that declared rejects. Front ends use it to let the undefined-value error win
+// over the unused-value one, as DynamoDB does.
+func HasUndeclaredExpressionAttributeValues(expression string, declared func(string) bool) bool {
+	return len(language.UndeclaredExpressionAttributeValues(expression, declared)) > 0
 }
 
 // ExpressionType type of the evaluated expression

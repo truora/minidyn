@@ -18,6 +18,8 @@ type parsedCondition struct {
 	// names are the #names the expression uses, in order of first appearance, so alias
 	// validation doesn't need to lex the expression again.
 	names []string
+	// operandErr is the first built-in call with the wrong number of operands, if any.
+	operandErr *language.OperandCountError
 }
 
 // conditionCache maps expression text to its parsed form. Parsing depends only on the text,
@@ -41,6 +43,10 @@ func parseCondition(expr string) *parsedCondition {
 		conditional: p.ParseConditionalExpression(),
 		errs:        p.Errors(),
 		names:       language.UndeclaredExpressionAttributeNames(expr, nil),
+	}
+
+	if len(pc.errs) == 0 && pc.conditional != nil {
+		pc.operandErr = language.FindOperandCountError(pc.conditional)
 	}
 
 	if len(conditionCache.m) >= maxParsedExpressions {

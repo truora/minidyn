@@ -468,6 +468,26 @@ func TestParsingRemoveExpression(t *testing.T) {
 	}
 }
 
+// DynamoDB's grammar needs at least one operand in a function call: a call with none is a
+// syntax error, not an operand count error.
+func TestParsingCallWithoutOperands(t *testing.T) {
+	for _, input := range []string{"size() > :v", "attribute_exists()", "contains()"} {
+		p := NewParser(NewLexer(input))
+		p.ParseConditionalExpression()
+
+		if len(p.Errors()) == 0 {
+			t.Fatalf("expected parse errors for %q, got none", input)
+		}
+	}
+
+	p := NewUpdateParser(NewLexer("SET a = if_not_exists()"))
+	p.ParseUpdateExpression()
+
+	if len(p.Errors()) == 0 {
+		t.Fatal("expected parse errors for an update call without operands, got none")
+	}
+}
+
 func TestParsingDuplicateUpdateClauseHeaders(t *testing.T) {
 	t.Parallel()
 

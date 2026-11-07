@@ -34,6 +34,34 @@ func (e *undeclaredAttributeNameError) Error() string {
 
 func (e *undeclaredAttributeNameError) Unwrap() error { return ErrSyntaxError }
 
+// operandCountError reports a built-in function called with the wrong number of operands. Its
+// message mirrors DynamoDB's ValidationException wording; like undeclaredAttributeNameError it
+// unwraps to ErrSyntaxError so the same gating maps it to ValidationException.
+type operandCountError struct {
+	expressionType string
+	cause          *language.OperandCountError
+}
+
+func (e *operandCountError) Error() string {
+	return "Invalid " + e.expressionType + ": " + e.cause.Error()
+}
+
+func (e *operandCountError) Unwrap() error { return ErrSyntaxError }
+
+// ValidateFunctionOperandCounts returns an error when the condition expression calls a built-in
+// function with the wrong number of operands. DynamoDB rejects this before reading any item,
+// so callers use it to fail even when no item would be evaluated. Expressions that don't parse
+// are left to the evaluation that reports their syntax error. expressionType is the DynamoDB
+// expression label used in the message (e.g. "FilterExpression").
+func ValidateFunctionOperandCounts(expressionType, expression string) error {
+	parsed := parseCondition(expression)
+	if parsed.operandErr == nil {
+		return nil
+	}
+
+	return &operandCountError{expressionType: expressionType, cause: parsed.operandErr}
+}
+
 // ValidateExpressionAttributeNamesDeclared returns an error when expression references an
 // attribute name placeholder (#name) that is absent from aliases (ExpressionAttributeNames),
 // matching DynamoDB which reports the first undeclared name. expressionType is the DynamoDB

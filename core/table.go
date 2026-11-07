@@ -310,6 +310,13 @@ func validateSearchExpressionAttributeNames(input QueryInput) error {
 		}
 	}
 
+	// A wrong operand count is rejected the same way, before any item is read.
+	for _, c := range checks[:2] {
+		if err := interpreter.ValidateFunctionOperandCounts(c.label, c.expression); err != nil {
+			return types.NewError("ValidationException", err.Error(), nil)
+		}
+	}
+
 	return nil
 }
 

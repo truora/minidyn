@@ -304,3 +304,131 @@ func BenchmarkFunctionInspect(b *testing.B) {
 		}
 	}
 }
+
+func parseConditionForTest(t *testing.T, expr string) *ConditionalExpression {
+	t.Helper()
+
+	p := NewParser(NewLexer(expr))
+	cond := p.ParseConditionalExpression()
+
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors for %q: %v", expr, p.Errors())
+	}
+
+	return cond
+}
+
+func TestFindOperandCountError(t *testing.T) {
+	cases := map[string]struct {
+		expr     string
+		function string
+		count    int
+	}{
+		"contains_one":             {"contains(a)", "contains", 1},
+		"contains_three":           {"contains(a, :v, :v)", "contains", 3},
+		"begins_with_one":          {"begins_with(a)", "begins_with", 1},
+		"begins_with_three":        {"begins_with(a, :v, :v)", "begins_with", 3},
+		"attribute_type_one":       {"attribute_type(a)", "attribute_type", 1},
+		"attribute_type_three":     {"attribute_type(a, :v, :v)", "attribute_type", 3},
+		"attribute_exists_two":     {"attribute_exists(a, a)", "attribute_exists", 2},
+		"attribute_not_exists_two": {"attribute_not_exists(a, a)", "attribute_not_exists", 2},
+		"size_two":                 {"size(a, a) > :v", "size", 2},
+		"nested_in_not":            {"NOT contains(a)", "contains", 1},
+		"nested_in_and":            {"a = :v AND begins_with(a)", "begins_with", 1},
+		"nested_in_or":             {"a = :v OR (attribute_exists(a, a))", "attribute_exists", 2},
+		"nested_in_between":        {"size(a, a) BETWEEN :v AND :v", "size", 2},
+		"nested_in_in":             {"a IN (:v, size(a, a))", "size", 2},
+		"nested_in_args":           {"contains(size(a, a), :v)", "size", 2},
+		"first_in_source_order":    {"contains(a) AND begins_with(a)", "contains", 1},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := FindOperandCountError(parseConditionForTest(t, tc.expr))
+			if got == nil {
+				t.Fatalf("expected an operand count error for %q", tc.expr)
+			}
+
+			if got.Function != tc.function || got.Count != tc.count {
+				t.Fatalf("got function=%s count=%d, want function=%s count=%d", got.Function, got.Count, tc.function, tc.count)
+			}
+		})
+	}
+}
+
+func TestFindOperandCountError_validCalls(t *testing.T) {
+	for _, expr := range []string{
+		"attribute_exists(a)", "attribute_not_exists(a)", "attribute_type(a, :v)", "begins_with(a, :v)",
+		"contains(a, :v)", "size(a) > :v", "a = :v", "NOT attribute_exists(a)", "unknown_fn(a, b, c)",
+	} {
+		if got := FindOperandCountError(parseConditionForTest(t, expr)); got != nil {
+			t.Fatalf("%q: unexpected error %v", expr, got)
+		}
+	}
+
+	if got := FindOperandCountError(nil); got != nil {
+		t.Fatalf("nil node: unexpected error %v", got)
+	}
+}
+
+func TestFindOperandCountError_update(t *testing.T) {
+	cases := map[string]struct {
+		expr     string
+		function string
+		count    int
+	}{
+		"if_not_exists_one":   {"SET a = if_not_exists(a)", "if_not_exists", 1},
+		"if_not_exists_three": {"SET a = if_not_exists(a, :v, :v)", "if_not_exists", 3},
+		"list_append_one":     {"SET a = list_append(a)", "list_append", 1},
+		"list_append_three":   {"SET a = list_append(a, a, a)", "list_append", 3},
+		"second_action":       {"SET b = :v, a = list_append(a)", "list_append", 1},
+		"nested":              {"SET a = list_append(if_not_exists(a), :v)", "if_not_exists", 1},
+		"arithmetic":          {"SET a = if_not_exists(a) + :v", "if_not_exists", 1},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := NewUpdateParser(NewLexer(tc.expr))
+			update := p.ParseUpdateExpression()
+
+			if len(p.Errors()) != 0 {
+				t.Fatalf("parse errors: %v", p.Errors())
+			}
+
+			got := FindOperandCountError(update)
+			if got == nil || got.Function != tc.function || got.Count != tc.count {
+				t.Fatalf("got %v, want function=%s count=%d", got, tc.function, tc.count)
+			}
+		})
+	}
+
+	p := NewUpdateParser(NewLexer("SET a = if_not_exists(a, :v) REMOVE b ADD c :v DELETE d :v"))
+	if got := FindOperandCountError(p.ParseUpdateExpression()); got != nil {
+		t.Fatalf("unexpected error %v", got)
+	}
+}
+
+// Evaluating a call with the wrong number of arguments must never panic, even without the
+// up-front validation.
+func TestEvalFunctionCall_wrongOperandCount(t *testing.T) {
+	for _, expr := range []string{"contains(a)", "begins_with(a)", "attribute_type(a)", "attribute_exists(a, a)", "size(a, a) > :v"} {
+		env := NewEnvironment()
+		if err := env.AddAttributes(map[string]*types.Item{"a": {S: new("x")}, ":v": {S: new("x")}}); err != nil {
+			t.Fatal(err)
+		}
+
+		got := Eval(parseConditionForTest(t, expr), env)
+		if !isError(got) {
+			t.Fatalf("%q: expected an error, got %s", expr, got.Inspect())
+		}
+	}
+}
+
+func TestOperandCountErrorMessage(t *testing.T) {
+	err := &OperandCountError{Function: "contains", Count: 1}
+
+	want := "Incorrect number of operands for operator or function; operator or function: contains, number of operands: 1"
+	if err.Error() != want {
+		t.Fatalf("got %q want %q", err.Error(), want)
+	}
+}

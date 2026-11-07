@@ -320,7 +320,9 @@ func (p *Parser) parseCallArguments() []Expression {
 
 	if p.peekTokenIs(RPAREN) {
 		p.nextToken()
-		return args
+		p.errors = append(p.errors, "a function call needs at least one operand")
+
+		return nil
 	}
 
 	p.nextToken()

@@ -38,6 +38,20 @@ documented behavior of DynamoDB, minidyn follows DynamoDB. These tests keep
 their `knownIssue` marker even though the issue is closed, so the difference
 stays visible and is checked on every run:
 
+- **#153, `LastEvaluatedKey` at the end of the sort key range**
+  (`TestE2E_FuzzFindings/QueryLimitEndsAtRangeEnd`). When a `Query` page fills
+  at `Limit`, DynamoDB Local leaves out `LastEvaluatedKey` if the last item
+  read sits exactly on the inclusive end of the sort key range. minidyn always
+  returns it, as the [Query API reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html)
+  describes: hitting `Limit` stops the operation "and returns ... a key in
+  `LastEvaluatedKey`", an empty `LastEvaluatedKey` means "there is no more
+  data to be retrieved", and a present one "does not necessarily mean that
+  there is more data". Copying Local would also break that contract: on a
+  global secondary index, Local omitted the key while items sharing the same
+  sort key were still unread, so a caller paging until `LastEvaluatedKey` is
+  empty would miss them. The cost is one extra, empty page when a range ends
+  exactly at a page boundary. The default fuzz mode avoids the case (see
+  `fuzz_gen_test.go`).
 - **`ReturnConsumedCapacity` outside `INDEXES`, `TOTAL` and `NONE`**
   (`TestE2E_ConsumedCapacityInvalidMode`). DynamoDB Local accepts any value
   and answers as if it were `NONE`. minidyn rejects it with a

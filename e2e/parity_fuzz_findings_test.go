@@ -290,6 +290,9 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			},
 		},
 		{
+			// Intentional divergence (#153, closed): DynamoDB Local omits LastEvaluatedKey when a
+			// full page ends on the sort key range bound; minidyn returns it, as documented for
+			// DynamoDB. See "Intentional divergences" in e2e/README.md.
 			name:       "QueryLimitEndsAtRangeEnd",
 			knownIssue: "#153",
 			fn: func(t *testing.T, client *dynamodb.Client) any {

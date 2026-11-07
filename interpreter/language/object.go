@@ -603,7 +603,7 @@ func (ss *StringSet) Delete(obj Object) Object {
 		return UNDEFINED
 	}
 
-	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
+	return newIncorrectDeleteOperandError(ss, obj)
 }
 
 // BinarySet is the representation of a binary set
@@ -704,7 +704,7 @@ func (bs *BinarySet) Delete(obj Object) Object {
 		return UNDEFINED
 	}
 
-	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
+	return newIncorrectDeleteOperandError(bs, obj)
 }
 
 func (bs *BinarySet) addBinarySetValues(binaryValues [][]byte) {
@@ -853,5 +853,12 @@ func (ns *NumberSet) Delete(obj Object) Object {
 		return UNDEFINED
 	}
 
-	return newError("Incorrect operand type for operator or function; operator: REMOVE, operand type: %s", obj.Type())
+	return newIncorrectDeleteOperandError(ns, obj)
+}
+
+// newIncorrectDeleteOperandError is DynamoDB's message for a DELETE whose target or operand
+// has the wrong type, with the types after "; " for debugging.
+func newIncorrectDeleteOperandError(target, operand Object) *Error {
+	return newError("An operand in the update expression has an incorrect data type; "+
+		"operator: DELETE; target type: %s; operand type: %s", target.Type(), operand.Type())
 }

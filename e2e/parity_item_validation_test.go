@@ -510,7 +510,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name: "UpdateItemDeleteScalarOperand",
+			name: "UpdateItemDeleteInvalidOperand",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -540,6 +540,10 @@ func TestE2E_ItemValidation(t *testing.T) {
 					deleteErr("moves", &dynamodbtypes.AttributeValueMemberBOOL{Value: true}),
 					deleteErr("moves", &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}),
 					deleteErr("absent", &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}),
+					// A set of another type than the target's string set. DynamoDB's message has no
+					// "; " detail here, and minidyn's debug detail is cut by the normalizer.
+					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}})),
+					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}})),
 					parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
 				}
 			},

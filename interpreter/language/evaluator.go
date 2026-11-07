@@ -989,7 +989,7 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 
 		addObj, ok := obj.(DetachableObject)
 		if !ok {
-			return newError("An operand in the update expression has an incorrect data type")
+			return newIncorrectDeleteOperandError(obj, val)
 		}
 
 		result := addObj.Delete(val)

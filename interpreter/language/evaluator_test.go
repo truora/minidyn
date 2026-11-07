@@ -597,6 +597,43 @@ func TestEvalDELETEUpdateMissingAttribute(t *testing.T) {
 	}
 }
 
+func TestEvalDELETERejectsMismatchedSetType(t *testing.T) {
+	const prefix = "An operand in the update expression has an incorrect data type; "
+
+	tests := []struct {
+		update string
+		field  string
+		detail string
+	}{
+		{"DELETE :strSet :twoSet", ":strSet", "operator: DELETE; target type: SS; operand type: NS"},
+		{"DELETE :strSet :binASet", ":strSet", "operator: DELETE; target type: SS; operand type: BS"},
+		{"DELETE :numSet :aSet", ":numSet", "operator: DELETE; target type: NS; operand type: SS"},
+		{"DELETE :binSet :twoSet", ":binSet", "operator: DELETE; target type: BS; operand type: NS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.update, func(t *testing.T) {
+			env := startEvalUpdateEnv(t)
+			before := env.Get(tt.field).Inspect()
+
+			result := testEvalUpdate(t, tt.update, env)
+
+			errObj, ok := result.(*Error)
+			if !ok {
+				t.Fatalf("expected an error, got=%v", result.Inspect())
+			}
+
+			if want := prefix + tt.detail; errObj.Message != want {
+				t.Errorf("wrong message.\n got=%q\nwant=%q", errObj.Message, want)
+			}
+
+			if got := env.Get(tt.field).Inspect(); got != before {
+				t.Errorf("target changed: got=%v, want=%v", got, before)
+			}
+		})
+	}
+}
+
 func TestEvalDELETERejectsNonSetOperand(t *testing.T) {
 	const prefix = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
 		"operator: DELETE, operand type: %s, typeSet: ALLOWED_FOR_DELETE_OPERAND"
@@ -1124,7 +1161,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"DELETE :x :set",
-			"An operand in the update expression has an incorrect data type",
+			"An operand in the update expression has an incorrect data type; operator: DELETE; target type: BOOL; operand type: SS",
 		},
 		{
 			"DELETE :list sizze(:x)",

@@ -193,14 +193,13 @@ func forUnits(mode Mode, table string, units float64, isRead bool) *Consumed {
 	return c
 }
 
-// ForTransactRead builds the consumed capacity for a transactional read (2x, strongly consistent).
-func ForTransactRead(mode Mode, table string, size int) *Consumed {
-	return forUnits(mode, table, 2*ReadUnits(size, true), true)
-}
+// transactFactor is how much a transactional read or write costs compared with the plain one.
+const transactFactor = 2
 
-// ForTransactWrite builds the consumed capacity for a transactional write (2x).
-func ForTransactWrite(mode Mode, table string, size int) *Consumed {
-	return forUnits(mode, table, 2*WriteUnits(size), false)
+// TransactReadUnits returns the read capacity units of one item in a TransactGetItems call:
+// transactional reads are strongly consistent and cost twice a plain read.
+func TransactReadUnits(size int) float64 {
+	return transactFactor * ReadUnits(size, true)
 }
 
 // WriteAccumulator aggregates write capacity per table and per secondary index across the
@@ -222,7 +221,7 @@ func NewWriteAccumulator() *WriteAccumulator {
 }
 
 // Add records a single write to table: its base item size plus the per-index write footprint.
-// factor scales the units (1 for batch writes, 2 for transactional writes).
+// factor scales the units (1 for batch writes).
 func (a *WriteAccumulator) Add(table string, size int, indexes []IndexWrite, factor float64) {
 	tw, ok := a.tables[table]
 	if !ok {
@@ -242,6 +241,11 @@ func (a *WriteAccumulator) Add(table string, size int, indexes []IndexWrite, fac
 
 		e.Units += factor * WriteUnits(iw.Size)
 	}
+}
+
+// AddTransact records one write of a TransactWriteItems call, which costs twice a plain write.
+func (a *WriteAccumulator) AddTransact(table string, size int, indexes []IndexWrite) {
+	a.Add(table, size, indexes, transactFactor)
 }
 
 // Consumed builds the per-table Consumed list for the given mode: nil for ModeNone or when

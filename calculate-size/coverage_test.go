@@ -95,21 +95,23 @@ func TestCalculateDocumentSize_NumberErrors(t *testing.T) {
 	}
 }
 
-func TestTrimHelpers(t *testing.T) {
-	if got := trimRightChar("100", '0'); got != "1" {
-		t.Errorf("trimRightChar(\"100\", '0') = %q, want %q", got, "1")
+// strconv's shortest 'f' formatting never leaves trailing zeros, so no extra trimming is needed.
+func TestTrimFloatJSON(t *testing.T) {
+	cases := map[float64]string{
+		0:     "0",
+		42:    "42",
+		100:   "100",
+		1.5:   "1.5",
+		-2.5:  "-2.5",
+		0.1:   "0.1",
+		1e21:  "1000000000000000000000",
+		1e-07: "0.0000001",
 	}
 
-	if got := trimRightChar("abc", '0'); got != "abc" {
-		t.Errorf("trimRightChar(\"abc\", '0') = %q, want %q", got, "abc")
-	}
-
-	if got := trimTrailingZerosFloat("1.500"); got != "1.5" {
-		t.Errorf("trimTrailingZerosFloat(\"1.500\") = %q, want %q", got, "1.5")
-	}
-
-	if got := trimTrailingZerosFloat("42"); got != "42" {
-		t.Errorf("trimTrailingZerosFloat(\"42\") = %q, want %q", got, "42")
+	for in, want := range cases {
+		if got := trimFloatJSON(in); got != want {
+			t.Errorf("trimFloatJSON(%v) = %q, want %q", in, got, want)
+		}
 	}
 }
 

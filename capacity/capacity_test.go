@@ -266,20 +266,31 @@ func TestWriteAccumulator_ZeroUnitTableOmitted(t *testing.T) {
 	}
 }
 
-func TestForTransactWrite_DoublesWCU(t *testing.T) {
-	single := ForWrite(ModeTotal, "t", 1000, nil)
-	txn := ForTransactWrite(ModeTotal, "t", 1000)
+func TestWriteAccumulator_AddTransactDoublesWCU(t *testing.T) {
+	single := NewWriteAccumulator()
+	single.Add("t", 1000, []IndexWrite{{Name: "i", Kind: "GSI", Size: 100}}, 1)
 
-	if txn.CapacityUnits != 2*single.CapacityUnits {
-		t.Fatalf("transact write should double: single=%v txn=%v", single.CapacityUnits, txn.CapacityUnits)
+	txn := NewWriteAccumulator()
+	txn.AddTransact("t", 1000, []IndexWrite{{Name: "i", Kind: "GSI", Size: 100}})
+
+	got, want := txn.Consumed(ModeIndexes), single.Consumed(ModeIndexes)
+	if len(got) != 1 || len(want) != 1 {
+		t.Fatalf("want one table, got %#v and %#v", got, want)
+	}
+
+	if got[0].CapacityUnits != 2*want[0].CapacityUnits || got[0].TableUnits != 2*want[0].TableUnits {
+		t.Fatalf("transact write should double: single=%#v txn=%#v", want[0], got[0])
+	}
+
+	if got[0].Indexes[0].Units != 2*want[0].Indexes[0].Units {
+		t.Fatalf("transact write should double index units: single=%#v txn=%#v", want[0].Indexes, got[0].Indexes)
 	}
 }
 
-func TestForTransactRead_DoublesRCU(t *testing.T) {
-	single := ForRead(ModeTotal, "t", "", "", 100, true)
-	txn := ForTransactRead(ModeTotal, "t", 100)
-
-	if txn.CapacityUnits != 2*single.CapacityUnits {
-		t.Fatalf("transact read should double: single=%v txn=%v", single.CapacityUnits, txn.CapacityUnits)
+func TestTransactReadUnits_DoublesStronglyConsistentRCU(t *testing.T) {
+	for _, size := range []int{0, 100, 5000} {
+		if got, want := TransactReadUnits(size), 2*ReadUnits(size, true); got != want {
+			t.Fatalf("TransactReadUnits(%d) = %v, want %v", size, got, want)
+		}
 	}
 }

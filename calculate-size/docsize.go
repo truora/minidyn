@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 )
 
 const (
@@ -110,24 +109,8 @@ func calculateSet(x DocumentSet) int {
 
 func trimFloatJSON(f float64) string {
 	// Best-effort decimal string for DocumentSet numeric literals (non-DynamoDB-JSON).
-	return trimTrailingZerosFloat(strconv.FormatFloat(f, 'f', -1, 64))
-}
-
-func trimTrailingZerosFloat(s string) string {
-	if strings.Contains(s, ".") {
-		s = trimRightChar(s, '0')
-		s = trimRightChar(s, '.')
-	}
-
-	return s
-}
-
-func trimRightChar(s string, c byte) string {
-	for s != "" && s[len(s)-1] == c {
-		s = s[:len(s)-1]
-	}
-
-	return s
+	// The shortest 'f' formatting has no trailing zeros to trim.
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func toFloat64(v any) (float64, bool) {

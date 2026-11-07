@@ -1075,7 +1075,7 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 
 	for _, target := range targets {
 		size, indexes := c.transactWriteBill(target)
-		acc.Add(target.table, size, indexes, 2)
+		acc.AddTransact(target.table, size, indexes)
 	}
 
 	return &TransactWriteItemsOutput{
@@ -1239,7 +1239,7 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 
 		responses = append(responses, ItemResponse{Item: out.Item})
 
-		unitsByTable[aws.ToString(get.TableName)] += 2 * capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(out.Item)), true)
+		unitsByTable[aws.ToString(get.TableName)] += capacity.TransactReadUnits(capacity.Size(mapAttributeValueMapToTypes(out.Item)))
 	}
 
 	return &TransactGetItemsOutput{

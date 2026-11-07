@@ -1083,7 +1083,7 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 
 	for _, target := range targets {
 		size, indexes := fd.transactWriteBill(target)
-		acc.Add(target.table, size, indexes, 2)
+		acc.AddTransact(target.table, size, indexes)
 	}
 
 	return &dynamodb.TransactWriteItemsOutput{
@@ -1251,7 +1251,7 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 
 		responses = append(responses, types.ItemResponse{Item: out.Item})
 
-		unitsByTable[aws.ToString(get.TableName)] += 2 * capacity.ReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)), true)
+		unitsByTable[aws.ToString(get.TableName)] += capacity.TransactReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)))
 	}
 
 	return &dynamodb.TransactGetItemsOutput{

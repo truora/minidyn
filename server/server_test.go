@@ -3538,3 +3538,42 @@ func TestServerGetItemNullKeyValueReturnsValidationException(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode, string(body))
 	require.Contains(t, string(body), "ValidationException")
 }
+
+func TestServerDeleteItemInvalidReturnValuesWithSDKv2(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+	cli := newTestDynamoClient(t, ts.URL)
+
+	makeBasicTable(t, cli, "pokemons", "id")
+
+	key := map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "1"}}
+
+	_, err := cli.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String("pokemons"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"id":   &ddbtypes.AttributeValueMemberS{Value: "1"},
+			"name": &ddbtypes.AttributeValueMemberS{Value: "pikachu"},
+		},
+	})
+	require.NoError(t, err)
+
+	for _, rv := range []ddbtypes.ReturnValue{
+		ddbtypes.ReturnValueAllNew,
+		ddbtypes.ReturnValueUpdatedOld,
+		ddbtypes.ReturnValueUpdatedNew,
+		"BOGUS",
+	} {
+		_, delErr := cli.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+			TableName:    aws.String("pokemons"),
+			Key:          key,
+			ReturnValues: rv,
+		})
+		require.Error(t, delErr, string(rv))
+		require.Contains(t, delErr.Error(), "ValidationException")
+		require.Contains(t, delErr.Error(), "Return values set to invalid value")
+	}
+
+	got, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{TableName: aws.String("pokemons"), Key: key})
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Item)
+}

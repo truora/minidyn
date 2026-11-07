@@ -390,16 +390,17 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 		ExpressionAttributeNames:  toStringPtrMap(input.ExpressionAttributeNames),
 		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
 		Key:                       mapAttributeValueMapToTypes(input.Key),
+		ReturnValues:              toStringPtr(string(input.ReturnValues)),
 	})
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	if input.ReturnValues == ddbtypes.ReturnValueAllOld {
-		return &DeleteItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
+	if item == nil {
+		return &DeleteItemOutput{}, nil
 	}
 
-	return &DeleteItemOutput{}, nil
+	return &DeleteItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
 }
 
 // UpdateItem modifies attributes of an item using an update expression.

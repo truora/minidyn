@@ -955,27 +955,90 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
-		if obj == UNDEFINED {
-			// ADD only takes a number or a set operand, whether or not the target exists.
-			_, isNumber := val.(*Number)
-			if _, isSet := val.(DetachableObject); !isNumber && !isSet {
-				return newIncorrectAddOperandError(obj, val)
-			}
+		return addToTarget(obj, val, func(created Object) { env.Set(id.Value, created) })
+	}
 
-			env.Set(id.Value, val)
-
-			return obj
+	indexField, ok := node.Left.(*IndexExpression)
+	if ok {
+		// The operand is validated before the path, as DynamoDB does.
+		if !isAddOperand(val) {
+			return newIncorrectAddOperandError(UNDEFINED, val)
 		}
 
-		addObj, ok := obj.(AppendableObject)
-		if !ok {
-			return newIncorrectDataTypeError("ADD", obj, val)
+		path, errObj := resolveNestedTarget(indexField, env)
+		if isError(errObj) {
+			return errObj
 		}
 
-		return addObj.Add(val)
+		return addToTarget(path.target, val, func(created Object) { _ = path.pos.Set(path.container, created) })
 	}
 
 	return UNDEFINED
+}
+
+// addToTarget applies ADD of val to obj; create stores val when obj does not exist.
+func addToTarget(obj, val Object, create func(Object)) Object {
+	if obj == UNDEFINED {
+		if !isAddOperand(val) {
+			return newIncorrectAddOperandError(obj, val)
+		}
+
+		create(val)
+
+		return obj
+	}
+
+	addObj, ok := obj.(AppendableObject)
+	if !ok {
+		return newIncorrectDataTypeError("ADD", obj, val)
+	}
+
+	return addObj.Add(val)
+}
+
+// isAddOperand reports whether val can be the operand of ADD: a number or a set, whether or
+// not the target exists. Sets are the only DetachableObjects.
+func isAddOperand(val Object) bool {
+	_, isNumber := val.(*Number)
+	_, isSet := val.(DetachableObject)
+
+	return isNumber || isSet
+}
+
+// nestedTarget is the resolved left side of an action on a document path: the map or list
+// holding the final segment, the accessor of that segment and the current value (UNDEFINED
+// when missing).
+type nestedTarget struct {
+	container Object
+	pos       indexAccessor
+	target    Object
+}
+
+// resolveNestedTarget walks a document path such as m.ss or l[0]. Like DynamoDB, it fails
+// with the invalid document path error when the parent of the last segment is missing or is
+// not a map/list matching that segment.
+func resolveNestedTarget(node *IndexExpression, env *Environment) (nestedTarget, Object) {
+	positions, container, errObj := evalIndexPositions(node, env, true)
+	if isError(errObj) {
+		return nestedTarget{}, errObj
+	}
+
+	last := positions[0]
+	invalid := newInvalidDocumentPathError(last.fieldID, last.pathSuffix)
+
+	for i := len(positions) - 1; i > 0; i-- {
+		container = positions[i].Get(container)
+		if isError(container) {
+			return nestedTarget{}, invalid
+		}
+	}
+
+	target := last.Get(container)
+	if isError(target) || isUndefined(container) {
+		return nestedTarget{}, invalid
+	}
+
+	return nestedTarget{container: container, pos: last, target: target}, nil
 }
 
 func evalActionDelete(node *ActionExpression, env *Environment) Object {
@@ -1002,30 +1065,49 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
-		// Deleting from a set that doesn't exist leaves the item unchanged.
-		if obj == UNDEFINED {
-			return obj
+		return deleteFromTarget(obj, val, func() { env.Remove(id.Value) })
+	}
+
+	indexField, ok := node.Left.(*IndexExpression)
+	if ok {
+		path, errObj := resolveNestedTarget(indexField, env)
+		if isError(errObj) {
+			return errObj
 		}
 
-		addObj, ok := obj.(DetachableObject)
-		if !ok {
-			return newIncorrectDeleteOperandError(obj, val)
-		}
-
-		result := addObj.Delete(val)
-		if isError(result) {
-			return result
-		}
-
-		// DynamoDB does not keep empty sets: removing the last elements removes the attribute.
-		if sized, ok := obj.(SizableObject); ok && sized.Size() == 0 {
-			env.Remove(id.Value)
-		}
-
-		return result
+		return deleteFromTarget(path.target, val, func() {
+			_ = path.pos.Remove(path.container)
+			env.MarkToCompact(path.container)
+		})
 	}
 
 	return UNDEFINED
+}
+
+// deleteFromTarget applies DELETE of the set val from obj; remove drops obj when it ends up
+// empty.
+func deleteFromTarget(obj, val Object, remove func()) Object {
+	// Deleting from a set that doesn't exist leaves the item unchanged.
+	if obj == UNDEFINED {
+		return obj
+	}
+
+	delObj, ok := obj.(DetachableObject)
+	if !ok {
+		return newIncorrectDeleteOperandError(obj, val)
+	}
+
+	result := delObj.Delete(val)
+	if isError(result) {
+		return result
+	}
+
+	// DynamoDB does not keep empty sets: removing the last elements removes the attribute.
+	if sized, ok := obj.(SizableObject); ok && sized.Size() == 0 {
+		remove()
+	}
+
+	return result
 }
 
 // dynamoDBTypeName returns the long type name DynamoDB uses in validation messages.

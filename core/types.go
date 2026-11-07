@@ -20,6 +20,15 @@ var (
 	// ErrInvalidAtrributeValue when the attributte value is invalid
 	ErrInvalidAtrributeValue = errors.New("Invalid attribute value type") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
+	// ErrInvalidNumber when an N value is not a number DynamoDB can read (DynamoDB Local's text).
+	ErrInvalidNumber = errors.New("A value provided cannot be converted into a number") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
+	// ErrNumberOverflow when an N value's magnitude is above 9.99...E+125.
+	ErrNumberOverflow = errors.New("Number overflow. Attempting to store a number with magnitude larger than supported range") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
+	// ErrNumberUnderflow when an N value's magnitude is below 1E-130 and not zero.
+	ErrNumberUnderflow = errors.New("Number underflow. Attempting to store a number with magnitude smaller than supported range") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
 	// ErrKeyTypeMismatch when a primary key attribute has a different type than
 	// the one declared in the table's attribute definitions. Real DynamoDB
 	// writes "Type mismatch for key id expected: S actual: N", but DynamoDB Local

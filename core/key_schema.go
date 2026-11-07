@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/truora/minidyn/types"
 )
@@ -106,30 +105,32 @@ func itemTypeName(it *types.Item) string {
 	return ""
 }
 
+// getKeyValue returns the encoded key of item (see key_encoding.go): the hash key part,
+// followed by the range key part when the schema has one.
 func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*types.Item) (string, error) {
-	key := []string{}
-
 	val, err := ks.keyAttrValue(attrs, item, ks.HashKey)
 	if err != nil {
 		return "", err
 	}
 
-	hashKeyStr := fmt.Sprintf("%v", val)
-
-	if ks.RangeKey == "" {
-		return hashKeyStr, nil
-	}
-
-	key = append(key, hashKeyStr)
-
-	val, err = ks.keyAttrValue(attrs, item, ks.RangeKey)
+	key, err := appendKeyPart(make([]byte, 0, 32), ks.HashKey, attrs[ks.HashKey], val)
 	if err != nil {
 		return "", err
 	}
 
-	key = append(key, fmt.Sprintf("%v", val))
+	if ks.RangeKey != "" {
+		val, err = ks.keyAttrValue(attrs, item, ks.RangeKey)
+		if err != nil {
+			return "", err
+		}
 
-	return strings.Join(key, "."), nil
+		key, err = appendKeyPart(key, ks.RangeKey, attrs[ks.RangeKey], val)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return string(key), nil
 }
 
 func (ks *keySchema) describe() []types.KeySchemaElement {

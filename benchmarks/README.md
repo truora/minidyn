@@ -75,8 +75,10 @@ Adding a key appends it to `sortedKeys` and calls `sort.Strings` on the whole
 slice (table and every index, e.g. `core/index.go` `putData` and `updateData`, which
 also re-sorts when an item's index key changes), O(n log n) per insert, so loading n items is O(n² log n). Inserting at the
 `sort.SearchStrings` position is O(n) (a copy) and much cheaper in practice; a
-B-tree or skip list would make it O(log n). Note that this sorting is also the
-source of parity issues #147-#149 (keys compared as joined strings).
+B-tree or skip list would make it O(log n). (Stored keys are now an
+order-preserving encoding of the typed key attributes, see
+`core/key_encoding.go`, so plain string comparison orders them like DynamoDB
+and parity issues #147-#149 are fixed.)
 
 ## Fixed
 

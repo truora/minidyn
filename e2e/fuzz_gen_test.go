@@ -58,8 +58,8 @@ func fzN(n string) dynamodbtypes.AttributeValue {
 func (g *fuzzGen) pk() dynamodbtypes.AttributeValue { return fzS(pick(g, "a", "b", "c")) }
 
 func (g *fuzzGen) sk() dynamodbtypes.AttributeValue {
-	if g.known && g.chance(0.2) {
-		return fzS(pick(g, "x.y", "x")) // #149: "." in keys
+	if g.chance(0.2) {
+		return fzS(pick(g, "x.y", "x")) // "." in keys must not collide
 	}
 
 	return fzS(pick(g, "1", "2", "10", "x", "y"))

@@ -20,20 +20,20 @@ func TestToWireConsumedBreakdowns(t *testing.T) {
 	// An index read: the Table sub-object is always reported (DynamoDB includes it even when an
 	// index served the request) alongside the index entry.
 	gsi := toWireConsumed(&capacity.Consumed{
-		TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true,
+		TableName: "t", CapacityUnits: 1, Breakdown: true,
 		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "GSI", Units: 1}},
 	})
 	c.Contains(gsi.GlobalSecondaryIndexes, "i")
 	c.NotNil(gsi.Table)
 
 	lsi := toWireConsumed(&capacity.Consumed{
-		TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, TableUnits: 1,
+		TableName: "t", CapacityUnits: 1, Breakdown: true, TableUnits: 1,
 		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "LSI", Units: 1}},
 	})
 	c.Contains(lsi.LocalSecondaryIndexes, "i")
 	c.NotNil(lsi.Table)
 
-	tbl := toWireConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, TableUnits: 1})
+	tbl := toWireConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, Breakdown: true, TableUnits: 1})
 	c.NotNil(tbl.Table)
 	c.Empty(tbl.GlobalSecondaryIndexes)
 }
@@ -41,13 +41,13 @@ func TestToWireConsumedBreakdowns(t *testing.T) {
 func TestWireConsumedSlice(t *testing.T) {
 	c := require.New(t)
 
-	c.Nil(wireConsumedSlice(capacity.ModeNone, map[string]float64{"t": 1}, true))
-	c.Nil(wireConsumedSlice(capacity.ModeTotal, map[string]float64{}, true))
-	c.Nil(wireConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 0}, true))
+	c.Nil(wireConsumedSlice(capacity.ModeNone, map[string]float64{"t": 1}))
+	c.Nil(wireConsumedSlice(capacity.ModeTotal, map[string]float64{}))
+	c.Nil(wireConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 0}))
 
-	out := wireConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 3}, true)
+	out := wireConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 3})
 	c.Len(out, 1)
-	c.Equal(3.0, aws.ToFloat64(out[0].ReadCapacityUnits))
+	c.Equal(3.0, aws.ToFloat64(out[0].CapacityUnits))
 }
 
 func newServerWithPokemonTable(t *testing.T) *Client {
@@ -121,7 +121,7 @@ func TestServerTransactWriteUpdateConsumedCapacity(t *testing.T) {
 	})
 	c.NoError(err)
 	c.Len(out.ConsumedCapacity, 1)
-	c.Greater(aws.ToFloat64(out.ConsumedCapacity[0].WriteCapacityUnits), 0.0)
+	c.Greater(aws.ToFloat64(out.ConsumedCapacity[0].CapacityUnits), 0.0)
 }
 
 func TestServerBatchAndTransactGetConsumedCapacity(t *testing.T) {
@@ -174,7 +174,7 @@ func TestWireConsumedSliceIsSortedByTableName(t *testing.T) {
 	}
 
 	for range 20 {
-		out := wireConsumedSlice(capacity.ModeTotal, units, true)
+		out := wireConsumedSlice(capacity.ModeTotal, units)
 		require.Len(t, out, len(want))
 
 		got := make([]string, 0, len(out))

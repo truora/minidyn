@@ -120,3 +120,69 @@ func TestTransactUpdateConsumedCapacityChargesSparseIndexTransitions(t *testing.
 	c.Equal(4.0, aws.ToFloat64(out.ConsumedCapacity[0].CapacityUnits))
 	c.Equal(2.0, aws.ToFloat64(out.ConsumedCapacity[0].GlobalSecondaryIndexes["by-type"].CapacityUnits))
 }
+
+// A write is billed to a secondary index only when the index entry changes: updating an attribute
+// that is neither an index key nor projected into the index costs the index nothing.
+func TestUpdateItemConsumedCapacitySkipsIndexesWhoseEntryIsUnchanged(t *testing.T) {
+	str := func(v string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberS{Value: v} }
+
+	client := NewClient()
+	_, err := client.CreateTable(context.Background(), &dynamodb.CreateTableInput{
+		TableName:   aws.String("projections"),
+		BillingMode: dynamodbtypes.BillingModePayPerRequest,
+		KeySchema:   []dynamodbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: dynamodbtypes.KeyTypeHash}},
+		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("pk"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+		},
+		GlobalSecondaryIndexes: []dynamodbtypes.GlobalSecondaryIndex{
+			{
+				IndexName:  aws.String("keys-only"),
+				KeySchema:  []dynamodbtypes.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: dynamodbtypes.KeyTypeHash}},
+				Projection: &dynamodbtypes.Projection{ProjectionType: dynamodbtypes.ProjectionTypeKeysOnly},
+			},
+			{
+				IndexName: aws.String("include-title"),
+				KeySchema: []dynamodbtypes.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: dynamodbtypes.KeyTypeHash}},
+				Projection: &dynamodbtypes.Projection{
+					ProjectionType: dynamodbtypes.ProjectionTypeInclude, NonKeyAttributes: []string{"title"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	for attr, want := range map[string][]string{
+		"other": nil,
+		"title": {"include-title"},
+		"pk":    {"include-title", "keys-only"},
+	} {
+		t.Run(attr, func(t *testing.T) {
+			c := require.New(t)
+
+			_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String("projections"),
+				Item:      map[string]dynamodbtypes.AttributeValue{"id": str("a"), "pk": str("g"), "title": str("t"), "other": str("o")},
+			})
+			c.NoError(err)
+
+			out, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+				TableName: aws.String("projections"), Key: keyID("a"),
+				UpdateExpression:          aws.String("SET #a = :v"),
+				ExpressionAttributeNames:  map[string]string{"#a": attr},
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": str("new")},
+				ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityIndexes,
+			})
+			c.NoError(err)
+
+			var got []string
+			for name := range out.ConsumedCapacity.GlobalSecondaryIndexes {
+				got = append(got, name)
+			}
+
+			c.ElementsMatch(want, got)
+			// the base table is always charged: 1 + one unit per index written (two for a rekey)
+			c.Equal(1.0, aws.ToFloat64(out.ConsumedCapacity.Table.CapacityUnits))
+		})
+	}
+}

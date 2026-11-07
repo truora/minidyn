@@ -99,10 +99,12 @@ type IndexWriteDelta struct {
 }
 
 // WriteIndexDeltas returns one IndexWriteDelta per secondary index a write from the item before
-// to the item after touches: the indexes the item was in or lands in (an index needs a complete
-// index key). Untouched indexes are omitted, mirroring DynamoDB, which only charges write
-// capacity on indexes a write actually changes. Either item may be nil (a put has no before, a
-// delete no after). Entries are name-sorted for deterministic reporting.
+// to the item after has to write: an index the item enters, leaves, or stays in with a different
+// entry (an index needs a complete index key). Mirroring DynamoDB, which only charges write
+// capacity on indexes a write actually changes, an index whose entry comes out the same is
+// omitted: the write changed only attributes that are neither index keys nor projected. Either
+// item may be nil (a put has no before, a delete no after). Entries are name-sorted for
+// deterministic reporting.
 func (t *Table) WriteIndexDeltas(before, after map[string]*types.Item) []IndexWriteDelta {
 	if (len(before) == 0 && len(after) == 0) || len(t.Indexes) == 0 {
 		return nil
@@ -133,6 +135,12 @@ func (t *Table) WriteIndexDeltas(before, after map[string]*types.Item) []IndexWr
 
 		if afterKey != "" {
 			d.After = idx.ProjectItem(after)
+		}
+
+		// An entry that comes out the same is not written: the item changed only attributes that
+		// are neither index keys nor projected into the index.
+		if d.Before != nil && d.After != nil && !d.KeyChanged && reflect.DeepEqual(d.Before, d.After) {
+			continue
 		}
 
 		out = append(out, d)

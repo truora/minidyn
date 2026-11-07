@@ -46,14 +46,6 @@ func toSDKConsumed(c *capacity.Consumed) *types.ConsumedCapacity {
 		CapacityUnits: aws.Float64(c.CapacityUnits),
 	}
 
-	if c.ReadCapacityUnits != 0 {
-		cc.ReadCapacityUnits = aws.Float64(c.ReadCapacityUnits)
-	}
-
-	if c.WriteCapacityUnits != 0 {
-		cc.WriteCapacityUnits = aws.Float64(c.WriteCapacityUnits)
-	}
-
 	if c.Breakdown {
 		applySDKBreakdown(cc, c)
 	}
@@ -64,11 +56,11 @@ func toSDKConsumed(c *capacity.Consumed) *types.ConsumedCapacity {
 // applySDKBreakdown renders the INDEXES-level per-table/index breakdown. DynamoDB always reports
 // the Table sub-object (even when an index served the request) plus an entry per affected index.
 func applySDKBreakdown(cc *types.ConsumedCapacity, c *capacity.Consumed) {
-	table := sdkCapacityEntry(c, c.TableUnits)
+	table := sdkCapacityEntry(c.TableUnits)
 	cc.Table = &table
 
 	for _, idx := range c.Indexes {
-		entry := sdkCapacityEntry(c, idx.Units)
+		entry := sdkCapacityEntry(idx.Units)
 
 		switch idx.Kind {
 		case "GSI":
@@ -87,20 +79,10 @@ func applySDKBreakdown(cc *types.ConsumedCapacity, c *capacity.Consumed) {
 	}
 }
 
-// sdkCapacityEntry builds a single Capacity sub-object carrying the given units. Read/Write
-// columns mirror whichever the operation reports, and only when non-zero.
-func sdkCapacityEntry(c *capacity.Consumed, units float64) types.Capacity {
-	entry := types.Capacity{CapacityUnits: aws.Float64(units)}
-
-	if c.ReadCapacityUnits != 0 && units != 0 {
-		entry.ReadCapacityUnits = aws.Float64(units)
-	}
-
-	if c.WriteCapacityUnits != 0 && units != 0 {
-		entry.WriteCapacityUnits = aws.Float64(units)
-	}
-
-	return entry
+// sdkCapacityEntry builds a single Capacity sub-object carrying the given units. DynamoDB Local reports only
+// CapacityUnits there, and the ConsumedCapacity reference marks the read and write fields optional.
+func sdkCapacityEntry(units float64) types.Capacity {
+	return types.Capacity{CapacityUnits: aws.Float64(units)}
 }
 
 // sdkConsumedList maps a per-table Consumed list (e.g. a WriteAccumulator's output) into the SDK
@@ -126,6 +108,6 @@ func sdkConsumedList(cs []*capacity.Consumed) []types.ConsumedCapacity {
 
 // sdkConsumedSlice assembles the per-table ConsumedCapacity slice of batch and transactional reads from the
 // units aggregated per table, sorted by table name.
-func sdkConsumedSlice(mode capacity.Mode, unitsByTable map[string]float64, isRead bool) []types.ConsumedCapacity {
-	return sdkConsumedList(capacity.ConsumedByTable(mode, unitsByTable, isRead))
+func sdkConsumedSlice(mode capacity.Mode, unitsByTable map[string]float64) []types.ConsumedCapacity {
+	return sdkConsumedList(capacity.ConsumedByTable(mode, unitsByTable))
 }

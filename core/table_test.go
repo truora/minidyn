@@ -2152,3 +2152,59 @@ func TestWriteIndexDeltas(t *testing.T) {
 	c.Nil(NewTable(tableName).WriteIndexDeltas(bulbasaur, renamed))
 	c.Empty(table.WriteIndexDeltas(unindexed, unindexed))
 }
+
+// An index entry that does not change is not written: updating an attribute that is neither an
+// index key nor projected into the index costs the index nothing.
+func TestWriteIndexDeltasSkipsUnchangedProjections(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable("t")
+	table.BillingMode = aws.String("PAY_PER_REQUEST")
+	table.SetAttributeDefinition([]*types.AttributeDefinition{
+		{AttributeName: aws.String("id"), AttributeType: aws.String("S")},
+		{AttributeName: aws.String("type"), AttributeType: aws.String("S")},
+	})
+	c.NoError(table.CreatePrimaryIndex(&types.CreateTableInput{
+		KeySchema: []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}},
+	}))
+	c.NoError(table.AddGlobalIndexes([]*types.GlobalSecondaryIndex{
+		{
+			IndexName:  aws.String("keys-only"),
+			KeySchema:  []*types.KeySchemaElement{{AttributeName: "type", KeyType: "HASH"}},
+			Projection: &types.Projection{ProjectionType: aws.String("KEYS_ONLY")},
+		},
+		{
+			IndexName:  aws.String("include-name"),
+			KeySchema:  []*types.KeySchemaElement{{AttributeName: "type", KeyType: "HASH"}},
+			Projection: &types.Projection{ProjectionType: aws.String("INCLUDE"), NonKeyAttributes: []*string{aws.String("name")}},
+		},
+	}))
+
+	item := func(name, other string) map[string]*types.Item {
+		return map[string]*types.Item{
+			"id": {S: aws.String("1")}, "type": {S: aws.String("grass")},
+			"name": {S: aws.String(name)}, "other": {S: aws.String(other)},
+		}
+	}
+
+	names := func(deltas []IndexWriteDelta) []string {
+		var out []string
+		for _, d := range deltas {
+			out = append(out, d.Name)
+		}
+
+		return out
+	}
+
+	// Only a non-projected attribute changed: neither index is written.
+	c.Empty(table.WriteIndexDeltas(item("a", "x"), item("a", "y")))
+
+	// A projected attribute changed: only the index that projects it is written.
+	c.Equal([]string{"include-name"}, names(table.WriteIndexDeltas(item("a", "x"), item("b", "x"))))
+
+	// Rewriting the identical item leaves every entry unchanged.
+	c.Empty(table.WriteIndexDeltas(item("a", "x"), item("a", "x")))
+
+	// Entering an index always writes the entry.
+	c.Len(table.WriteIndexDeltas(nil, item("a", "x")), 2)
+}

@@ -121,7 +121,8 @@ func TestServerConsumedCapacityWithSDKv2(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, putOut.ConsumedCapacity, "ConsumedCapacity must survive the HTTP round-trip")
 	require.Equal(t, "pokemons", aws.ToString(putOut.ConsumedCapacity.TableName))
-	require.Greater(t, aws.ToFloat64(putOut.ConsumedCapacity.WriteCapacityUnits), 0.0)
+	require.Greater(t, aws.ToFloat64(putOut.ConsumedCapacity.CapacityUnits), 0.0)
+	require.Nil(t, putOut.ConsumedCapacity.WriteCapacityUnits)
 
 	getOut, err := cli.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName:              aws.String("pokemons"),
@@ -131,7 +132,8 @@ func TestServerConsumedCapacityWithSDKv2(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, getOut.ConsumedCapacity)
-	require.Greater(t, aws.ToFloat64(getOut.ConsumedCapacity.ReadCapacityUnits), 0.0)
+	require.Greater(t, aws.ToFloat64(getOut.ConsumedCapacity.CapacityUnits), 0.0)
+	require.Nil(t, getOut.ConsumedCapacity.ReadCapacityUnits)
 
 	// Omitted when ReturnConsumedCapacity is not requested.
 	noCC, err := cli.GetItem(ctx, &dynamodb.GetItemInput{

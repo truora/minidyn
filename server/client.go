@@ -931,7 +931,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	return &BatchGetItemOutput{
 		Responses:        responses,
 		UnprocessedKeys:  unprocessed,
-		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable, true),
+		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable),
 	}, nil
 }
 
@@ -1233,7 +1233,7 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 
 	return &TransactGetItemsOutput{
 		Responses:        responses,
-		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable, true),
+		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable),
 	}, nil
 }
 

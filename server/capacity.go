@@ -65,14 +65,6 @@ func toWireConsumed(c *capacity.Consumed) *ConsumedCapacity {
 		CapacityUnits: aws.Float64(c.CapacityUnits),
 	}
 
-	if c.ReadCapacityUnits != 0 {
-		cc.ReadCapacityUnits = aws.Float64(c.ReadCapacityUnits)
-	}
-
-	if c.WriteCapacityUnits != 0 {
-		cc.WriteCapacityUnits = aws.Float64(c.WriteCapacityUnits)
-	}
-
 	if c.Breakdown {
 		applyWireBreakdown(cc, c)
 	}
@@ -83,11 +75,11 @@ func toWireConsumed(c *capacity.Consumed) *ConsumedCapacity {
 // applyWireBreakdown renders the INDEXES-level per-table/index breakdown. DynamoDB always reports
 // the Table sub-object (even when an index served the request) plus an entry per affected index.
 func applyWireBreakdown(cc *ConsumedCapacity, c *capacity.Consumed) {
-	table := wireCapacityEntry(c, c.TableUnits)
+	table := wireCapacityEntry(c.TableUnits)
 	cc.Table = &table
 
 	for _, idx := range c.Indexes {
-		entry := wireCapacityEntry(c, idx.Units)
+		entry := wireCapacityEntry(idx.Units)
 
 		switch idx.Kind {
 		case "GSI":
@@ -106,24 +98,14 @@ func applyWireBreakdown(cc *ConsumedCapacity, c *capacity.Consumed) {
 	}
 }
 
-// wireCapacityEntry builds a single Capacity sub-object carrying the given units. Read/Write
-// columns mirror whichever the operation reports, and only when non-zero.
-func wireCapacityEntry(c *capacity.Consumed, units float64) Capacity {
-	entry := Capacity{CapacityUnits: aws.Float64(units)}
-
-	if c.ReadCapacityUnits != 0 && units != 0 {
-		entry.ReadCapacityUnits = aws.Float64(units)
-	}
-
-	if c.WriteCapacityUnits != 0 && units != 0 {
-		entry.WriteCapacityUnits = aws.Float64(units)
-	}
-
-	return entry
+// wireCapacityEntry builds a single Capacity sub-object carrying the given units. DynamoDB Local reports only
+// CapacityUnits there, and the ConsumedCapacity reference marks the read and write fields optional.
+func wireCapacityEntry(units float64) Capacity {
+	return Capacity{CapacityUnits: aws.Float64(units)}
 }
 
 // wireConsumedSlice assembles the per-table ConsumedCapacity slice of batch and transactional reads from the
 // units aggregated per table, sorted by table name.
-func wireConsumedSlice(mode capacity.Mode, unitsByTable map[string]float64, isRead bool) []ConsumedCapacity {
-	return wireConsumedList(capacity.ConsumedByTable(mode, unitsByTable, isRead))
+func wireConsumedSlice(mode capacity.Mode, unitsByTable map[string]float64) []ConsumedCapacity {
+	return wireConsumedList(capacity.ConsumedByTable(mode, unitsByTable))
 }

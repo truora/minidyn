@@ -100,12 +100,12 @@ func TestForRead_Total(t *testing.T) {
 		t.Fatal("expected non-nil Consumed")
 	}
 
-	if c.TableName != "tbl" || c.CapacityUnits != 1 || c.ReadCapacityUnits != 1 {
+	if c.TableName != "tbl" || c.CapacityUnits != 1 {
 		t.Fatalf("bad TOTAL read: %#v", c)
 	}
 
-	if c.WriteCapacityUnits != 0 || c.Breakdown || len(c.Indexes) != 0 {
-		t.Fatalf("TOTAL must not set write/breakdown/index: %#v", c)
+	if c.Breakdown || len(c.Indexes) != 0 {
+		t.Fatalf("TOTAL must not set breakdown/index: %#v", c)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestForRead_IndexesGSI(t *testing.T) {
 
 func TestForWrite(t *testing.T) {
 	c := ForWrite(ModeTotal, "tbl", 100, nil)
-	if c == nil || c.CapacityUnits != 1 || c.WriteCapacityUnits != 1 || c.ReadCapacityUnits != 0 {
+	if c == nil || c.CapacityUnits != 1 {
 		t.Fatalf("bad write: %#v", c)
 	}
 }
@@ -153,7 +153,7 @@ func TestForWrite_None(t *testing.T) {
 func TestForWrite_WithIndexesTotal(t *testing.T) {
 	// Two 1KB writes (base table + one GSI) cost 1 WCU each; the TOTAL always includes the GSI.
 	c := ForWrite(ModeTotal, "tbl", 1024, []IndexWrite{{Name: "by-type", Kind: "GSI", Size: 1024}})
-	if c == nil || c.CapacityUnits != 2 || c.WriteCapacityUnits != 2 {
+	if c == nil || c.CapacityUnits != 2 {
 		t.Fatalf("TOTAL write must include the GSI cost: %#v", c)
 	}
 
@@ -178,19 +178,14 @@ func TestForWrite_WithIndexesBreakdown(t *testing.T) {
 }
 
 func TestConsumedByTable(t *testing.T) {
-	r := ConsumedByTable(ModeTotal, map[string]float64{"tbl": 3.5}, true)
-	if len(r) != 1 || r[0].TableName != "tbl" || r[0].CapacityUnits != 3.5 || r[0].ReadCapacityUnits != 3.5 || r[0].WriteCapacityUnits != 0 {
+	r := ConsumedByTable(ModeTotal, map[string]float64{"tbl": 3.5})
+	if len(r) != 1 || r[0].TableName != "tbl" || r[0].CapacityUnits != 3.5 {
 		t.Fatalf("bad read capacity: %#v", r)
 	}
 
-	w := ConsumedByTable(ModeTotal, map[string]float64{"tbl": 4}, false)
-	if len(w) != 1 || w[0].CapacityUnits != 4 || w[0].WriteCapacityUnits != 4 || w[0].ReadCapacityUnits != 0 {
-		t.Fatalf("bad write capacity: %#v", w)
-	}
-
-	if ConsumedByTable(ModeNone, map[string]float64{"tbl": 3}, true) != nil ||
-		ConsumedByTable(ModeTotal, nil, true) != nil ||
-		ConsumedByTable(ModeTotal, map[string]float64{"tbl": 0}, true) != nil {
+	if ConsumedByTable(ModeNone, map[string]float64{"tbl": 3}) != nil ||
+		ConsumedByTable(ModeTotal, nil) != nil ||
+		ConsumedByTable(ModeTotal, map[string]float64{"tbl": 0}) != nil {
 		t.Fatalf("NONE, no tables and zero-unit tables must report nothing")
 	}
 }
@@ -198,7 +193,7 @@ func TestConsumedByTable(t *testing.T) {
 func TestConsumedByTable_IndexesAttributesToTable(t *testing.T) {
 	// At the INDEXES level aggregated units are attributed to the base-table sub-object; batch
 	// and transactional ops report table totals only, with no per-index breakdown.
-	r := ConsumedByTable(ModeIndexes, map[string]float64{"tbl": 3.5}, true)
+	r := ConsumedByTable(ModeIndexes, map[string]float64{"tbl": 3.5})
 	if len(r) != 1 || !r[0].Breakdown || r[0].TableUnits != 3.5 || len(r[0].Indexes) != 0 {
 		t.Fatalf("bad INDEXES read capacity: %#v", r)
 	}
@@ -216,7 +211,7 @@ func TestConsumedByTable_IsSortedByTableName(t *testing.T) {
 
 	for range 20 {
 		var got []string
-		for _, c := range ConsumedByTable(ModeTotal, units, true) {
+		for _, c := range ConsumedByTable(ModeTotal, units) {
 			got = append(got, c.TableName)
 		}
 

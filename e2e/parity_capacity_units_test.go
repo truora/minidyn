@@ -735,3 +735,244 @@ func TestE2E_ConsumedCapacityEmptyContainers(t *testing.T) {
 		})
 	}
 }
+
+// TestE2E_ConsumedCapacityIndexEntryUnchanged pins that a write is billed to a secondary index
+// only when the index entry changes. The DynamoDB developer guide ("Write capacity units" in
+// "Using Global Secondary Indexes") says that when a table update "changes only attributes that
+// are neither index key attributes nor projected into the index, the index entry is unchanged, so
+// no write capacity is consumed for that index. The base table is still charged for the write."
+// DynamoDB Local agrees, so this is plain parity.
+func TestE2E_ConsumedCapacityIndexEntryUnchanged(t *testing.T) {
+	seed := func(ctx context.Context, t *testing.T, client *dynamodb.Client) {
+		t.Helper()
+		parityCreateIndexProjectionTable(ctx, t, client)
+
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName: aws.String(parityIndexProjTable),
+			Item:      indexProjectionItem("o", "t"),
+		})
+		require.NoError(t, err)
+	}
+
+	update := func(attr string) func(context.Context, *dynamodb.Client) (*dynamodbtypes.ConsumedCapacity, error) {
+		return func(ctx context.Context, client *dynamodb.Client) (*dynamodbtypes.ConsumedCapacity, error) {
+			out, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+				TableName: aws.String(parityIndexProjTable), Key: capacityKey("a"),
+				UpdateExpression:          aws.String("SET #a = :v"),
+				ExpressionAttributeNames:  map[string]string{"#a": attr},
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": capacityStrValue("new")},
+				ReturnConsumedCapacity:    dynamodbtypes.ReturnConsumedCapacityIndexes,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return out.ConsumedCapacity, nil
+		}
+	}
+
+	put := func(other, title string) func(context.Context, *dynamodb.Client) (*dynamodbtypes.ConsumedCapacity, error) {
+		return func(ctx context.Context, client *dynamodb.Client) (*dynamodbtypes.ConsumedCapacity, error) {
+			out, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+				TableName: aws.String(parityIndexProjTable), Item: indexProjectionItem(other, title),
+				ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityIndexes,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return out.ConsumedCapacity, nil
+		}
+	}
+
+	cases := map[string]func(context.Context, *dynamodb.Client) (*dynamodbtypes.ConsumedCapacity, error){
+		"UpdateNonProjectedAttribute": update("other"),
+		"UpdateIncludedAttribute":     update("title"),
+		"UpdateIndexKey":              update("gsi_pk"),
+		"PutChangesNonProjected":      put("changed", "t"),
+		"PutChangesIncluded":          put("o", "changed"),
+		"PutIdenticalItem":            put("o", "t"),
+	}
+
+	for name, run := range cases {
+		t.Run(name, func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				seed(ctx, t, client)
+
+				cc, err := run(ctx, client)
+				require.NoError(t, err)
+
+				return detailCapacity(cc)
+			})
+		})
+	}
+}
+
+// indexProjectionItem is an item of the index projection table, indexed by both of its GSIs
+// (keys-only-gsi projects nothing else, include-gsi projects title).
+func indexProjectionItem(other, title string) map[string]dynamodbtypes.AttributeValue {
+	return map[string]dynamodbtypes.AttributeValue{
+		"id": capacityStrValue("a"), "gsi_pk": capacityStrValue("g"),
+		"title": capacityStrValue(title), "other": capacityStrValue(other),
+	}
+}
+
+// TestE2E_ConsumedCapacityConditionCheck pins an intentional divergence from DynamoDB Local. A
+// transactional ConditionCheck on a 20 KB item is billed by minidyn as a write of the key: the
+// "Capacity management for transactions" section of the developer guide says only that "DynamoDB
+// performs two underlying reads or writes of every item in the transaction", without saying which
+// a ConditionCheck is, so minidyn keeps its approximation of 2 x 1 WCU for the key. DynamoDB Local
+// bills 2 x the read units of the checked item (2 x 5 RCU).
+func TestE2E_ConsumedCapacityConditionCheck(t *testing.T) {
+	check := func(t *testing.T, client *dynamodb.Client) float64 {
+		t.Helper()
+		ctx := context.Background()
+		parityCreatePokemonTable(ctx, t, client)
+		capacityBigItem(ctx, t, client, "big", 20000)
+
+		out, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+			TransactItems: []dynamodbtypes.TransactWriteItem{{ConditionCheck: &dynamodbtypes.ConditionCheck{
+				TableName: aws.String(parityPokemonTable), Key: capacityKey("big"),
+				ConditionExpression: aws.String("attribute_exists(id)"),
+			}}},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.ConsumedCapacity, 1)
+
+		return aws.ToFloat64(out.ConsumedCapacity[0].CapacityUnits)
+	}
+
+	t.Run("minidyn", func(t *testing.T) {
+		require.Equal(t, 2.0, check(t, newTracedSDKClient(t, setupMinidynEndpoint(t), &traceRecorder{})))
+	})
+
+	t.Run("dynamodb-local", func(t *testing.T) {
+		require.Equal(t, 10.0, check(t, newTracedSDKClient(t, setupDynamoDBLocalEndpoint(t), &traceRecorder{})))
+	})
+}
+
+// consumedFields is every number a ConsumedCapacity carries, with nil for a field the response
+// leaves out, so the tests see which fields are reported and not only their values.
+type consumedFields struct {
+	Present bool
+	Table   string
+	Total   *float64
+	Read    *float64
+	Write   *float64
+	OnTable *capacityFields
+	GSI     map[string]capacityFields
+}
+
+type capacityFields struct{ Total, Read, Write *float64 }
+
+func fieldsOf(c dynamodbtypes.Capacity) capacityFields {
+	return capacityFields{c.CapacityUnits, c.ReadCapacityUnits, c.WriteCapacityUnits}
+}
+
+func consumedFieldsOf(cc *dynamodbtypes.ConsumedCapacity) consumedFields {
+	if cc == nil {
+		return consumedFields{}
+	}
+
+	f := consumedFields{
+		Present: true, Table: aws.ToString(cc.TableName),
+		Total: cc.CapacityUnits, Read: cc.ReadCapacityUnits, Write: cc.WriteCapacityUnits,
+	}
+
+	if cc.Table != nil {
+		tf := fieldsOf(*cc.Table)
+		f.OnTable = &tf
+	}
+
+	for name, c := range cc.GlobalSecondaryIndexes {
+		if f.GSI == nil {
+			f.GSI = map[string]capacityFields{}
+		}
+
+		f.GSI[name] = fieldsOf(c)
+	}
+
+	return f
+}
+
+// TestE2E_ConsumedCapacityReportedFields pins which ConsumedCapacity fields each operation
+// reports. The ConsumedCapacity API reference lists ReadCapacityUnits and WriteCapacityUnits as
+// optional, and the sample response in the Query reference for ReturnConsumedCapacity=TOTAL is
+// {"CapacityUnits": 1, "TableName": "Reply"}. DynamoDB Local never reports them, at the top level
+// or inside Table and the index entries, so neither does minidyn.
+func TestE2E_ConsumedCapacityReportedFields(t *testing.T) {
+	for _, mode := range []dynamodbtypes.ReturnConsumedCapacity{
+		dynamodbtypes.ReturnConsumedCapacityTotal, dynamodbtypes.ReturnConsumedCapacityIndexes,
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				table := aws.String(parityPokemonTable)
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "b"})
+
+				put, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: table, ReturnConsumedCapacity: mode,
+					Item: parityMarshalPokemon(t, parityPokemon{ID: "002", Type: "fire", Name: "c"}),
+				})
+				require.NoError(t, err)
+
+				get, err := client.GetItem(ctx, &dynamodb.GetItemInput{TableName: table, Key: capacityKey("001"), ReturnConsumedCapacity: mode})
+				require.NoError(t, err)
+
+				query, err := client.Query(ctx, &dynamodb.QueryInput{
+					TableName: table, IndexName: aws.String(parityByTypeIndexName), ReturnConsumedCapacity: mode,
+					KeyConditionExpression:    aws.String("#t = :t"),
+					ExpressionAttributeNames:  map[string]string{"#t": "type"},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":t": capacityStrValue("grass")},
+				})
+				require.NoError(t, err)
+
+				scan, err := client.Scan(ctx, &dynamodb.ScanInput{TableName: table, ReturnConsumedCapacity: mode})
+				require.NoError(t, err)
+
+				batchWrite, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+					ReturnConsumedCapacity: mode,
+					RequestItems: map[string][]dynamodbtypes.WriteRequest{parityPokemonTable: {
+						{PutRequest: &dynamodbtypes.PutRequest{Item: parityMarshalPokemon(t, parityPokemon{ID: "003", Type: "x", Name: "d"})}},
+					}},
+				})
+				require.NoError(t, err)
+
+				batchGet, err := client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{
+					ReturnConsumedCapacity: mode,
+					RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+						parityPokemonTable: {Keys: []map[string]dynamodbtypes.AttributeValue{capacityKey("001")}},
+					},
+				})
+				require.NoError(t, err)
+
+				transactGet, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+					ReturnConsumedCapacity: mode,
+					TransactItems:          []dynamodbtypes.TransactGetItem{{Get: &dynamodbtypes.Get{TableName: table, Key: capacityKey("001")}}},
+				})
+				require.NoError(t, err)
+
+				transactWrite, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+					ReturnConsumedCapacity: mode,
+					TransactItems: []dynamodbtypes.TransactWriteItem{{Put: &dynamodbtypes.Put{
+						TableName: table, Item: parityMarshalPokemon(t, parityPokemon{ID: "004", Type: "y", Name: "e"}),
+					}}},
+				})
+				require.NoError(t, err)
+
+				return []consumedFields{
+					consumedFieldsOf(put.ConsumedCapacity), consumedFieldsOf(get.ConsumedCapacity),
+					consumedFieldsOf(query.ConsumedCapacity), consumedFieldsOf(scan.ConsumedCapacity),
+					consumedFieldsOf(&batchWrite.ConsumedCapacity[0]), consumedFieldsOf(&batchGet.ConsumedCapacity[0]),
+					consumedFieldsOf(&transactGet.ConsumedCapacity[0]), consumedFieldsOf(&transactWrite.ConsumedCapacity[0]),
+				}
+			})
+		})
+	}
+}

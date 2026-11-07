@@ -916,7 +916,7 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 	return &dynamodb.BatchGetItemOutput{
 		Responses:        responses,
 		UnprocessedKeys:  unprocessed,
-		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable, true),
+		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable),
 	}, nil
 }
 
@@ -1235,7 +1235,7 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 
 	return &dynamodb.TransactGetItemsOutput{
 		Responses:        responses,
-		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable, true),
+		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable),
 	}, nil
 }
 

@@ -123,33 +123,23 @@ func IndexWriteFor(name, kind string, before, after map[string]*types.Item, keyC
 // TableUnits is the base-table sub-object's units (always present at the INDEXES level, even when
 // an index served the request) and Indexes carries the per-index entries.
 type Consumed struct {
-	TableName          string
-	CapacityUnits      float64
-	ReadCapacityUnits  float64
-	WriteCapacityUnits float64
-	Breakdown          bool
-	TableUnits         float64
-	Indexes            []IndexUnits
+	TableName     string
+	CapacityUnits float64
+	Breakdown     bool
+	TableUnits    float64
+	Indexes       []IndexUnits
 }
 
-func newConsumed(mode Mode, table string, total float64, isRead bool) *Consumed {
+func newConsumed(mode Mode, table string, total float64) *Consumed {
 	if mode == ModeNone {
 		return nil
 	}
 
-	c := &Consumed{
+	return &Consumed{
 		TableName:     table,
 		CapacityUnits: total,
 		Breakdown:     mode == ModeIndexes,
 	}
-
-	if isRead {
-		c.ReadCapacityUnits = total
-	} else {
-		c.WriteCapacityUnits = total
-	}
-
-	return c
 }
 
 // ForRead builds the consumed capacity for a read of total byte size served by a table or a
@@ -159,7 +149,7 @@ func newConsumed(mode Mode, table string, total float64, isRead bool) *Consumed 
 func ForRead(mode Mode, table, index, indexKind string, size int, consistent bool) *Consumed {
 	units := ReadUnits(size, consistent)
 
-	c := newConsumed(mode, table, units, true)
+	c := newConsumed(mode, table, units)
 	if c == nil || !c.Breakdown {
 		return c
 	}
@@ -190,7 +180,7 @@ func ForWrite(mode Mode, table string, size int, indexes []IndexWrite) *Consumed
 		entries = append(entries, IndexUnits{Name: iw.Name, Kind: iw.Kind, Units: u})
 	}
 
-	c := newConsumed(mode, table, total, false)
+	c := newConsumed(mode, table, total)
 	if c == nil || !c.Breakdown {
 		return c
 	}
@@ -207,7 +197,7 @@ func ForWrite(mode Mode, table string, size int, indexes []IndexWrite) *Consumed
 // units already aggregated per table. It is nil for ModeNone or when nothing was charged,
 // table-sorted otherwise (map order must not leak into the response), with zero-unit tables
 // omitted.
-func ConsumedByTable(mode Mode, unitsByTable map[string]float64, isRead bool) []*Consumed {
+func ConsumedByTable(mode Mode, unitsByTable map[string]float64) []*Consumed {
 	if mode == ModeNone || len(unitsByTable) == 0 {
 		return nil
 	}
@@ -223,7 +213,7 @@ func ConsumedByTable(mode Mode, unitsByTable map[string]float64, isRead bool) []
 
 	out := make([]*Consumed, 0, len(names))
 	for _, name := range names {
-		out = append(out, forUnits(mode, name, unitsByTable[name], isRead))
+		out = append(out, forUnits(mode, name, unitsByTable[name]))
 	}
 
 	if len(out) == 0 {
@@ -236,8 +226,8 @@ func ConsumedByTable(mode Mode, unitsByTable map[string]float64, isRead bool) []
 // forUnits builds a table-level Consumed from already-aggregated units. At the INDEXES level the
 // units are attributed to the base-table sub-object; batch and transactional operations report
 // table totals only, not a per-index breakdown.
-func forUnits(mode Mode, table string, units float64, isRead bool) *Consumed {
-	c := newConsumed(mode, table, units, isRead)
+func forUnits(mode Mode, table string, units float64) *Consumed {
+	c := newConsumed(mode, table, units)
 	if c != nil && c.Breakdown {
 		c.TableUnits = units
 	}
@@ -340,7 +330,7 @@ func (tw *tableWrite) consumed(mode Mode, table string) *Consumed {
 		return nil
 	}
 
-	c := newConsumed(mode, table, total, false)
+	c := newConsumed(mode, table, total)
 	if !c.Breakdown {
 		return c
 	}

@@ -38,20 +38,20 @@ func TestToSDKConsumedBreakdowns(t *testing.T) {
 	// An index read: the Table sub-object is always reported (DynamoDB includes it even when an
 	// index served the request) alongside the index entry.
 	gsi := toSDKConsumed(&capacity.Consumed{
-		TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true,
+		TableName: "t", CapacityUnits: 1, Breakdown: true,
 		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "GSI", Units: 1}},
 	})
 	c.Contains(gsi.GlobalSecondaryIndexes, "i")
 	c.NotNil(gsi.Table)
 
 	lsi := toSDKConsumed(&capacity.Consumed{
-		TableName: "t", CapacityUnits: 1, WriteCapacityUnits: 1, Breakdown: true, TableUnits: 1,
+		TableName: "t", CapacityUnits: 1, Breakdown: true, TableUnits: 1,
 		Indexes: []capacity.IndexUnits{{Name: "i", Kind: "LSI", Units: 1}},
 	})
 	c.Contains(lsi.LocalSecondaryIndexes, "i")
 	c.NotNil(lsi.Table)
 
-	tbl := toSDKConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, ReadCapacityUnits: 1, Breakdown: true, TableUnits: 1})
+	tbl := toSDKConsumed(&capacity.Consumed{TableName: "t", CapacityUnits: 1, Breakdown: true, TableUnits: 1})
 	c.NotNil(tbl.Table)
 	c.Empty(tbl.GlobalSecondaryIndexes)
 }
@@ -59,13 +59,13 @@ func TestToSDKConsumedBreakdowns(t *testing.T) {
 func TestSDKConsumedSlice(t *testing.T) {
 	c := require.New(t)
 
-	c.Nil(sdkConsumedSlice(capacity.ModeNone, map[string]float64{"t": 1}, true))
-	c.Nil(sdkConsumedSlice(capacity.ModeTotal, map[string]float64{}, true))
-	c.Nil(sdkConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 0}, true)) // zero-unit table skipped
+	c.Nil(sdkConsumedSlice(capacity.ModeNone, map[string]float64{"t": 1}))
+	c.Nil(sdkConsumedSlice(capacity.ModeTotal, map[string]float64{}))
+	c.Nil(sdkConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 0})) // zero-unit table skipped
 
-	out := sdkConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 2}, false)
+	out := sdkConsumedSlice(capacity.ModeTotal, map[string]float64{"t": 2})
 	c.Len(out, 1)
-	c.Equal(2.0, aws.ToFloat64(out[0].WriteCapacityUnits))
+	c.Equal(2.0, aws.ToFloat64(out[0].CapacityUnits))
 }
 
 func TestWriteTargetsTolerateUnknownTables(t *testing.T) {
@@ -112,7 +112,7 @@ func TestTransactWriteItemsConsumedCapacityUpdate(t *testing.T) {
 	})
 	c.NoError(err)
 	c.Len(out.ConsumedCapacity, 1)
-	c.Greater(aws.ToFloat64(out.ConsumedCapacity[0].WriteCapacityUnits), 0.0)
+	c.Greater(aws.ToFloat64(out.ConsumedCapacity[0].CapacityUnits), 0.0)
 }
 
 func TestGetItemConsumedCapacity(t *testing.T) {
@@ -130,7 +130,7 @@ func TestGetItemConsumedCapacity(t *testing.T) {
 	c.NotNil(out.ConsumedCapacity)
 	c.Equal(tableName, aws.ToString(out.ConsumedCapacity.TableName))
 	c.Greater(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), 0.0)
-	c.Equal(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), aws.ToFloat64(out.ConsumedCapacity.ReadCapacityUnits))
+	c.Equal(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), aws.ToFloat64(out.ConsumedCapacity.CapacityUnits))
 	c.Nil(out.ConsumedCapacity.Table) // TOTAL has no breakdown
 
 	// Eventually consistent read costs half of a strongly consistent one.
@@ -185,8 +185,7 @@ func TestPutItemConsumedCapacity(t *testing.T) {
 	c.NoError(err)
 	c.NotNil(out.ConsumedCapacity)
 	c.Greater(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), 0.0)
-	c.Equal(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), aws.ToFloat64(out.ConsumedCapacity.WriteCapacityUnits))
-	c.Nil(out.ConsumedCapacity.ReadCapacityUnits)
+	c.Equal(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), aws.ToFloat64(out.ConsumedCapacity.CapacityUnits))
 }
 
 func TestUpdateItemConsumedCapacity(t *testing.T) {
@@ -205,7 +204,7 @@ func TestUpdateItemConsumedCapacity(t *testing.T) {
 	})
 	c.NoError(err)
 	c.NotNil(out.ConsumedCapacity)
-	c.Greater(aws.ToFloat64(out.ConsumedCapacity.WriteCapacityUnits), 0.0)
+	c.Greater(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), 0.0)
 }
 
 func TestDeleteItemConsumedCapacity(t *testing.T) {
@@ -219,7 +218,7 @@ func TestDeleteItemConsumedCapacity(t *testing.T) {
 	})
 	c.NoError(err)
 	c.NotNil(out.ConsumedCapacity)
-	c.Greater(aws.ToFloat64(out.ConsumedCapacity.WriteCapacityUnits), 0.0)
+	c.Greater(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), 0.0)
 }
 
 func TestQueryConsumedCapacity(t *testing.T) {
@@ -237,7 +236,7 @@ func TestQueryConsumedCapacity(t *testing.T) {
 	})
 	c.NoError(err)
 	c.NotNil(out.ConsumedCapacity)
-	c.Greater(aws.ToFloat64(out.ConsumedCapacity.ReadCapacityUnits), 0.0)
+	c.Greater(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), 0.0)
 }
 
 func TestQueryIndexConsumedCapacityIndexes(t *testing.T) {
@@ -275,7 +274,7 @@ func TestScanConsumedCapacity(t *testing.T) {
 	})
 	c.NoError(err)
 	c.NotNil(out.ConsumedCapacity)
-	c.Greater(aws.ToFloat64(out.ConsumedCapacity.ReadCapacityUnits), 0.0)
+	c.Greater(aws.ToFloat64(out.ConsumedCapacity.CapacityUnits), 0.0)
 }
 
 func TestBatchGetItemConsumedCapacity(t *testing.T) {
@@ -310,7 +309,7 @@ func TestBatchWriteItemConsumedCapacity(t *testing.T) {
 	})
 	c.NoError(err)
 	c.Len(out.ConsumedCapacity, 1)
-	c.Greater(aws.ToFloat64(out.ConsumedCapacity[0].WriteCapacityUnits), 0.0)
+	c.Greater(aws.ToFloat64(out.ConsumedCapacity[0].CapacityUnits), 0.0)
 }
 
 func TestTransactGetItemsConsumedCapacity(t *testing.T) {
@@ -413,7 +412,7 @@ func TestSDKConsumedSliceIsSortedByTableName(t *testing.T) {
 	}
 
 	for range 20 {
-		out := sdkConsumedSlice(capacity.ModeTotal, units, true)
+		out := sdkConsumedSlice(capacity.ModeTotal, units)
 		require.Len(t, out, len(want))
 
 		got := make([]string, 0, len(out))
@@ -422,5 +421,45 @@ func TestSDKConsumedSliceIsSortedByTableName(t *testing.T) {
 		}
 
 		require.Equal(t, want, got)
+	}
+}
+
+// DynamoDB reports only CapacityUnits (and TableName): the sample response of the Query reference
+// for ReturnConsumedCapacity=TOTAL is {"CapacityUnits": 1, "TableName": "Reply"}, and DynamoDB
+// Local leaves the read and write fields out at every level.
+func TestConsumedCapacityReportsOnlyCapacityUnits(t *testing.T) {
+	c := require.New(t)
+	client := setupCapacityClient(t)
+	c.NoError(ensurePokemonTypeIndex(client))
+
+	for _, mode := range []dynamodbtypes.ReturnConsumedCapacity{
+		dynamodbtypes.ReturnConsumedCapacityTotal, dynamodbtypes.ReturnConsumedCapacityIndexes,
+	} {
+		put, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: aws.String(tableName), Item: bigPokemon("n-"+string(mode), 1), ReturnConsumedCapacity: mode,
+		})
+		c.NoError(err)
+
+		get, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
+			TableName: aws.String(tableName), Key: keyID("001"), ReturnConsumedCapacity: mode,
+		})
+		c.NoError(err)
+
+		for _, cc := range []*dynamodbtypes.ConsumedCapacity{put.ConsumedCapacity, get.ConsumedCapacity} {
+			c.NotNil(cc.CapacityUnits)
+			c.Nil(cc.ReadCapacityUnits)
+			c.Nil(cc.WriteCapacityUnits)
+
+			if cc.Table != nil {
+				c.NotNil(cc.Table.CapacityUnits)
+				c.Nil(cc.Table.ReadCapacityUnits)
+				c.Nil(cc.Table.WriteCapacityUnits)
+			}
+
+			for _, gsi := range cc.GlobalSecondaryIndexes {
+				c.Nil(gsi.ReadCapacityUnits)
+				c.Nil(gsi.WriteCapacityUnits)
+			}
+		}
 	}
 }

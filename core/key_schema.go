@@ -47,6 +47,10 @@ func (ks keySchema) validatePrimaryKeyMap(key map[string]*types.Item) error {
 		}
 	}
 
+	if attr, kind := ks.emptyKeyAttr(key); attr != "" {
+		return emptyKeyError(kind, PrimaryIndexName, attr)
+	}
+
 	return nil
 }
 
@@ -165,4 +169,56 @@ func (ks *keySchema) getKeyItem(item map[string]*types.Item) map[string]*types.I
 	}
 
 	return keyItem
+}
+
+// DynamoDB rejects an empty S or B value wherever it is bound to a key attribute of the table
+// or of an index. An empty value is fine in any other attribute.
+const (
+	emptyKeyValuePrefix = "One or more parameter values are not valid. "
+	emptyKeyValueText   = "The AttributeValue for a key attribute cannot contain an empty %s value."
+	secondaryKeyText    = "A value specified for a secondary index key is not supported. "
+	updateIndexKeyText  = "The update expression attempted to update a secondary index key to a value that is not supported. "
+)
+
+// emptyValueKind names the kind of empty value DynamoDB reports for it: "string" for an empty
+// S, "binary" for an empty B, and "" for any other value.
+func emptyValueKind(it *types.Item) string {
+	switch {
+	case it == nil:
+		return ""
+	case it.S != nil && *it.S == "":
+		return "string"
+	case it.B != nil && len(it.B) == 0:
+		return "binary"
+	}
+
+	return ""
+}
+
+// emptyKeyError is the error for an empty value in attribute attr of the table's primary key,
+// or of index indexName when it is not "".
+func emptyKeyError(kind, indexName, attr string) error {
+	text := fmt.Sprintf(emptyKeyValueText, kind)
+
+	if indexName == PrimaryIndexName {
+		return errors.New(emptyKeyValuePrefix + text + " Key: " + attr)
+	}
+
+	return errors.New(emptyKeyValuePrefix + secondaryKeyText + text + " IndexName: " + indexName + ", IndexKey: " + attr)
+}
+
+// emptyKeyAttr reports the first key attribute of ks (hash, then range) that is an empty
+// value in item, with the kind of the value. attr is "" when there is none.
+func (ks keySchema) emptyKeyAttr(item map[string]*types.Item) (attr, kind string) {
+	for _, attr := range []string{ks.HashKey, ks.RangeKey} {
+		if attr == "" {
+			continue
+		}
+
+		if kind := emptyValueKind(item[attr]); kind != "" {
+			return attr, kind
+		}
+	}
+
+	return "", ""
 }

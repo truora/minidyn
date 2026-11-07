@@ -138,8 +138,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			},
 		},
 		{
-			name:       "EmptyStringKeyConditionValue",
-			knownIssue: "#163",
+			name: "EmptyStringKeyConditionValue",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

@@ -1,6 +1,8 @@
 package core
 
 import (
+	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -98,6 +100,18 @@ type IndexWriteDelta struct {
 	KeyChanged bool
 }
 
+// sortedIndexNames returns the table's index names in a stable order.
+func (t *Table) sortedIndexNames() []string {
+	names := make([]string, 0, len(t.Indexes))
+	for name := range t.Indexes {
+		names = append(names, name)
+	}
+
+	slices.Sort(names)
+
+	return names
+}
+
 // WriteIndexDeltas returns one IndexWriteDelta per secondary index a write from the item before
 // to the item after has to write: an index the item enters, leaves, or stays in with a different
 // entry (an index needs a complete index key). Mirroring DynamoDB, which only charges write
@@ -110,13 +124,7 @@ func (t *Table) WriteIndexDeltas(before, after map[string]*types.Item) []IndexWr
 		return nil
 	}
 
-	names := make([]string, 0, len(t.Indexes))
-	for name := range t.Indexes {
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
-
+	names := t.sortedIndexNames()
 	out := make([]IndexWriteDelta, 0, len(names))
 
 	for _, name := range names {
@@ -515,7 +523,7 @@ func (t *Table) validateKeyCondition(input QueryInput) error {
 		return types.NewError("ValidationException", err.Error(), nil)
 	}
 
-	if err := t.validateKeyConditionTypes(input); err != nil {
+	if err := t.validateKeyConditionTypes(input, input.Index, schema); err != nil {
 		return types.NewError("ValidationException", err.Error(), nil)
 	}
 
@@ -526,21 +534,121 @@ func (t *Table) validateKeyCondition(input QueryInput) error {
 const errKeyConditionType = "One or more parameter values were invalid: Condition parameter type does not match schema type"
 
 // validateKeyConditionTypes checks the values a (structurally valid) key condition compares
-// key attributes to against the types declared for them. Missing placeholders are left to
-// the evaluation, which reports them.
-func (t *Table) validateKeyConditionTypes(input QueryInput) error {
-	for attr, phs := range interpreter.KeyConditionPlaceholders(input.KeyConditionExpression, input.Aliases) {
+// key attributes to: their types against the ones declared for the attributes, that BETWEEN
+// bounds are in order and that none is an empty S or B value. Missing placeholders are left
+// to the evaluation, which reports them.
+func (t *Table) validateKeyConditionTypes(input QueryInput, indexName string, schema keySchema) error {
+	placeholders := interpreter.KeyConditionPlaceholders(input.KeyConditionExpression, input.Aliases)
+
+	// DynamoDB checks the bounds of a BETWEEN before any other value of the condition.
+	if rangeKey := schema.RangeKey; rangeKey != "" {
+		bounds := make([]*types.Item, 0, 2)
+		for _, ph := range placeholders[rangeKey] {
+			bounds = append(bounds, input.ExpressionAttributeValues[ph])
+		}
+
+		if err := validateBetweenBounds(bounds, indexName, rangeKey); err != nil {
+			return err
+		}
+	}
+
+	for _, attr := range []string{schema.HashKey, schema.RangeKey} {
+		phs := placeholders[attr]
 		want := t.AttributesDef[attr]
+		values := make([]*types.Item, 0, len(phs))
 
 		for _, ph := range phs {
-			actual := itemTypeName(input.ExpressionAttributeValues[ph])
+			v := input.ExpressionAttributeValues[ph]
+
+			actual := itemTypeName(v)
 			if actual != "" && want != "" && actual != want {
 				return errors.New(types.WithDetail(errKeyConditionType, "attribute", attr, "expected", want, "actual", actual))
+			}
+
+			values = append(values, v)
+		}
+
+		for _, v := range values {
+			if kind := emptyValueKind(v); kind != "" {
+				return emptyKeyError(kind, indexName, attr)
 			}
 		}
 	}
 
 	return nil
+}
+
+// validateBetweenBounds checks the two bounds of a key condition BETWEEN on attribute attr as
+// DynamoDB does: they must have the same type and be in order, compared by their type (S and
+// B by bytes, N numerically). indexName is "" for the table's primary key. Bounds of any other
+// type, or a number DynamoDB rejects, are left to the checks that follow.
+func validateBetweenBounds(bounds []*types.Item, indexName, attr string) error {
+	if len(bounds) != 2 || bounds[0] == nil || bounds[1] == nil {
+		return nil
+	}
+
+	lo, hi := bounds[0], bounds[1]
+
+	loType, hiType := itemTypeName(lo), itemTypeName(hi)
+	if !isKeyType(loType) || !isKeyType(hiType) {
+		return nil
+	}
+
+	detail := []string{"attribute", attr}
+	if indexName != PrimaryIndexName {
+		detail = append(detail, "index", indexName)
+	}
+
+	operands := fmt.Sprintf("lower bound operand: AttributeValue: %s, upper bound operand: AttributeValue: %s", //nolint:staticcheck,revive // AWS message
+		boundText(lo), boundText(hi))
+
+	if loType != hiType {
+		return errors.New(types.WithDetail(betweenSameTypeText+operands, detail...))
+	}
+
+	order, ok := compareBounds(lo, hi)
+	if ok && order > 0 {
+		return errors.New(types.WithDetail(betweenOrderText+operands, detail...))
+	}
+
+	return nil
+}
+
+const (
+	betweenSameTypeText = "Invalid KeyConditionExpression: The BETWEEN operator requires same data type for lower and upper bounds; "
+	betweenOrderText    = "Invalid KeyConditionExpression: The BETWEEN operator requires upper bound to be greater than or equal to lower bound; "
+)
+
+// isKeyType reports whether typ is a type a key attribute can have.
+func isKeyType(typ string) bool { return typ == "S" || typ == "N" || typ == "B" }
+
+// boundText prints a bound the way DynamoDB Local does in its messages: S and N as given, and B
+// as the Java buffer that holds it.
+func boundText(it *types.Item) string {
+	switch {
+	case it.S != nil:
+		return "{S:" + *it.S + "}"
+	case it.N != nil:
+		return "{N:" + *it.N + "}"
+	}
+
+	return fmt.Sprintf("{B:java.nio.HeapByteBuffer[pos=0 lim=%d cap=%d]}", len(it.B), len(it.B))
+}
+
+// compareBounds compares two bounds of the same type: S and B by bytes, N by value through the
+// order-preserving encoding of stored keys. ok is false when a number cannot be encoded.
+func compareBounds(lo, hi *types.Item) (order int, ok bool) {
+	switch {
+	case lo.S != nil:
+		return strings.Compare(*lo.S, *hi.S), true
+	case lo.N != nil:
+		a, errA := appendNumber(nil, "", *lo.N)
+		b, errB := appendNumber(nil, "", *hi.N)
+
+		return bytes.Compare(a, b), errA == nil && errB == nil
+	}
+
+	return bytes.Compare(lo.B, hi.B), true
 }
 
 func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
@@ -977,6 +1085,86 @@ func (t *Table) setItem(key string, item map[string]*types.Item) {
 	}
 }
 
+// emptyIndexKey reports the first index with a key attribute that is an empty value in item.
+// name is "" when there is none. DynamoDB Local reports the local secondary indexes before
+// the global ones. Within a kind the order is by name: Local's own order among several
+// local indexes is unverified, and the table does not keep the declaration order.
+func (t *Table) emptyIndexKey(item map[string]*types.Item) (name, attr, kind string) {
+	names := t.sortedIndexNames()
+	slices.SortStableFunc(names, func(a, b string) int {
+		return cmp.Compare(indexKindRank(t.Indexes[a]), indexKindRank(t.Indexes[b]))
+	})
+
+	for _, name := range names {
+		if attr, kind := t.Indexes[name].keySchema.emptyKeyAttr(item); attr != "" {
+			return name, attr, kind
+		}
+	}
+
+	return "", "", ""
+}
+
+// indexKindRank orders local indexes before global ones.
+func indexKindRank(idx *index) int {
+	if idx.typ == indexTypeLocal {
+		return 0
+	}
+
+	return 1
+}
+
+// validateItemKeyValues rejects an item whose primary key or index key attributes hold an
+// empty value.
+func (t *Table) validateItemKeyValues(item map[string]*types.Item) error {
+	if attr, kind := t.KeySchema.emptyKeyAttr(item); attr != "" {
+		return emptyKeyError(kind, PrimaryIndexName, attr)
+	}
+
+	if name, attr, kind := t.emptyIndexKey(item); name != "" {
+		return emptyKeyError(kind, name, attr)
+	}
+
+	return nil
+}
+
+// validateUpdatedIndexKeys rejects an updated item whose index key attributes hold an empty
+// value, with the message DynamoDB gives for an update expression.
+func (t *Table) validateUpdatedIndexKeys(item map[string]*types.Item) error {
+	if name, attr, kind := t.emptyIndexKey(item); name != "" {
+		return errors.New(types.WithDetail(emptyKeyValuePrefix+updateIndexKeyText+fmt.Sprintf(emptyKeyValueText, kind),
+			"index", name, "attribute", attr))
+	}
+
+	return nil
+}
+
+// indexKeysOf computes the key item has in every secondary index, by index name ("" when it
+// is not indexed there). It fails when an index rejects the item, before anything is written.
+func (t *Table) indexKeysOf(item map[string]*types.Item) (map[string]string, error) {
+	keys := make(map[string]string, len(t.Indexes))
+
+	for _, name := range t.sortedIndexNames() {
+		indexKey, err := t.Indexes[name].keySchema.GetKey(t.AttributesDef, item)
+		if err != nil {
+			return nil, err
+		}
+
+		keys[name] = indexKey
+	}
+
+	return keys, nil
+}
+
+// writeItem stores item under key and points every index at the key indexKeys (from
+// indexKeysOf) gives it. It cannot fail.
+func (t *Table) writeItem(key string, item map[string]*types.Item, indexKeys map[string]string) {
+	t.setItem(key, item)
+
+	for name, indexKey := range indexKeys {
+		t.Indexes[name].setRef(key, indexKey)
+	}
+}
+
 func (t *Table) getItem(key string) map[string]*types.Item {
 	item, exists := t.Data[key]
 	if !exists {
@@ -1048,6 +1236,11 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
+	// DynamoDB reports the key values of the item before the placeholders of the condition.
+	if err := t.validateItemKeyValues(input.Item); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
 	if err := validateConditionExpression(input.ExpressionAttributeNames, input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
 		return nil, err
 	}
@@ -1077,16 +1270,14 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 	}
 
+	indexKeys, err := t.indexKeysOf(item)
+	if err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
 	old := t.Data[key]
 
-	t.setItem(key, item)
-
-	for _, index := range t.Indexes {
-		err := index.putData(key, item)
-		if err != nil {
-			return nil, types.NewError("ValidationException", err.Error(), nil)
-		}
-	}
+	t.writeItem(key, item, indexKeys)
 
 	if input.ReturnValues == nil || *input.ReturnValues != "ALL_OLD" {
 		old = nil
@@ -1126,7 +1317,8 @@ func validateNoneOrAllOld(rv *string, invalid func(value string) string) error {
 	}
 }
 
-func validateUpdateItemReturnValues(rv *string) error {
+// ValidateUpdateItemReturnValues accepts the ReturnValues modes UpdateItem supports.
+func ValidateUpdateItemReturnValues(rv *string) error {
 	if rv == nil || *rv == "" {
 		return nil
 	}
@@ -1235,24 +1427,25 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
-	if err := validateUpdateItemReturnValues(input.ReturnValues); err != nil {
+	// DynamoDB reports ReturnValues, then the Key, then the rest of the request.
+	if err := ValidateUpdateItemReturnValues(input.ReturnValues); err != nil {
 		return nil, err
+	}
+
+	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	if err := ValidateReturnValuesOnConditionCheckFailure(input.ReturnValuesOnConditionCheckFailure); err != nil {
 		return nil, err
 	}
 
-	// DynamoDB reports the update expression before the condition.
+	// It reports the update expression before the condition.
 	if err := validateWriteExpressions(input.ExpressionAttributeNames, input.ExpressionAttributeValues,
 		interpreter.LabeledExpression{Label: "UpdateExpression", Expression: input.UpdateExpression},
 		interpreter.LabeledExpression{Label: "ConditionExpression", Expression: derefString(input.ConditionExpression)},
 	); err != nil {
 		return nil, err
-	}
-
-	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	if !t.KeySchema.Secondary {
@@ -1312,19 +1505,28 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		Attributes: input.ExpressionAttributeValues,
 		Aliases:    input.ExpressionAttributeNames,
 	})
+	if err == nil {
+		err = t.validateUpdatedIndexKeys(item)
+	}
+
+	// Every index key is computed before anything is written, so an index that rejects the
+	// item leaves the table and the indexes as they were.
+	var indexKeys map[string]string
+	if err == nil {
+		indexKeys, err = t.indexKeysOf(item)
+	}
+
 	if err != nil {
+		if ok {
+			// the update ran on the stored item: put it back as it was
+			clear(item)
+			maps.Copy(item, oldItem)
+		}
+
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
-	t.setItem(key, item)
-
-	// update secondary Indexes
-	for _, index := range t.Indexes {
-		err := index.putData(key, item)
-		if err != nil {
-			return nil, types.NewError("ValidationException", err.Error(), nil)
-		}
-	}
+	t.writeItem(key, item, indexKeys)
 
 	newItem := copyItem(item)
 
@@ -1349,12 +1551,12 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
-	if err := validateConditionExpression(deleteAliases(input.ExpressionAttributeNames), input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
-		return nil, err
-	}
-
 	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := validateConditionExpression(deleteAliases(input.ExpressionAttributeNames), input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
+		return nil, err
 	}
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)

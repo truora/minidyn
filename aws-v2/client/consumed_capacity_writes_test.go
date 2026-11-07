@@ -160,3 +160,35 @@ func TestBatchWriteItemConsumedCapacityPutReplacingLargerItem(t *testing.T) {
 	c.Len(out.ConsumedCapacity, 1)
 	c.Equal(20.0, aws.ToFloat64(out.ConsumedCapacity[0].CapacityUnits))
 }
+
+// An empty list or map is a 3 byte container, not a 1 byte NULL: this item is 1026 bytes (2 WCU)
+// with it and would be 1024 (1 WCU) if it were sized as NULL.
+func TestPutItemConsumedCapacitySizesEmptyContainers(t *testing.T) {
+	attrName := strings.Repeat("a", 1020)
+
+	values := map[string]struct {
+		value dynamodbtypes.AttributeValue
+		want  float64
+	}{
+		"empty list": {&dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}, 2},
+		"empty map":  {&dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}, 2},
+		"null":       {&dynamodbtypes.AttributeValueMemberNULL{Value: true}, 1},
+	}
+
+	for name, tc := range values {
+		t.Run(name, func(t *testing.T) {
+			c := require.New(t)
+			client := setupCapacityClient(t)
+
+			out, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: aws.String(tableName),
+				Item: map[string]dynamodbtypes.AttributeValue{
+					"id": &dynamodbtypes.AttributeValueMemberS{Value: "x"}, attrName: tc.value,
+				},
+				ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+			})
+			c.NoError(err)
+			c.Equal(tc.want, aws.ToFloat64(out.ConsumedCapacity.CapacityUnits))
+		})
+	}
+}

@@ -67,9 +67,9 @@ func attrToAny(it *types.Item) map[string]any {
 		return map[string]any{"S": *it.S}
 	case len(it.SS) != 0:
 		return map[string]any{"SS": derefStrings(it.SS)}
-	case len(it.L) != 0:
+	case it.L != nil:
 		return map[string]any{"L": listToAny(it.L)}
-	case len(it.M) != 0:
+	case it.M != nil:
 		return map[string]any{"M": itemToDoc(it.M)}
 	case it.NULL != nil:
 		return map[string]any{"NULL": *it.NULL}

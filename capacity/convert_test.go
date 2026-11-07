@@ -78,3 +78,26 @@ func TestSize_NilAttributeAndEmptyItem(t *testing.T) {
 		t.Fatalf("Size = %d, want > 0", got)
 	}
 }
+
+// An empty list or map is not NULL: it takes the 3 bytes of container overhead.
+func TestSize_EmptyListAndMapAreNotNull(t *testing.T) {
+	cases := map[string]struct {
+		attr *types.Item
+		want int
+	}{
+		"empty list":     {&types.Item{L: []*types.Item{}}, 1 + 3},
+		"empty map":      {&types.Item{M: map[string]*types.Item{}}, 1 + 3},
+		"null":           {&types.Item{NULL: new(true)}, 1 + 1},
+		"no value":       {&types.Item{}, 1 + 1},
+		"list of empty":  {&types.Item{L: []*types.Item{{L: []*types.Item{}}}}, 1 + 3 + 1 + 3},
+		"map with empty": {&types.Item{M: map[string]*types.Item{"k": {M: map[string]*types.Item{}}}}, 1 + 3 + 1 + 1 + 3},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Size(map[string]*types.Item{"a": tc.attr}); got != tc.want {
+				t.Fatalf("Size = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

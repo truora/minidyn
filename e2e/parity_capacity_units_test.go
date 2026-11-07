@@ -702,3 +702,36 @@ func TestE2E_ConsumedCapacityInvalidMode(t *testing.T) {
 		}
 	}
 }
+
+// TestE2E_ConsumedCapacityEmptyContainers pins that an empty list or map is sized as a 3 byte
+// container, not as NULL (1 byte): the item below is exactly 1024 bytes with a NULL attribute
+// (1 WCU) and 1026 with an empty list or map (2 WCU).
+func TestE2E_ConsumedCapacityEmptyContainers(t *testing.T) {
+	attrName := strings.Repeat("a", 1020)
+
+	values := map[string]dynamodbtypes.AttributeValue{
+		"EmptyList": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}},
+		"EmptyMap":  &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}},
+		"Null":      &dynamodbtypes.AttributeValueMemberNULL{Value: true},
+	}
+
+	for name, value := range values {
+		t.Run(name, func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+
+				out, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName:              aws.String(parityPokemonTable),
+					Item:                   map[string]dynamodbtypes.AttributeValue{"id": capacityStrValue("x"), attrName: value},
+					ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+				})
+				require.NoError(t, err)
+				t.Logf("%s = %#v", name, out.ConsumedCapacity)
+
+				return exactCapacity(out.ConsumedCapacity)
+			})
+		})
+	}
+}

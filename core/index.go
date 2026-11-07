@@ -10,6 +10,47 @@ import (
 	"github.com/truora/minidyn/types"
 )
 
+const (
+	msgInvalidGSIName   = "Invalid global secondary index name"
+	msgInvalidIndexName = "Invalid table/index name.  Table/index names must be between 3 and 255 characters long, and may contain only the characters a-z, A-Z, 0-9, '_', '-', and '.'"
+	msgNoProjection     = "Indexes must have a projection specified"
+	msgNoKeySchema      = "No defined key schema.  A key schema containing at least a hash key must be defined for all tables"
+	msgNoKeyAttribute   = "Attribute name must be specified."
+	msgNullGSIAction    = "Update global secondary index action is null"
+	msgOneUpdatePerName = "Only one global secondary index update per index is allowed simultaneously."
+	msgIndexExists      = "Attempting to create an index which already exists"
+	msgIndexLimit       = "Subscriber limit exceeded: Only 1 online index can be created or deleted simultaneously per table"
+)
+
+// validateIndexName checks the name of an index sent to CreateTable.
+func validateIndexName(name *string) error {
+	if types.StringValue(name) == "" {
+		return validationError(msgInvalidIndexName)
+	}
+
+	return nil
+}
+
+// validateIndexShape checks what every index definition needs, in the order DynamoDB reports it:
+// a projection, then a key schema whose elements name an attribute.
+func validateIndexShape(indexName string, projection *types.Projection, keySchema []*types.KeySchemaElement) error {
+	if projection == nil || types.StringValue(projection.ProjectionType) == "" {
+		return validationError(msgNoProjection, "index", indexName)
+	}
+
+	if len(keySchema) == 0 {
+		return validationError(msgNoKeySchema, "index", indexName)
+	}
+
+	for _, element := range keySchema {
+		if element == nil || element.AttributeName == "" {
+			return validationError(msgNoKeyAttribute, "index", indexName)
+		}
+	}
+
+	return nil
+}
+
 type indexType string
 
 const (

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -280,6 +281,10 @@ func (t *Table) validateAttributeDefinition(ks keySchema, message string) error 
 }
 
 func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
+	if err := validateIndexShape(types.StringValue(gsiInput.IndexName), gsiInput.Projection, gsiInput.KeySchema); err != nil {
+		return nil, err
+	}
+
 	if t.BillingMode == nil || types.StringValue(t.BillingMode) != "PAY_PER_REQUEST" {
 		if gsiInput.ProvisionedThroughput == nil {
 			// https://github.com/aws/aws-sdk-go/issues/3140
@@ -304,22 +309,31 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 	return i, nil
 }
 
-// ApplyIndexChange applies the index change
+// ApplyIndexChange applies the index change after checking it as ApplyIndexChanges does.
 func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error {
+	if err := t.validateIndexChanges([]*types.GlobalSecondaryIndexUpdate{change}); err != nil {
+		return err
+	}
+
+	return t.applyIndexChange(change)
+}
+
+// applyIndexChange applies a change that validateIndexChanges accepted.
+func (t *Table) applyIndexChange(change *types.GlobalSecondaryIndexUpdate) error {
 	switch {
 	case change.Create != nil:
-		{
-			gsi := &types.GlobalSecondaryIndex{
-				IndexName:             change.Create.IndexName,
-				KeySchema:             change.Create.KeySchema,
-				Projection:            change.Create.Projection,
-				ProvisionedThroughput: change.Create.ProvisionedThroughput,
-			}
-
-			return t.addGlobalIndex(gsi)
+		gsi := &types.GlobalSecondaryIndex{
+			IndexName:             change.Create.IndexName,
+			KeySchema:             change.Create.KeySchema,
+			Projection:            change.Create.Projection,
+			ProvisionedThroughput: change.Create.ProvisionedThroughput,
 		}
+
+		return t.addGlobalIndex(gsi)
 	case change.Delete != nil:
-		return t.deleteIndex(*change.Delete.IndexName)
+		t.deleteIndex(*change.Delete.IndexName)
+
+		return nil
 	case change.Update != nil:
 		return t.updateIndex(*change.Update.IndexName, change.Update.ProvisionedThroughput)
 	}
@@ -334,6 +348,14 @@ func (t *Table) AddGlobalIndexes(input []*types.GlobalSecondaryIndex) error {
 	}
 
 	for _, gsiInput := range input {
+		if gsiInput == nil {
+			gsiInput = &types.GlobalSecondaryIndex{}
+		}
+
+		if err := validateIndexName(gsiInput.IndexName); err != nil {
+			return err
+		}
+
 		if err := t.addGlobalIndex(gsiInput); err != nil {
 			return err
 		}
@@ -354,14 +376,8 @@ func (t *Table) addGlobalIndex(gsiInput *types.GlobalSecondaryIndex) error {
 	return nil
 }
 
-func (t *Table) deleteIndex(indexName string) error {
-	if _, ok := t.Indexes[indexName]; !ok {
-		return types.NewError("ResourceNotFoundException", "Requested resource not found", nil)
-	}
-
+func (t *Table) deleteIndex(indexName string) {
 	delete(t.Indexes, indexName)
-
-	return nil
 }
 
 func (t *Table) updateIndex(indexName string, provisionedThroughput *types.ProvisionedThroughput) error {
@@ -370,6 +386,10 @@ func (t *Table) updateIndex(indexName string, provisionedThroughput *types.Provi
 }
 
 func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
+	if err := validateIndexShape(types.StringValue(lsiInput.IndexName), lsiInput.Projection, lsiInput.KeySchema); err != nil {
+		return nil, err
+	}
+
 	ks, err := parseKeySchema(lsiInput.KeySchema)
 	if err != nil {
 		return nil, err
@@ -393,6 +413,14 @@ func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
 	}
 
 	for _, lsi := range input {
+		if lsi == nil {
+			lsi = &types.LocalSecondaryIndex{}
+		}
+
+		if err := validateIndexName(lsi.IndexName); err != nil {
+			return err
+		}
+
 		i, err := buildLSI(t, lsi)
 		if err != nil {
 			return err
@@ -1706,6 +1734,117 @@ func (t *Table) globalIndexDescription(indexName string, index *index) types.Glo
 	}
 }
 
+// validationError builds a ValidationException from DynamoDB's text and, optionally, minidyn-only
+// detail as alternating keys and values (see types.WithDetail).
+func validationError(message string, detail ...string) types.Error {
+	return types.NewError("ValidationException", types.WithDetail(message, detail...), nil)
+}
+
+// validateIndexChanges checks every entry of an UpdateTable request before any of them is
+// applied, as DynamoDB does: a request with one bad entry changes nothing.
+//
+// DynamoDB allows one index to be created or deleted per request and counts that first, so the
+// limit is reported ahead of any problem with an entry. The entries are then checked in order.
+func (t *Table) validateIndexChanges(changes []*types.GlobalSecondaryIndexUpdate) error {
+	onlineChanges := 0
+
+	for _, change := range changes {
+		if change == nil {
+			continue
+		}
+
+		if change.Create != nil {
+			onlineChanges++
+		}
+
+		if change.Delete != nil {
+			onlineChanges++
+		}
+	}
+
+	if onlineChanges > 1 {
+		return types.NewError("LimitExceededException", types.WithDetail(msgIndexLimit, "table", t.Name, "changes", strconv.Itoa(onlineChanges)), nil)
+	}
+
+	touched := map[string]struct{}{}
+
+	for _, change := range changes {
+		if err := t.validateIndexChange(change, touched); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, touched map[string]struct{}) error {
+	if change == nil || (change.Create == nil && change.Delete == nil && change.Update == nil) {
+		return validationError(msgNullGSIAction)
+	}
+
+	var name *string
+
+	switch {
+	case change.Create != nil:
+		name = change.Create.IndexName
+	case change.Delete != nil:
+		name = change.Delete.IndexName
+	default:
+		name = change.Update.IndexName
+	}
+
+	indexName := types.StringValue(name)
+
+	// Local accepts or fails with a 500 on these combinations, the message is minidyn's pick
+	if (change.Create != nil && change.Update != nil) || (change.Delete != nil && change.Update != nil) {
+		return validationError(msgOneUpdatePerName,
+			"reason", "create or delete combined with update in one entry", "index", indexName)
+	}
+
+	if indexName == "" {
+		return validationError(msgInvalidGSIName)
+	}
+
+	if _, ok := touched[indexName]; ok {
+		return validationError(msgOneUpdatePerName, "index", indexName)
+	}
+
+	touched[indexName] = struct{}{}
+
+	_, exists := t.Indexes[indexName]
+
+	switch {
+	case change.Create != nil:
+		return t.validateCreateIndex(change.Create, indexName, exists)
+	case change.Delete != nil && !exists:
+		return types.NewError("ResourceNotFoundException", types.WithDetail("Requested resource not found", "index", indexName, "table", t.Name), nil)
+	case change.Update != nil && !exists:
+		return validationError(msgInvalidGSIName, "index", indexName, "table", t.Name)
+	}
+
+	return nil
+}
+
+func (t *Table) validateCreateIndex(create *types.CreateGlobalSecondaryIndexAction, indexName string, exists bool) error {
+	if err := validateIndexShape(indexName, create.Projection, create.KeySchema); err != nil {
+		return err
+	}
+
+	if exists {
+		return validationError(msgIndexExists, "index", indexName, "table", t.Name)
+	}
+
+	// build it without registering it, to surface the errors applying the change would give
+	_, err := buildGSI(t, &types.GlobalSecondaryIndex{
+		IndexName:             create.IndexName,
+		KeySchema:             create.KeySchema,
+		Projection:            create.Projection,
+		ProvisionedThroughput: create.ProvisionedThroughput,
+	})
+
+	return err
+}
+
 // ApplyIndexChanges applies the global secondary index changes in order and returns the
 // description of the table as DynamoDB reports it in an UpdateTable response: created indexes
 // carry their creation markers and deleted ones are still listed, as DELETING. On error the
@@ -1714,10 +1853,14 @@ func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryI
 	var (
 		created []string
 		dropped []types.GlobalSecondaryIndexDescription
-		err     error
+		err     = t.validateIndexChanges(changes)
 	)
 
 	for _, change := range changes {
+		if err != nil {
+			break
+		}
+
 		var droppedDesc *types.GlobalSecondaryIndexDescription
 
 		if change.Delete != nil {
@@ -1728,7 +1871,7 @@ func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryI
 			}
 		}
 
-		if err = t.ApplyIndexChange(change); err != nil {
+		if err = t.applyIndexChange(change); err != nil {
 			break
 		}
 

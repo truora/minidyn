@@ -82,18 +82,11 @@ func createPokemonTable() (*Table, error) {
 	return table, nil
 }
 
-func createGlobalSecondaryIndex() *types.GlobalSecondaryIndexUpdate {
-	return &types.GlobalSecondaryIndexUpdate{
-		Create: &types.CreateGlobalSecondaryIndexAction{},
-		Delete: &types.DeleteGlobalSecondaryIndexAction{},
-		Update: &types.UpdateGlobalSecondaryIndexAction{},
-	}
-}
-
 func createLocalSecondaryIndex() []*types.LocalSecondaryIndex {
 	return []*types.LocalSecondaryIndex{
 		{
-			IndexName: new("indexname"),
+			IndexName:  new("indexname"),
+			Projection: &types.Projection{ProjectionType: new("ALL")},
 		},
 	}
 }
@@ -105,7 +98,7 @@ func TestAddLocalIndexes(t *testing.T) {
 	newTable := NewTable(tableName)
 
 	err := newTable.AddLocalIndexes(localIndexes)
-	c.Contains(err.Error(), " No Hash Key specified in schema.")
+	c.Contains(err.Error(), " No defined key schema.")
 
 	localIndexes[0].KeySchema = []*types.KeySchemaElement{
 		{
@@ -168,71 +161,35 @@ func TestTableIndexesDescription(t *testing.T) {
 func TestApplyIndexChange(t *testing.T) {
 	c := require.New(t)
 
-	globalSecondaryIndex := createGlobalSecondaryIndex()
+	hashKey := []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}}
+	create := gsiCreate(new("indexname"), hashKey, gsiAllProjection())
 	newTable := NewTable(tableName)
 
-	err := newTable.ApplyIndexChange(globalSecondaryIndex)
+	err := newTable.ApplyIndexChange(create)
 	c.Contains(err.Error(), "No provisioned throughput specified for the global secondary index")
 
 	newTable.BillingMode = new("PAY_PER_REQUEST")
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.Contains(err.Error(), "No Hash Key specified in schema.")
+	err = newTable.ApplyIndexChange(create)
+	c.Contains(err.Error(), "Global Secondary Index Hash Key not specified in Attribute Definitions.")
 
 	newTable, err = createPokemonTable()
 	c.NoError(err)
 
 	newTable.BillingMode = new("PAY_PER_REQUEST")
-	createTableInput := &types.CreateTableInput{
-		KeySchema: []*types.KeySchemaElement{
-			{
-				AttributeName: "id",
-				KeyType:       "HASH",
-			},
-		},
-	}
+	c.NoError(newTable.CreatePrimaryIndex(&types.CreateTableInput{KeySchema: hashKey}))
 
-	err = newTable.CreatePrimaryIndex(createTableInput)
-	c.NoError(err)
+	c.NoError(newTable.ApplyIndexChange(create))
+	c.Contains(newTable.Indexes, "indexname")
 
-	globalSecondaryIndex.Create = &types.CreateGlobalSecondaryIndexAction{
-		KeySchema: []*types.KeySchemaElement{
-			{
-				AttributeName: "id",
-				KeyType:       "HASH",
-			},
-		},
-		IndexName: new("indexname"),
-	}
+	c.NoError(newTable.ApplyIndexChange(gsiUpdate(new("indexname"))))
+	c.NoError(newTable.ApplyIndexChange(gsiDelete(new("indexname"))))
+	c.NotContains(newTable.Indexes, "indexname")
 
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
-
-	globalSecondaryIndex.Create = nil
-
-	globalSecondaryIndex.Delete = &types.DeleteGlobalSecondaryIndexAction{
-		IndexName: new("indexname"),
-	}
-
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
-
-	newTable.Indexes = map[string]*index{}
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
+	err = newTable.ApplyIndexChange(gsiDelete(new("indexname")))
 	c.Contains(err.Error(), "Requested resource not found")
 
-	globalSecondaryIndex.Delete = nil
-
-	globalSecondaryIndex.Update = &types.UpdateGlobalSecondaryIndexAction{
-		IndexName: new("indexname"),
-	}
-
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
-
-	globalSecondaryIndex.Update = nil
-
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
+	err = newTable.ApplyIndexChange(&types.GlobalSecondaryIndexUpdate{})
+	c.Contains(err.Error(), "Update global secondary index action is null")
 
 	err = newTable.AddGlobalIndexes([]*types.GlobalSecondaryIndex{})
 	c.Contains(err.Error(), "GSI list is empty/invalid")

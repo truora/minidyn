@@ -1,6 +1,7 @@
 package language
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -420,6 +421,29 @@ func TestEvalFunctionCall_wrongOperandCount(t *testing.T) {
 		got := Eval(parseConditionForTest(t, expr), env)
 		if !isError(got) {
 			t.Fatalf("%q: expected an error, got %s", expr, got.Inspect())
+		}
+	}
+}
+
+// TestEvalUpdateFunctionCall_wrongOperandCount evaluates update expressions directly, without
+// the parse-time validation, to cover the evaluator's own operand-count guard.
+func TestEvalUpdateFunctionCall_wrongOperandCount(t *testing.T) {
+	tests := map[string]string{
+		"SET :val = if_not_exists(:val)":             "if_not_exists, number of operands: 1",
+		"SET :val = if_not_exists(:val, :val, :val)": "if_not_exists, number of operands: 3",
+		"SET :list = list_append(:list)":             "list_append, number of operands: 1",
+	}
+
+	for expr, want := range tests {
+		got := testEvalUpdate(t, expr, startEvalUpdateEnv(t))
+
+		errObj, ok := got.(*Error)
+		if !ok {
+			t.Fatalf("%q: expected an error, got %s", expr, got.Inspect())
+		}
+
+		if !strings.Contains(errObj.Message, "Incorrect number of operands for operator or function; operator or function: "+want) {
+			t.Errorf("%q: wrong message %q", expr, errObj.Message)
 		}
 	}
 }

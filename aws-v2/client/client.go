@@ -413,6 +413,8 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 		return nil, mapKnownError(err)
 	}
 
+	// core.Table.Delete validates this too, but the conditional pre-check below runs first:
+	// DynamoDB rejects an invalid ReturnValues before evaluating the condition.
 	if verr := core.ValidateNoneOrAllOldReturnValues(aws.String(string(input.ReturnValues))); verr != nil {
 		return nil, mapKnownError(verr)
 	}

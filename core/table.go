@@ -85,21 +85,26 @@ func (t *Table) IndexKind(name string) string {
 	return "GSI"
 }
 
-// IndexProjection is a secondary index's projection of an item, used to compute the per-index
-// write ConsumedCapacity breakdown at the INDEXES level: the index name, its kind ("GSI"/"LSI"),
-// and the item as it lands in the index (honoring the index's ProjectionType).
-type IndexProjection struct {
-	Name string
-	Kind string
-	Item map[string]*types.Item
+// IndexWriteDelta is how a write touches one secondary index, used to compute the per-index
+// write ConsumedCapacity. Before and After are the item as it sat in the index and as it lands in
+// it (honoring the index's ProjectionType); each is nil when the item is not indexed there, which
+// is how a sparse index is entered or left. KeyChanged reports that the item stays in the index
+// under a different index key, so the old entry is deleted and a new one written.
+type IndexWriteDelta struct {
+	Name       string
+	Kind       string
+	Before     map[string]*types.Item
+	After      map[string]*types.Item
+	KeyChanged bool
 }
 
-// WriteIndexProjections returns one IndexProjection per secondary index the given item is
-// indexed by — i.e. indexes for which the item has a complete index key. Indexes the item does
-// not participate in are omitted, mirroring DynamoDB, which only charges write capacity on
-// indexes a write actually touches. Entries are name-sorted for deterministic reporting.
-func (t *Table) WriteIndexProjections(item map[string]*types.Item) []IndexProjection {
-	if len(item) == 0 || len(t.Indexes) == 0 {
+// WriteIndexDeltas returns one IndexWriteDelta per secondary index a write from the item before
+// to the item after touches: the indexes the item was in or lands in (an index needs a complete
+// index key). Untouched indexes are omitted, mirroring DynamoDB, which only charges write
+// capacity on indexes a write actually changes. Either item may be nil (a put has no before, a
+// delete no after). Entries are name-sorted for deterministic reporting.
+func (t *Table) WriteIndexDeltas(before, after map[string]*types.Item) []IndexWriteDelta {
+	if (len(before) == 0 && len(after) == 0) || len(t.Indexes) == 0 {
 		return nil
 	}
 
@@ -110,20 +115,44 @@ func (t *Table) WriteIndexProjections(item map[string]*types.Item) []IndexProjec
 
 	sort.Strings(names)
 
-	out := make([]IndexProjection, 0, len(names))
+	out := make([]IndexWriteDelta, 0, len(names))
 
 	for _, name := range names {
 		idx := t.Indexes[name]
+		beforeKey := t.indexKeyOf(idx, before)
+		afterKey := t.indexKeyOf(idx, after)
 
-		indexKey, err := idx.keySchema.GetKey(t.AttributesDef, item)
-		if err != nil || indexKey == "" {
+		if beforeKey == "" && afterKey == "" {
 			continue
 		}
 
-		out = append(out, IndexProjection{Name: name, Kind: t.IndexKind(name), Item: idx.ProjectItem(item)})
+		d := IndexWriteDelta{Name: name, Kind: t.IndexKind(name), KeyChanged: beforeKey != "" && afterKey != "" && beforeKey != afterKey}
+		if beforeKey != "" {
+			d.Before = idx.ProjectItem(before)
+		}
+
+		if afterKey != "" {
+			d.After = idx.ProjectItem(after)
+		}
+
+		out = append(out, d)
 	}
 
 	return out
+}
+
+// indexKeyOf returns the key the item has in the index, or "" when it is not indexed there.
+func (t *Table) indexKeyOf(idx *index, item map[string]*types.Item) string {
+	if len(item) == 0 {
+		return ""
+	}
+
+	key, err := idx.keySchema.GetKey(t.AttributesDef, item)
+	if err != nil {
+		return ""
+	}
+
+	return key
 }
 
 // StoredItem returns a copy of the item stored under the primary key of keyOrItem (a key map or

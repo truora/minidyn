@@ -311,6 +311,264 @@ func TestE2E_ConsumedCapacityExactWrites(t *testing.T) {
 	}
 }
 
+// capacitySeedPokemon puts a pokemon that has a type attribute (and so lands in the by-type
+// index) only when typ is not empty.
+func capacitySeedPokemon(ctx context.Context, t *testing.T, client *dynamodb.Client, id, typ string) {
+	t.Helper()
+
+	item := map[string]dynamodbtypes.AttributeValue{"id": capacityStrValue(id), "name": capacityStrValue("bulbasaur")}
+	if typ != "" {
+		item["type"] = capacityStrValue(typ)
+	}
+
+	_, err := client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(parityPokemonTable), Item: item})
+	require.NoError(t, err)
+}
+
+// capacityDetail is the exact INDEXES breakdown: the total and the units of the table and of
+// every secondary index charged.
+type capacityDetail struct {
+	Present bool
+	Total   float64
+	Table   float64
+	GSI     map[string]float64
+}
+
+func detailCapacity(cc *dynamodbtypes.ConsumedCapacity) capacityDetail {
+	if cc == nil {
+		return capacityDetail{}
+	}
+
+	d := capacityDetail{Present: true, Total: aws.ToFloat64(cc.CapacityUnits)}
+	if cc.Table != nil {
+		d.Table = aws.ToFloat64(cc.Table.CapacityUnits)
+	}
+
+	for name, c := range cc.GlobalSecondaryIndexes {
+		if d.GSI == nil {
+			d.GSI = map[string]float64{}
+		}
+
+		d.GSI[name] = aws.ToFloat64(c.CapacityUnits)
+	}
+
+	return d
+}
+
+// TestE2E_ConsumedCapacitySparseGSIWrites pins the exact units of writes against a table with
+// a sparse GSI (by-type is keyed on the optional "type" attribute): the total is the base
+// table plus every affected index, including an update that moves an item into, out of or
+// within the index.
+func TestE2E_ConsumedCapacitySparseGSIWrites(t *testing.T) {
+	update := func(expr, attr string, values map[string]dynamodbtypes.AttributeValue) func(*dynamodb.UpdateItemInput) {
+		return func(in *dynamodb.UpdateItemInput) {
+			in.UpdateExpression = aws.String(expr)
+			in.ExpressionAttributeNames = map[string]string{"#t": attr}
+			in.ExpressionAttributeValues = values
+		}
+	}
+
+	cases := []struct {
+		name  string
+		seed  string // the item's type, empty when it is not in the sparse index
+		apply func(*dynamodb.UpdateItemInput)
+	}{
+		{
+			"UpdateIntoIndex", "",
+			update("SET #t = :t", "type", map[string]dynamodbtypes.AttributeValue{":t": capacityStrValue("grass")}),
+		},
+		{
+			"UpdateOutOfIndex", "grass",
+			update("REMOVE #t", "type", nil),
+		},
+		{
+			"UpdateWithinIndex", "grass",
+			update("SET #t = :t", "type", map[string]dynamodbtypes.AttributeValue{":t": capacityStrValue("poison")}),
+		},
+		{
+			"UpdateIndexedNonKeyAttribute", "grass",
+			update("SET #t = :n", "name", map[string]dynamodbtypes.AttributeValue{":n": capacityStrValue("ivysaur")}),
+		},
+		{
+			"UpdateOutsideIndex", "",
+			update("SET #t = :n", "name", map[string]dynamodbtypes.AttributeValue{":n": capacityStrValue("ivysaur")}),
+		},
+	}
+
+	for _, mode := range []dynamodbtypes.ReturnConsumedCapacity{
+		dynamodbtypes.ReturnConsumedCapacityTotal, dynamodbtypes.ReturnConsumedCapacityIndexes,
+	} {
+		for _, tc := range cases {
+			t.Run(string(mode)+"/"+tc.name, func(t *testing.T) {
+				RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+					t.Helper()
+					ctx := context.Background()
+					parityCreatePokemonTable(ctx, t, client)
+					parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+					capacitySeedPokemon(ctx, t, client, "001", tc.seed)
+
+					in := &dynamodb.UpdateItemInput{
+						TableName: aws.String(parityPokemonTable), Key: capacityKey("001"), ReturnConsumedCapacity: mode,
+					}
+					tc.apply(in)
+
+					out, err := client.UpdateItem(ctx, in)
+					require.NoError(t, err)
+					t.Logf("%s %s = %#v", mode, tc.name, out.ConsumedCapacity)
+
+					return detailCapacity(out.ConsumedCapacity)
+				})
+			})
+		}
+
+		t.Run(string(mode)+"/PutWithoutIndexKey", func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+
+				out, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable), ReturnConsumedCapacity: mode,
+					Item: map[string]dynamodbtypes.AttributeValue{"id": capacityStrValue("001"), "name": capacityStrValue("x")},
+				})
+				require.NoError(t, err)
+
+				return detailCapacity(out.ConsumedCapacity)
+			})
+		})
+
+		t.Run(string(mode)+"/PutOverwriteWithinIndex", func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+				capacitySeedPokemon(ctx, t, client, "001", "grass")
+
+				out, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable), ReturnConsumedCapacity: mode,
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id": capacityStrValue("001"), "type": capacityStrValue("grass"), "name": capacityStrValue("ivysaur"),
+					},
+				})
+				require.NoError(t, err)
+
+				return detailCapacity(out.ConsumedCapacity)
+			})
+		})
+
+		t.Run(string(mode)+"/PutOverwriteChangesIndexKey", func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+				capacitySeedPokemon(ctx, t, client, "001", "grass")
+
+				out, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable), ReturnConsumedCapacity: mode,
+					Item: map[string]dynamodbtypes.AttributeValue{
+						"id": capacityStrValue("001"), "type": capacityStrValue("poison"), "name": capacityStrValue("bulbasaur"),
+					},
+				})
+				require.NoError(t, err)
+
+				return detailCapacity(out.ConsumedCapacity)
+			})
+		})
+
+		t.Run(string(mode)+"/PutOverwriteMovesOutOfIndex", func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
+
+				out, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+					TableName: aws.String(parityPokemonTable), ReturnConsumedCapacity: mode,
+					Item: map[string]dynamodbtypes.AttributeValue{"id": capacityStrValue("001"), "name": capacityStrValue("x")},
+				})
+				require.NoError(t, err)
+				t.Logf("%s put out of index = %#v", mode, out.ConsumedCapacity)
+
+				return detailCapacity(out.ConsumedCapacity)
+			})
+		})
+
+		t.Run(string(mode)+"/BatchPutWithGSI", func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+
+				out, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+					ReturnConsumedCapacity: mode,
+					RequestItems: map[string][]dynamodbtypes.WriteRequest{parityPokemonTable: {
+						{PutRequest: &dynamodbtypes.PutRequest{Item: parityMarshalPokemon(t, parityPokemon{ID: "a", Type: "fire", Name: "a"})}},
+						{PutRequest: &dynamodbtypes.PutRequest{Item: map[string]dynamodbtypes.AttributeValue{"id": capacityStrValue("b")}}},
+					}},
+				})
+				require.NoError(t, err)
+				require.Len(t, out.ConsumedCapacity, 1)
+
+				return detailCapacity(&out.ConsumedCapacity[0])
+			})
+		})
+
+		t.Run(string(mode)+"/TransactUpdateMovesIntoIndex", func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+				capacitySeedPokemon(ctx, t, client, "001", "")
+
+				out, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+					ReturnConsumedCapacity: mode,
+					TransactItems: []dynamodbtypes.TransactWriteItem{{Update: &dynamodbtypes.Update{
+						TableName: aws.String(parityPokemonTable), Key: capacityKey("001"),
+						UpdateExpression:          aws.String("SET #t = :t"),
+						ExpressionAttributeNames:  map[string]string{"#t": "type"},
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":t": capacityStrValue("grass")},
+					}}},
+				})
+				require.NoError(t, err)
+				require.Len(t, out.ConsumedCapacity, 1)
+				t.Logf("%s transact into index = %#v", mode, out.ConsumedCapacity)
+
+				return detailCapacity(&out.ConsumedCapacity[0])
+			})
+		})
+
+		t.Run(string(mode)+"/TransactUpdateMovesOutOfIndex", func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+				parityCreatePokemonTable(ctx, t, client)
+				parityAddByTypeGlobalSecondaryIndex(ctx, t, client)
+				parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
+
+				out, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+					ReturnConsumedCapacity: mode,
+					TransactItems: []dynamodbtypes.TransactWriteItem{{Update: &dynamodbtypes.Update{
+						TableName: aws.String(parityPokemonTable), Key: capacityKey("001"),
+						UpdateExpression:         aws.String("REMOVE #t"),
+						ExpressionAttributeNames: map[string]string{"#t": "type"},
+					}}},
+				})
+				require.NoError(t, err)
+				require.Len(t, out.ConsumedCapacity, 1)
+				t.Logf("%s transact out of index = %#v", mode, out.ConsumedCapacity)
+
+				return detailCapacity(&out.ConsumedCapacity[0])
+			})
+		})
+	}
+}
+
 // TestE2E_ConsumedCapacityInvalidMode covers a ReturnConsumedCapacity value outside the enum
 // ("FOO", or "total" since values are case sensitive), on every operation that accepts it.
 //

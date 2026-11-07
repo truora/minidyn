@@ -82,30 +82,6 @@ func createPokemonTable() (*Table, error) {
 	return table, nil
 }
 
-func TestWriteIndexProjections(t *testing.T) {
-	c := require.New(t)
-
-	table, err := createPokemonTable()
-	c.NoError(err)
-
-	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
-
-	projections := table.WriteIndexProjections(item)
-	c.Len(projections, 1)
-	c.Equal("invert", projections[0].Name)
-	c.Equal("GSI", projections[0].Kind)
-	// The "invert" GSI projects ALL attributes, so the projected item matches the full item.
-	c.Equal(item, projections[0].Item)
-
-	// An empty item and a table without secondary indexes both yield no per-index entries.
-	c.Nil(table.WriteIndexProjections(map[string]*types.Item{}))
-	c.Nil(NewTable(tableName).WriteIndexProjections(item))
-
-	// An item missing an index key attribute is not indexed, so the index is omitted.
-	missingRange := map[string]*types.Item{"id": item["id"], "type": item["type"]}
-	c.Empty(table.WriteIndexProjections(missingRange))
-}
-
 func createGlobalSecondaryIndex() *types.GlobalSecondaryIndexUpdate {
 	return &types.GlobalSecondaryIndexUpdate{
 		Create: &types.CreateGlobalSecondaryIndexAction{},
@@ -2125,4 +2101,54 @@ func TestStoredItemReturnsACopyOfTheStoredItem(t *testing.T) {
 	// Missing item and invalid key both yield nil.
 	c.Nil(table.StoredItem(map[string]*types.Item{"id": {S: aws.String("absent")}, "name": item["name"]}))
 	c.Nil(table.StoredItem(map[string]*types.Item{}))
+}
+
+func TestWriteIndexDeltas(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	// The "invert" GSI is keyed on id (hash) and name (range) and projects ALL attributes.
+	bulbasaur := createPokemon(pokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
+	renamed := createPokemon(pokemon{ID: "001", Type: "grass", Name: "ivysaur"})
+	unindexed := map[string]*types.Item{"id": bulbasaur["id"], "type": bulbasaur["type"]}
+
+	// A new item lands in the index.
+	deltas := table.WriteIndexDeltas(nil, bulbasaur)
+	c.Len(deltas, 1)
+	c.Equal("invert", deltas[0].Name)
+	c.Equal("GSI", deltas[0].Kind)
+	c.Nil(deltas[0].Before)
+	c.Equal(bulbasaur, deltas[0].After)
+	c.False(deltas[0].KeyChanged)
+
+	// A deleted item leaves it.
+	deltas = table.WriteIndexDeltas(bulbasaur, nil)
+	c.Len(deltas, 1)
+	c.Equal(bulbasaur, deltas[0].Before)
+	c.Nil(deltas[0].After)
+	c.False(deltas[0].KeyChanged)
+
+	// Changing the index key is a delete of the old entry and a put of the new one.
+	deltas = table.WriteIndexDeltas(bulbasaur, renamed)
+	c.Len(deltas, 1)
+	c.True(deltas[0].KeyChanged)
+
+	// Changing only a projected attribute rewrites the same entry.
+	renamedType := createPokemon(pokemon{ID: "001", Type: "poison", Name: "bulbasaur"})
+	deltas = table.WriteIndexDeltas(bulbasaur, renamedType)
+	c.Len(deltas, 1)
+	c.False(deltas[0].KeyChanged)
+
+	// Moving out of the index (the item lost a key attribute) only leaves it.
+	deltas = table.WriteIndexDeltas(bulbasaur, unindexed)
+	c.Len(deltas, 1)
+	c.NotNil(deltas[0].Before)
+	c.Nil(deltas[0].After)
+
+	// Nothing to report without items, without indexes, or when neither side is indexed.
+	c.Nil(table.WriteIndexDeltas(nil, nil))
+	c.Nil(NewTable(tableName).WriteIndexDeltas(bulbasaur, renamed))
+	c.Empty(table.WriteIndexDeltas(unindexed, unindexed))
 }

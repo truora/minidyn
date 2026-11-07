@@ -14,9 +14,7 @@ func writeConsumed(mode capacity.Mode, table *core.Table, name string, key, befo
 		return nil
 	}
 
-	size, indexed := capacity.WriteBilling(key, before, after)
-
-	return capacity.ForWrite(mode, name, size, indexWrites(table, indexed))
+	return capacity.ForWrite(mode, name, capacity.WriteBilling(key, before, after), indexWrites(table, before, after))
 }
 
 // storedItem returns a copy of the item stored under the key of keyOrItem in the named table, or
@@ -41,14 +39,14 @@ func (c *Client) storedItemLocked(tableName string, keyOrItem map[string]*types.
 // billWrite returns the base size and per-index footprint of a write to the named table (see
 // capacity.WriteBilling). The caller must hold c.mu.
 func (c *Client) billWrite(tableName string, key, before, after map[string]*types.Item) (int, []capacity.IndexWrite) {
-	size, indexed := capacity.WriteBilling(key, before, after)
+	size := capacity.WriteBilling(key, before, after)
 
 	table, err := c.getTable(tableName)
 	if err != nil {
 		return size, nil
 	}
 
-	return size, indexWrites(table, indexed)
+	return size, indexWrites(table, before, after)
 }
 
 // billWriteLocked is billWrite for callers that do not hold c.mu.
@@ -80,18 +78,18 @@ func wireConsumedList(cs []*capacity.Consumed) []ConsumedCapacity {
 	return out
 }
 
-// indexWrites returns the per-index write footprint of writing item to table: for each secondary
-// index the write touches, the size of the item as projected into that index. Feeds the
-// per-index ConsumedCapacity breakdown at the INDEXES level.
-func indexWrites(table *core.Table, item map[string]*types.Item) []capacity.IndexWrite {
-	projections := table.WriteIndexProjections(item)
-	if len(projections) == 0 {
+// indexWrites returns the per-index write footprint of a write that takes the item from before to
+// after: for each secondary index the write changes, how it is billed to that index. Feeds the
+// per-index ConsumedCapacity breakdown at the INDEXES level, and the total at every level.
+func indexWrites(table *core.Table, before, after map[string]*types.Item) []capacity.IndexWrite {
+	deltas := table.WriteIndexDeltas(before, after)
+	if len(deltas) == 0 {
 		return nil
 	}
 
-	out := make([]capacity.IndexWrite, 0, len(projections))
-	for _, p := range projections {
-		out = append(out, capacity.IndexWrite{Name: p.Name, Kind: p.Kind, Size: capacity.Size(p.Item)})
+	out := make([]capacity.IndexWrite, 0, len(deltas))
+	for _, d := range deltas {
+		out = append(out, capacity.IndexWriteFor(d.Name, d.Kind, d.Before, d.After, d.KeyChanged))
 	}
 
 	return out

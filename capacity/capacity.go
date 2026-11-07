@@ -82,6 +82,40 @@ type IndexWrite struct {
 	Name string
 	Kind string // "GSI" | "LSI"
 	Size int
+	// ReplacedSize is the size of the entry deleted when the write changes the item's index key
+	// (a second write to the index); zero otherwise.
+	ReplacedSize int
+}
+
+// units returns the write capacity units the write costs the index.
+func (w IndexWrite) units() float64 {
+	u := WriteUnits(w.Size)
+	if w.ReplacedSize > 0 {
+		u += WriteUnits(w.ReplacedSize)
+	}
+
+	return u
+}
+
+// IndexWriteFor returns how a write from the item before to the item after (the item as projected
+// into the index, nil when it is not indexed there) is billed to one secondary index. Entering the
+// index writes the new entry, leaving it deletes the old one, rewriting an entry bills the larger
+// of the two, and changing the index key (keyChanged) deletes the old entry and writes the new.
+func IndexWriteFor(name, kind string, before, after map[string]*types.Item, keyChanged bool) IndexWrite {
+	w := IndexWrite{Name: name, Kind: kind}
+
+	switch {
+	case len(before) == 0:
+		w.Size = Size(after)
+	case len(after) == 0:
+		w.Size = Size(before)
+	case keyChanged:
+		w.Size, w.ReplacedSize = Size(after), Size(before)
+	default:
+		w.Size = max(Size(before), Size(after))
+	}
+
+	return w
 }
 
 // Consumed is a client-agnostic consumed-capacity result. Each client maps it to its own output
@@ -151,7 +185,7 @@ func ForWrite(mode Mode, table string, size int, indexes []IndexWrite) *Consumed
 	entries := make([]IndexUnits, 0, len(indexes))
 
 	for _, iw := range indexes {
-		u := WriteUnits(iw.Size)
+		u := iw.units()
 		total += u
 		entries = append(entries, IndexUnits{Name: iw.Name, Kind: iw.Kind, Units: u})
 	}
@@ -239,7 +273,7 @@ func (a *WriteAccumulator) Add(table string, size int, indexes []IndexWrite, fac
 			tw.order = append(tw.order, iw.Name)
 		}
 
-		e.Units += factor * WriteUnits(iw.Size)
+		e.Units += factor * iw.units()
 	}
 }
 
@@ -308,20 +342,14 @@ func (tw *tableWrite) consumed(mode Mode, table string) *Consumed {
 	return c
 }
 
-// WriteBilling returns how a write is billed: the base item size and the item whose secondary
-// index projections are charged. DynamoDB bills a write by the larger of the item before and
-// after it (a delete has no item after, so it bills the deleted item), and charges the indexes
-// the written item lands in, or the ones a deleted item leaves. Before and after must be
-// measured around the write, key is the fallback size for a delete of a missing item.
-func WriteBilling(key, before, after map[string]*types.Item) (int, map[string]*types.Item) {
-	size := max(Size(before), Size(after))
-	if size == 0 {
-		size = Size(key)
+// WriteBilling returns the base item size a write is billed for. DynamoDB bills a write by the
+// larger of the item before and after it (a delete has no item after, so it bills the deleted
+// item). Before and after must be measured around the write, key is the fallback size for a delete
+// of a missing item.
+func WriteBilling(key, before, after map[string]*types.Item) int {
+	if size := max(Size(before), Size(after)); size > 0 {
+		return size
 	}
 
-	if len(after) > 0 {
-		return size, after
-	}
-
-	return size, before
+	return Size(key)
 }

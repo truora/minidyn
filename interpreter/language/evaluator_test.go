@@ -496,7 +496,7 @@ func TestEvalAddUpdate(t *testing.T) {
 		{"ADD :numSet :one", ":numSet", &NumberSet{Value: map[float64]bool{1: boolTrue, 2: boolTrue, 4: boolTrue}}, boolFalse},
 		{"ADD :binSet :bin", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, boolFalse},
 		{"ADD :strSet :val", ":strSet", &StringSet{Value: map[string]bool{"a": boolTrue, "b": boolTrue, "text": boolTrue}}, boolFalse},
-		{"ADD newVal :val", ":val", &String{Value: "text"}, boolFalse},
+		{"ADD newVal :one", "newVal", &Number{Value: 1}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -646,6 +646,8 @@ func TestEvalADDRejectsInvalidOperand(t *testing.T) {
 		want   string
 	}{
 		{"ADD :one :val", fmt.Sprintf(typeSetMsg, "STRING")},
+		{"ADD absent_attr :x", fmt.Sprintf(typeSetMsg, "BOOLEAN")},
+		{"ADD absent_attr :hash", fmt.Sprintf(typeSetMsg, "MAP")},
 		{"ADD :one :x", fmt.Sprintf(typeSetMsg, "BOOLEAN")},
 		{"ADD :one :list", fmt.Sprintf(typeSetMsg, "LIST")},
 		{"ADD :numSet :hash", fmt.Sprintf(typeSetMsg, "MAP")},

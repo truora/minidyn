@@ -948,7 +948,14 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 		}
 
 		if obj == UNDEFINED {
+			// ADD only takes a number or a set operand, whether or not the target exists.
+			_, isNumber := val.(*Number)
+			if _, isSet := val.(DetachableObject); !isNumber && !isSet {
+				return newIncorrectAddOperandError(obj, val)
+			}
+
 			env.Set(id.Value, val)
+
 			return obj
 		}
 

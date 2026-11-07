@@ -546,6 +546,42 @@ func TestE2E_ItemValidation(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "UpdateItemAddInvalidOperand",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				// Item 004 has lvl (N) and moves (SS).
+				addErr := func(attr string, v dynamodbtypes.AttributeValue) string {
+					_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+						TableName: aws.String(parityPokemonTable),
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"},
+						},
+						UpdateExpression:          aws.String("ADD " + attr + " :v"),
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": v},
+					})
+					require.Error(t, err)
+
+					return normalizeSDKErrorString(err.Error())
+				}
+
+				return []any{
+					// Operands ADD never accepts.
+					addErr("lvl", &dynamodbtypes.AttributeValueMemberS{Value: "x"}),
+					addErr("absent", &dynamodbtypes.AttributeValueMemberBOOL{Value: true}),
+					addErr("lvl", &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}),
+					addErr("moves", &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}),
+					// An allowed operand type that doesn't match the target.
+					addErr("moves", &dynamodbtypes.AttributeValueMemberN{Value: "1"}),
+					addErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}}),
+					parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

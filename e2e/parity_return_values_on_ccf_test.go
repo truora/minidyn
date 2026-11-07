@@ -157,6 +157,101 @@ func parityCCFTransactDelete(mode ccfMode, condition string, seed bool) func(t *
 	}
 }
 
+func parityCCFUpdate(mode ccfMode, condition string, seed bool) func(t *testing.T, client *dynamodb.Client) any {
+	return func(t *testing.T, client *dynamodb.Client) any {
+		t.Helper()
+		ctx := context.Background()
+
+		parityCCFSetup(ctx, t, client, seed)
+
+		_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                           aws.String(parityPokemonTable),
+			Key:                                 parityPokemonKey("001"),
+			UpdateExpression:                    aws.String("SET #n = :v"),
+			ConditionExpression:                 aws.String(condition),
+			ExpressionAttributeNames:            map[string]string{"#n": "name"},
+			ExpressionAttributeValues:           map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: "Impostor"}},
+			ReturnValuesOnConditionCheckFailure: mode,
+		})
+		require.Error(t, err)
+
+		return parityCCFItemName(t, err)
+	}
+}
+
+func parityCCFTransactUpdate(mode ccfMode, condition string, seed bool) func(t *testing.T, client *dynamodb.Client) any {
+	return func(t *testing.T, client *dynamodb.Client) any {
+		t.Helper()
+		ctx := context.Background()
+
+		parityCCFSetup(ctx, t, client, seed)
+
+		_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{Update: &dynamodbtypes.Update{
+					TableName:                           aws.String(parityPokemonTable),
+					Key:                                 parityPokemonKey("001"),
+					UpdateExpression:                    aws.String("SET #n = :v"),
+					ConditionExpression:                 aws.String(condition),
+					ExpressionAttributeNames:            map[string]string{"#n": "name"},
+					ExpressionAttributeValues:           map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: "Impostor"}},
+					ReturnValuesOnConditionCheckFailure: mode,
+				}},
+			},
+		})
+		require.Error(t, err)
+
+		return parityCancelReasonSummary(t, err)
+	}
+}
+
+func parityCCFTransactConditionCheck(mode ccfMode, condition string, seed bool) func(t *testing.T, client *dynamodb.Client) any {
+	return func(t *testing.T, client *dynamodb.Client) any {
+		t.Helper()
+		ctx := context.Background()
+
+		parityCCFSetup(ctx, t, client, seed)
+
+		_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{
+				{ConditionCheck: &dynamodbtypes.ConditionCheck{
+					TableName:                           aws.String(parityPokemonTable),
+					Key:                                 parityPokemonKey("001"),
+					ConditionExpression:                 aws.String(condition),
+					ReturnValuesOnConditionCheckFailure: mode,
+				}},
+			},
+		})
+		require.Error(t, err)
+
+		return parityCancelReasonSummary(t, err)
+	}
+}
+
+// A condition that matches another item but not the target must still fail the delete.
+func parityCCFDeleteOtherItemMatches(t *testing.T, client *dynamodb.Client) any {
+	t.Helper()
+	ctx := context.Background()
+
+	parityCreatePokemonTable(ctx, t, client)
+	parityCreatePokemon(ctx, t, client, parityPokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	parityCreatePokemon(ctx, t, client, parityPokemon{ID: "002", Type: "fire", Name: "Charmander"})
+
+	_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName:                 aws.String(parityPokemonTable),
+		Key:                       parityPokemonKey("002"),
+		ConditionExpression:       aws.String("#t = :t"),
+		ExpressionAttributeNames:  map[string]string{"#t": "type"},
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":t": &dynamodbtypes.AttributeValueMemberS{Value: "grass"}},
+	})
+	require.Error(t, err)
+
+	out, gerr := client.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(parityPokemonTable), Key: parityPokemonKey("002")})
+	require.NoError(t, gerr)
+
+	return []any{parityCCFItemName(t, err), len(out.Item)}
+}
+
 func TestE2E_ReturnValuesOnConditionCheckFailure(t *testing.T) {
 	const (
 		allOld = dynamodbtypes.ReturnValuesOnConditionCheckFailureAllOld
@@ -189,6 +284,10 @@ func TestE2E_ReturnValuesOnConditionCheckFailure(t *testing.T) {
 		{"TransactDeleteNone", parityCCFTransactDelete(none, failsOnExisting, true)},
 		{"TransactDeleteAllOldMissingItem", parityCCFTransactDelete(allOld, failsOnMissing, false)},
 		{"TransactDeleteInvalidValue", parityCCFTransactDelete(bogus, failsOnExisting, true)},
+		{"UpdateItemInvalidValue", parityCCFUpdate(bogus, failsOnExisting, true)},
+		{"TransactUpdateInvalidValue", parityCCFTransactUpdate(bogus, failsOnExisting, true)},
+		{"TransactConditionCheckInvalidValue", parityCCFTransactConditionCheck(bogus, failsOnExisting, true)},
+		{"DeleteItemConditionMatchesOtherItem", parityCCFDeleteOtherItemMatches},
 	}
 
 	for _, tt := range tests {

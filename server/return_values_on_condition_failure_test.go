@@ -64,13 +64,22 @@ func TestServerReturnValuesOnConditionCheckFailure(t *testing.T) {
 
 			return err
 		},
+		"TransactConditionCheck": func(cli *dynamodb.Client, m mode, cond string) error {
+			_, err := cli.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+				TransactItems: []ddbtypes.TransactWriteItem{{ConditionCheck: &ddbtypes.ConditionCheck{
+					TableName: aws.String("pokemons"), Key: key,
+					ConditionExpression: aws.String(cond), ReturnValuesOnConditionCheckFailure: m,
+				}}},
+			})
+
+			return err
+		},
 	}
 
 	failedItem := func(t *testing.T, err error) map[string]ddbtypes.AttributeValue {
 		t.Helper()
 
-		var ccf *ddbtypes.ConditionalCheckFailedException
-		if errors.As(err, &ccf) {
+		if ccf, ok := errors.AsType[*ddbtypes.ConditionalCheckFailedException](err); ok {
 			return ccf.Item
 		}
 
@@ -112,7 +121,7 @@ func TestServerReturnValuesOnConditionCheckFailure(t *testing.T) {
 				require.Empty(t, failedItem(t, op(setup(true), m, "attribute_not_exists(id)")))
 			}
 
-			require.Empty(t, failedItem(t, op(setup(false), allOld, "attribute_exists(id)")), "a missing item has nothing to return")
+			require.Nil(t, failedItem(t, op(setup(false), allOld, "attribute_exists(id)")), "a missing item has nothing to return")
 		})
 	}
 }

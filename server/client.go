@@ -458,6 +458,10 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(toStringPtr(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	if err := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
@@ -1382,13 +1386,9 @@ func (c *Client) runTransactConditionCheck(i, n int, check *ConditionCheck) erro
 	}
 
 	if !matched {
-		checkErr := &types.ConditionalCheckFailedException{
-			MessageText: core.ErrConditionalRequestFailed.Error(),
-		}
+		mode := string(check.ReturnValuesOnConditionCheckFailure)
 
-		if check.ReturnValuesOnConditionCheckFailure == ddbtypes.ReturnValuesOnConditionCheckFailureAllOld {
-			checkErr.Item = stored
-		}
+		checkErr := core.ConditionalCheckFailed(&mode, stored)
 
 		return newServerTransactionCancelledError(i, n, checkErr)
 	}

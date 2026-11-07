@@ -1067,7 +1067,7 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 
 		if !matched {
-			return nil, conditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, t.getItem(key))
+			return nil, ConditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, t.getItem(key))
 		}
 	}
 
@@ -1284,7 +1284,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		}
 
 		if !matched {
-			return nil, conditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, item)
+			return nil, ConditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, item)
 		}
 	}
 
@@ -1376,7 +1376,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		}
 
 		if !matched {
-			return nil, conditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, item)
+			return nil, ConditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, item)
 		}
 	}
 
@@ -1602,13 +1602,13 @@ func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
 	})
 }
 
-// conditionalCheckFailed builds the error of a failed condition. With
+// ConditionalCheckFailed builds the error of a failed condition. With
 // ReturnValuesOnConditionCheckFailure=ALL_OLD it carries the existing item, if there is one.
-func conditionalCheckFailed(mode *string, item map[string]*types.Item) *types.ConditionalCheckFailedException {
+func ConditionalCheckFailed(mode *string, item map[string]*types.Item) *types.ConditionalCheckFailedException {
 	checkErr := &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
 
 	if mode != nil && *mode == "ALL_OLD" && len(item) > 0 {
-		checkErr.Item = item
+		checkErr.Item = deepCopyItemMap(item)
 	}
 
 	return checkErr

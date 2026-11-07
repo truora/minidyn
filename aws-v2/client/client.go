@@ -486,6 +486,10 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(aws.String(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.UpdateExpression), aws.ToString(input.ConditionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -1337,13 +1341,9 @@ func (fd *Client) runTransactConditionCheck(i, n int, check *types.ConditionChec
 	}
 
 	if !matched {
-		checkErr := &mtypes.ConditionalCheckFailedException{
-			MessageText: core.ErrConditionalRequestFailed.Error(),
-		}
+		mode := string(check.ReturnValuesOnConditionCheckFailure)
 
-		if check.ReturnValuesOnConditionCheckFailure == types.ReturnValuesOnConditionCheckFailureAllOld {
-			checkErr.Item = stored
-		}
+		checkErr := core.ConditionalCheckFailed(&mode, stored)
 
 		return newTransactionCancelledError(i, n, checkErr)
 	}

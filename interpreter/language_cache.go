@@ -16,8 +16,8 @@ const maxParsedExpressions = 1024
 type parsedCondition struct {
 	conditional *language.ConditionalExpression
 	errs        []string
-	// names are the #names the expression uses, in order of first appearance, so alias
-	// validation doesn't need to lex the expression again.
+	// names are the #names the expression uses, in order of first appearance, shared with the
+	// placeholder cache so alias validation doesn't need to lex the expression again.
 	names []string
 	// values are the :values the expression uses, in order of first appearance.
 	values []string
@@ -32,6 +32,49 @@ var conditionCache = struct {
 	m  map[string]*parsedCondition
 }{m: map[string]*parsedCondition{}}
 
+// placeholderCache maps expression text to its #names and :values, scanned in one lexer pass.
+// Placeholders don't depend on the expression kind, so the cache serves condition, filter, key
+// condition, projection and update expressions alike.
+var placeholderCache = struct {
+	mu sync.Mutex
+	m  map[string]scannedPlaceholders
+}{m: map[string]scannedPlaceholders{}}
+
+// scannedPlaceholders are the placeholders of one expression, in order of first appearance.
+type scannedPlaceholders struct {
+	names, values []string
+}
+
+// exprPlaceholders returns the #names and :values expr uses, lexing it only on first use. The
+// returned slices are shared and must not be modified.
+func exprPlaceholders(expr string) (names, values []string) {
+	placeholderCache.mu.Lock()
+	defer placeholderCache.mu.Unlock()
+
+	if sp, ok := placeholderCache.m[expr]; ok {
+		return sp.names, sp.values
+	}
+
+	sp := scannedPlaceholders{}
+	sp.names, sp.values = language.Placeholders(expr)
+
+	if len(placeholderCache.m) >= maxParsedExpressions {
+		clear(placeholderCache.m)
+	}
+
+	placeholderCache.m[expr] = sp
+
+	return sp.names, sp.values
+}
+
+// cachedPlaceholders reports how many expressions have cached placeholders (for tests).
+func cachedPlaceholders() int {
+	placeholderCache.mu.Lock()
+	defer placeholderCache.mu.Unlock()
+
+	return len(placeholderCache.m)
+}
+
 // parseCondition returns the parsed form of expr, parsing it on first use.
 func parseCondition(expr string) *parsedCondition {
 	conditionCache.mu.Lock()
@@ -45,9 +88,8 @@ func parseCondition(expr string) *parsedCondition {
 	pc := &parsedCondition{
 		conditional: p.ParseConditionalExpression(),
 		errs:        p.Errors(),
-		names:       language.UndeclaredExpressionAttributeNames(expr, nil),
-		values:      language.UndeclaredExpressionAttributeValues(expr, func(string) bool { return false }),
 	}
+	pc.names, pc.values = exprPlaceholders(expr)
 
 	if len(pc.errs) == 0 && pc.conditional != nil {
 		pc.operandErr = language.FindOperandCountError(pc.conditional)
@@ -70,8 +112,7 @@ func cachedConditions() int {
 	return len(conditionCache.m)
 }
 
-// validateDeclaredNames is ValidateExpressionAttributeNamesDeclared for an already parsed
-// expression: the first #name missing from aliases is reported.
+// validateDeclaredNames reports the first #name missing from aliases.
 func validateDeclaredNames(expressionType string, names []string, aliases map[string]string) error {
 	for _, name := range names {
 		if _, ok := aliases[name]; !ok {
@@ -82,8 +123,7 @@ func validateDeclaredNames(expressionType string, names []string, aliases map[st
 	return nil
 }
 
-// validateDeclaredValues is ValidateExpressionAttributeValuesDeclared for an already parsed
-// expression: the first :value missing from values is reported.
+// validateDeclaredValues reports the first :value missing from values.
 func validateDeclaredValues(expressionType string, placeholders []string, values map[string]*types.Item) error {
 	for _, name := range placeholders {
 		if _, ok := values[name]; !ok {

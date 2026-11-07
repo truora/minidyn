@@ -972,6 +972,27 @@ func parityUndefinedExpressionAttributeValues(t *testing.T, client *dynamodb.Cli
 		{"Update and condition both undefined", update(dynamodb.UpdateItemInput{
 			UpdateExpression: aws.String("SET a = :u"), ConditionExpression: aws.String("b = :c"),
 		})},
+		{"Update undeclared name, condition value undefined", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET #n = :v"), ConditionExpression: aws.String("b = :nope"),
+			ExpressionAttributeValues: declared,
+		})},
+		{"Update undeclared name and value in one expression", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET #n = :nope"),
+		})},
+		{"Put undeclared name and value", func() error {
+			_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+				TableName: table, Item: key, ConditionExpression: aws.String("#n = :nope"),
+			})
+
+			return err
+		}()},
+		{"Delete undeclared name and value", func() error {
+			_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: table, Key: key, ConditionExpression: aws.String("#n = :nope"),
+			})
+
+			return err
+		}()},
 		{"Update undefined only in update", update(dynamodb.UpdateItemInput{
 			UpdateExpression: aws.String("SET a = :u"), ConditionExpression: aws.String("b = :v"),
 			ExpressionAttributeValues: declared,

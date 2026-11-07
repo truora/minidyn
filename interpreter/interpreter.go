@@ -3,6 +3,7 @@ package interpreter
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/truora/minidyn/interpreter/language"
 	"github.com/truora/minidyn/types"
@@ -80,41 +81,60 @@ func ValidateFunctionOperandCounts(expressionType, expression string) error {
 	return &operandCountError{expressionType: expressionType, cause: parsed.operandErr}
 }
 
-// ValidateExpressionAttributeNamesDeclared returns an error when expression references an
-// attribute name placeholder (#name) that is absent from aliases (ExpressionAttributeNames),
-// matching DynamoDB which reports the first undeclared name. expressionType is the DynamoDB
-// expression label used in the message (e.g. "UpdateExpression", "FilterExpression").
-func ValidateExpressionAttributeNamesDeclared(expressionType, expression string, aliases map[string]string) error {
-	undeclared := language.UndeclaredExpressionAttributeNames(expression, aliases)
-	if len(undeclared) == 0 {
-		return nil
-	}
-
-	return &undeclaredAttributeNameError{expressionType: expressionType, name: undeclared[0]}
+// LabeledExpression is an expression with the DynamoDB label used in its error messages
+// (e.g. "UpdateExpression", "FilterExpression").
+type LabeledExpression struct {
+	Label      string
+	Expression string
 }
 
-// ValidateExpressionAttributeValuesDeclared returns an error when expression references an
-// attribute value placeholder (:value) that is absent from values (ExpressionAttributeValues),
-// matching DynamoDB which reports the first undefined value. expressionType is the DynamoDB
-// expression label used in the message (e.g. "UpdateExpression", "FilterExpression").
-func ValidateExpressionAttributeValuesDeclared(expressionType, expression string, values map[string]*types.Item) error {
-	undeclared := language.UndeclaredExpressionAttributeValues(expression, func(name string) bool {
-		_, ok := values[name]
-
-		return ok
-	})
-	if len(undeclared) == 0 {
-		return nil
+// ValidateExpressionAttributeNamesDeclared returns an error when an expression references an
+// attribute name placeholder (#name) that is absent from aliases (ExpressionAttributeNames),
+// matching DynamoDB which reports the first undeclared name in the order given. Expressions
+// are scanned once and cached.
+func ValidateExpressionAttributeNamesDeclared(aliases map[string]string, exprs ...LabeledExpression) error {
+	for _, e := range exprs {
+		names, _ := exprPlaceholders(e.Expression)
+		if err := validateDeclaredNames(e.Label, names, aliases); err != nil {
+			return err
+		}
 	}
 
-	return &undeclaredAttributeValueError{expressionType: expressionType, value: undeclared[0]}
+	return nil
+}
+
+// ValidateExpressionAttributeValuesDeclared returns an error when an expression references an
+// attribute value placeholder (:value) that is absent from values (ExpressionAttributeValues),
+// matching DynamoDB which reports the first undefined value in the order given. Expressions
+// are scanned once and cached.
+func ValidateExpressionAttributeValuesDeclared(values map[string]*types.Item, exprs ...LabeledExpression) error {
+	for _, e := range exprs {
+		_, names := exprPlaceholders(e.Expression)
+		if err := validateDeclaredValues(e.Label, names, values); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ValidateExpressionPlaceholders checks the placeholders of all of a request's expressions:
+// an undeclared name in any of them is reported before an undefined value, as DynamoDB does.
+func ValidateExpressionPlaceholders(aliases map[string]string, values map[string]*types.Item, exprs ...LabeledExpression) error {
+	if err := ValidateExpressionAttributeNamesDeclared(aliases, exprs...); err != nil {
+		return err
+	}
+
+	return ValidateExpressionAttributeValuesDeclared(values, exprs...)
 }
 
 // HasUndeclaredExpressionAttributeValues reports whether expression references a value
 // placeholder that declared rejects. Front ends use it to let the undefined-value error win
 // over the unused-value one, as DynamoDB does.
 func HasUndeclaredExpressionAttributeValues(expression string, declared func(string) bool) bool {
-	return len(language.UndeclaredExpressionAttributeValues(expression, declared)) > 0
+	_, values := exprPlaceholders(expression)
+
+	return slices.ContainsFunc(values, func(name string) bool { return !declared(name) })
 }
 
 // ExpressionType type of the evaluated expression

@@ -32,20 +32,6 @@ func TestUndeclaredExpressionAttributeValueErrors(t *testing.T) {
 	item := map[string]*types.Item{"id": {S: new("x")}}
 	declared := map[string]*types.Item{":v": {S: new("y")}}
 
-	t.Run("UpdateExpression", func(t *testing.T) {
-		t.Parallel()
-
-		err := li.Update(UpdateInput{Expression: "SET a = :nope", Item: item})
-		assertUndeclaredValueError(t, err, "UpdateExpression", ":nope")
-	})
-
-	t.Run("UpdateExpression with another declared value", func(t *testing.T) {
-		t.Parallel()
-
-		err := li.Update(UpdateInput{Expression: "SET a = :nope", Item: item, Attributes: declared})
-		assertUndeclaredValueError(t, err, "UpdateExpression", ":nope")
-	})
-
 	t.Run("ConditionExpression", func(t *testing.T) {
 		t.Parallel()
 
@@ -83,26 +69,4 @@ func TestUndeclaredExpressionAttributeValueErrors(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
-}
-
-func TestValidateExpressionAttributeValuesDeclared(t *testing.T) {
-	t.Parallel()
-
-	values := map[string]*types.Item{":v": {S: new("y")}}
-
-	assertUndeclaredValueError(t,
-		ValidateExpressionAttributeValuesDeclared("FilterExpression", "a = :v AND b = :x", values),
-		"FilterExpression", ":x")
-
-	if err := ValidateExpressionAttributeValuesDeclared("FilterExpression", "a = :v", values); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !HasUndeclaredExpressionAttributeValues("a = :x", func(n string) bool { return values[n] != nil }) {
-		t.Fatal("expected :x to be undeclared")
-	}
-
-	if HasUndeclaredExpressionAttributeValues("a = :v", func(n string) bool { return values[n] != nil }) {
-		t.Fatal("expected :v to be declared")
-	}
 }

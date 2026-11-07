@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -159,4 +160,27 @@ func TestServerBatchAndTransactGetConsumedCapacity(t *testing.T) {
 	})
 	c.NoError(err)
 	c.Len(tg.ConsumedCapacity, 1)
+}
+
+func TestWireConsumedSliceIsSortedByTableName(t *testing.T) {
+	units := map[string]float64{}
+	want := make([]string, 0, 12)
+
+	for i := range 12 {
+		name := fmt.Sprintf("table-%02d", i)
+		units[name] = 1
+		want = append(want, name)
+	}
+
+	for range 20 {
+		out := wireConsumedSlice(capacity.ModeTotal, units, true)
+		require.Len(t, out, len(want))
+
+		got := make([]string, 0, len(out))
+		for _, cc := range out {
+			got = append(got, cc.TableName)
+		}
+
+		require.Equal(t, want, got)
+	}
 }

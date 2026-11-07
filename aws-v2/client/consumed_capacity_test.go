@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -392,4 +393,27 @@ func TestDeleteItemConsumedCapacityBillsDeletedItemWithoutReturnValues(t *testin
 	c.NoError(err)
 	c.Nil(out.Attributes)
 	c.Equal(20.0, aws.ToFloat64(out.ConsumedCapacity.CapacityUnits))
+}
+
+func TestSDKConsumedSliceIsSortedByTableName(t *testing.T) {
+	units := map[string]float64{}
+	want := make([]string, 0, 12)
+
+	for i := range 12 {
+		name := fmt.Sprintf("table-%02d", i)
+		units[name] = 1
+		want = append(want, name)
+	}
+
+	for range 20 {
+		out := sdkConsumedSlice(capacity.ModeTotal, units, true)
+		require.Len(t, out, len(want))
+
+		got := make([]string, 0, len(out))
+		for _, cc := range out {
+			got = append(got, aws.ToString(cc.TableName))
+		}
+
+		require.Equal(t, want, got)
+	}
 }

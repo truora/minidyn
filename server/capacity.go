@@ -164,35 +164,8 @@ func wireCapacityEntry(c *capacity.Consumed, units float64) Capacity {
 	return entry
 }
 
-// wireConsumedSlice assembles the per-table ConsumedCapacity slice for batch and
-// transactional operations from already-aggregated units. Zero-unit tables are omitted.
+// wireConsumedSlice assembles the per-table ConsumedCapacity slice of batch and transactional reads from the
+// units aggregated per table, sorted by table name.
 func wireConsumedSlice(mode capacity.Mode, unitsByTable map[string]float64, isRead bool) []ConsumedCapacity {
-	if mode == capacity.ModeNone || len(unitsByTable) == 0 {
-		return nil
-	}
-
-	out := make([]ConsumedCapacity, 0, len(unitsByTable))
-
-	for table, units := range unitsByTable {
-		if units == 0 {
-			continue
-		}
-
-		var c *capacity.Consumed
-		if isRead {
-			c = capacity.ForReadUnits(mode, table, units)
-		} else {
-			c = capacity.ForWriteUnits(mode, table, units)
-		}
-
-		if cc := toWireConsumed(c); cc != nil {
-			out = append(out, *cc)
-		}
-	}
-
-	if len(out) == 0 {
-		return nil
-	}
-
-	return out
+	return wireConsumedList(capacity.ConsumedByTable(mode, unitsByTable, isRead))
 }

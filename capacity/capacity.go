@@ -203,16 +203,34 @@ func ForWrite(mode Mode, table string, size int, indexes []IndexWrite) *Consumed
 	return c
 }
 
-// ForReadUnits builds read consumed capacity from already-aggregated units. Used by batch
-// reads, which sum per-item rounded units across a table.
-func ForReadUnits(mode Mode, table string, units float64) *Consumed {
-	return forUnits(mode, table, units, true)
-}
+// ConsumedByTable builds the per-table Consumed list of a batch or transactional read from the
+// units already aggregated per table. It is nil for ModeNone or when nothing was charged,
+// table-sorted otherwise (map order must not leak into the response), with zero-unit tables
+// omitted.
+func ConsumedByTable(mode Mode, unitsByTable map[string]float64, isRead bool) []*Consumed {
+	if mode == ModeNone || len(unitsByTable) == 0 {
+		return nil
+	}
 
-// ForWriteUnits builds write consumed capacity from already-aggregated units. Used by batch
-// and transactional writes, which sum per-item rounded units across a table.
-func ForWriteUnits(mode Mode, table string, units float64) *Consumed {
-	return forUnits(mode, table, units, false)
+	names := make([]string, 0, len(unitsByTable))
+	for name, units := range unitsByTable {
+		if units != 0 {
+			names = append(names, name)
+		}
+	}
+
+	sort.Strings(names)
+
+	out := make([]*Consumed, 0, len(names))
+	for _, name := range names {
+		out = append(out, forUnits(mode, name, unitsByTable[name], isRead))
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return out
 }
 
 // forUnits builds a table-level Consumed from already-aggregated units. At the INDEXES level the

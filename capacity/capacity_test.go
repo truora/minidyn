@@ -2,6 +2,8 @@ package capacity
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/truora/minidyn/types"
@@ -175,33 +177,52 @@ func TestForWrite_WithIndexesBreakdown(t *testing.T) {
 	}
 }
 
-func TestForUnits(t *testing.T) {
-	r := ForReadUnits(ModeTotal, "tbl", 3.5)
-	if r == nil || r.CapacityUnits != 3.5 || r.ReadCapacityUnits != 3.5 || r.WriteCapacityUnits != 0 {
-		t.Fatalf("bad ForReadUnits: %#v", r)
+func TestConsumedByTable(t *testing.T) {
+	r := ConsumedByTable(ModeTotal, map[string]float64{"tbl": 3.5}, true)
+	if len(r) != 1 || r[0].TableName != "tbl" || r[0].CapacityUnits != 3.5 || r[0].ReadCapacityUnits != 3.5 || r[0].WriteCapacityUnits != 0 {
+		t.Fatalf("bad read capacity: %#v", r)
 	}
 
-	w := ForWriteUnits(ModeTotal, "tbl", 4)
-	if w == nil || w.CapacityUnits != 4 || w.WriteCapacityUnits != 4 || w.ReadCapacityUnits != 0 {
-		t.Fatalf("bad ForWriteUnits: %#v", w)
+	w := ConsumedByTable(ModeTotal, map[string]float64{"tbl": 4}, false)
+	if len(w) != 1 || w[0].CapacityUnits != 4 || w[0].WriteCapacityUnits != 4 || w[0].ReadCapacityUnits != 0 {
+		t.Fatalf("bad write capacity: %#v", w)
 	}
 
-	if ForReadUnits(ModeNone, "tbl", 3) != nil || ForWriteUnits(ModeNone, "tbl", 3) != nil {
-		t.Fatalf("ModeNone unit constructors must return nil")
+	if ConsumedByTable(ModeNone, map[string]float64{"tbl": 3}, true) != nil ||
+		ConsumedByTable(ModeTotal, nil, true) != nil ||
+		ConsumedByTable(ModeTotal, map[string]float64{"tbl": 0}, true) != nil {
+		t.Fatalf("NONE, no tables and zero-unit tables must report nothing")
 	}
 }
 
-func TestForUnits_IndexesAttributesToTable(t *testing.T) {
+func TestConsumedByTable_IndexesAttributesToTable(t *testing.T) {
 	// At the INDEXES level aggregated units are attributed to the base-table sub-object; batch
 	// and transactional ops report table totals only, with no per-index breakdown.
-	r := ForReadUnits(ModeIndexes, "tbl", 3.5)
-	if r == nil || !r.Breakdown || r.TableUnits != 3.5 || len(r.Indexes) != 0 {
-		t.Fatalf("bad INDEXES ForReadUnits: %#v", r)
+	r := ConsumedByTable(ModeIndexes, map[string]float64{"tbl": 3.5}, true)
+	if len(r) != 1 || !r[0].Breakdown || r[0].TableUnits != 3.5 || len(r[0].Indexes) != 0 {
+		t.Fatalf("bad INDEXES read capacity: %#v", r)
+	}
+}
+
+func TestConsumedByTable_IsSortedByTableName(t *testing.T) {
+	units := map[string]float64{}
+	want := make([]string, 0, 12)
+
+	for i := range 12 {
+		name := fmt.Sprintf("table-%02d", i)
+		units[name] = 1
+		want = append(want, name)
 	}
 
-	w := ForWriteUnits(ModeIndexes, "tbl", 4)
-	if w == nil || !w.Breakdown || w.TableUnits != 4 || len(w.Indexes) != 0 {
-		t.Fatalf("bad INDEXES ForWriteUnits: %#v", w)
+	for range 20 {
+		var got []string
+		for _, c := range ConsumedByTable(ModeTotal, units, true) {
+			got = append(got, c.TableName)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Fatalf("tables = %v, want %v", got, want)
+		}
 	}
 }
 

@@ -166,36 +166,8 @@ func sdkConsumedList(cs []*capacity.Consumed) []types.ConsumedCapacity {
 	return out
 }
 
-// sdkConsumedSlice assembles the per-table ConsumedCapacity slice used by batch and
-// transactional operations from already-aggregated units. Tables with zero units are
-// omitted; nil is returned when nothing is reported (NONE/unset or empty).
+// sdkConsumedSlice assembles the per-table ConsumedCapacity slice of batch and transactional reads from the
+// units aggregated per table, sorted by table name.
 func sdkConsumedSlice(mode capacity.Mode, unitsByTable map[string]float64, isRead bool) []types.ConsumedCapacity {
-	if mode == capacity.ModeNone || len(unitsByTable) == 0 {
-		return nil
-	}
-
-	out := make([]types.ConsumedCapacity, 0, len(unitsByTable))
-
-	for table, units := range unitsByTable {
-		if units == 0 {
-			continue
-		}
-
-		var c *capacity.Consumed
-		if isRead {
-			c = capacity.ForReadUnits(mode, table, units)
-		} else {
-			c = capacity.ForWriteUnits(mode, table, units)
-		}
-
-		if cc := toSDKConsumed(c); cc != nil {
-			out = append(out, *cc)
-		}
-	}
-
-	if len(out) == 0 {
-		return nil
-	}
-
-	return out
+	return sdkConsumedList(capacity.ConsumedByTable(mode, unitsByTable, isRead))
 }

@@ -613,6 +613,7 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		ExclusiveStartKey:         mapDynamoToTypesMapItem(input.ExclusiveStartKey),
 		FilterExpression:          aws.ToString(input.FilterExpression),
 		ProjectionExpression:      aws.ToString(input.ProjectionExpression),
+		Select:                    string(input.Select),
 		ScanIndexForward:          true,
 		Scan:                      true,
 	})

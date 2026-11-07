@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/truora/minidyn/interpreter/language"
 	"github.com/truora/minidyn/types"
 )
 
@@ -85,4 +87,32 @@ func TestLanguageMatch_cacheIsBounded(t *testing.T) {
 	}
 
 	require.LessOrEqual(t, cachedConditions(), maxParsedExpressions)
+}
+
+func TestLanguageUpdate_parsesEachExpressionOnce(t *testing.T) {
+	expr := "SET cacheOnce = :v"
+
+	first := parseUpdate(expr)
+	require.Same(t, first, parseUpdate(expr))
+	require.Equal(t, [][]language.PathElement{{{Kind: language.PathKindMapKey, Key: "cacheOnce"}}},
+		UpdateTargetPaths(expr, nil, nil))
+	require.Same(t, first, parseUpdate(expr))
+}
+
+func TestLanguageUpdate_cachedSyntaxErrorIsReturnedAgain(t *testing.T) {
+	li := &Language{}
+	input := UpdateInput{Expression: "SET = ="}
+
+	first := li.Update(input)
+	require.ErrorIs(t, first, ErrSyntaxError)
+	require.EqualError(t, li.Update(input), first.Error())
+	require.Empty(t, UpdateTargetPaths(input.Expression, nil, nil))
+}
+
+func TestLanguageUpdate_cacheIsBounded(t *testing.T) {
+	for i := range maxParsedExpressions + 10 {
+		parseUpdate(fmt.Sprintf("SET bounded%d = :v", i))
+	}
+
+	require.LessOrEqual(t, cachedUpdates(), maxParsedExpressions)
 }

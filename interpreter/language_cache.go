@@ -112,6 +112,53 @@ func cachedConditions() int {
 	return len(conditionCache.m)
 }
 
+// parsedUpdate is an update expression parsed once, like parsedCondition.
+type parsedUpdate struct {
+	stmt        *language.UpdateStatement
+	errs        []string
+	unsupported bool
+	operandErr  *language.OperandCountError
+}
+
+// updateCache maps update expression text to its parsed form, bounded by maxParsedExpressions.
+var updateCache = struct {
+	mu sync.Mutex
+	m  map[string]*parsedUpdate
+}{m: map[string]*parsedUpdate{}}
+
+// parseUpdate returns the parsed form of an update expression, parsing it on first use.
+func parseUpdate(expr string) *parsedUpdate {
+	updateCache.mu.Lock()
+	defer updateCache.mu.Unlock()
+
+	if pu, ok := updateCache.m[expr]; ok {
+		return pu
+	}
+
+	p := language.NewUpdateParser(language.NewLexer(expr))
+	pu := &parsedUpdate{stmt: p.ParseUpdateExpression(), errs: p.Errors(), unsupported: p.IsUnsupportedExpression()}
+
+	if len(pu.errs) == 0 && pu.stmt != nil {
+		pu.operandErr = language.FindOperandCountError(pu.stmt)
+	}
+
+	if len(updateCache.m) >= maxParsedExpressions {
+		clear(updateCache.m)
+	}
+
+	updateCache.m[expr] = pu
+
+	return pu
+}
+
+// cachedUpdates reports how many update expressions are cached (for tests).
+func cachedUpdates() int {
+	updateCache.mu.Lock()
+	defer updateCache.mu.Unlock()
+
+	return len(updateCache.m)
+}
+
 // validateDeclaredNames reports the first #name missing from aliases.
 func validateDeclaredNames(expressionType string, names []string, aliases map[string]string) error {
 	for _, name := range names {

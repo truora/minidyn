@@ -217,8 +217,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			},
 		},
 		{
-			name:       "UpdatedOldIncludesUnchangedAttributes",
-			knownIssue: "#165",
+			name: "UpdatedOldIncludesUnchangedAttributes",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

@@ -413,6 +413,10 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 		return nil, mapKnownError(err)
 	}
 
+	if verr := core.ValidateNoneOrAllOldReturnValues(aws.String(string(input.ReturnValues))); verr != nil {
+		return nil, mapKnownError(verr)
+	}
+
 	// support conditional writes
 	if input.ConditionExpression != nil {
 		res, serr := table.SearchData(core.QueryInput{
@@ -436,13 +440,13 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 		return nil, mapKnownError(err)
 	}
 
-	if string(input.ReturnValues) == "ALL_OLD" {
-		return &dynamodb.DeleteItemOutput{
-			Attributes: mapTypesToDynamoMapItem(item),
-		}, nil
+	if item == nil {
+		return &dynamodb.DeleteItemOutput{}, nil
 	}
 
-	return &dynamodb.DeleteItemOutput{}, nil
+	return &dynamodb.DeleteItemOutput{
+		Attributes: mapTypesToDynamoMapItem(item),
+	}, nil
 }
 
 // UpdateItem mock response for dynamodb

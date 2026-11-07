@@ -3946,3 +3946,49 @@ func TestListIndexPastTheEnd(t *testing.T) {
 	})
 	c.True(errors.As(err, &ccf), "%v", err)
 }
+
+func TestDeleteItemInvalidReturnValues(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+	ctx := context.Background()
+
+	c.NoError(ensurePokemonTable(client))
+	c.NoError(createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"}))
+
+	for _, rv := range []dynamodbtypes.ReturnValue{
+		dynamodbtypes.ReturnValueAllNew,
+		dynamodbtypes.ReturnValueUpdatedOld,
+		dynamodbtypes.ReturnValueUpdatedNew,
+		"BOGUS",
+	} {
+		for _, cond := range []*string{nil, aws.String("#t = :t")} {
+			input := &dynamodb.DeleteItemInput{
+				TableName: aws.String(tableName),
+				Key: map[string]dynamodbtypes.AttributeValue{
+					"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"},
+				},
+				ReturnValues: rv,
+			}
+
+			if cond != nil {
+				input.ConditionExpression = cond
+				input.ExpressionAttributeNames = map[string]string{"#t": "type"}
+				input.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{
+					":t": &dynamodbtypes.AttributeValueMemberS{Value: "fire"},
+				}
+			}
+
+			_, err := client.DeleteItem(ctx, input)
+			c.Error(err, string(rv))
+			c.Contains(err.Error(), "ValidationException")
+			c.Contains(err.Error(), "Return values set to invalid value")
+		}
+	}
+
+	out, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key:       map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}},
+	})
+	c.NoError(err)
+	c.NotEmpty(out.Item)
+}

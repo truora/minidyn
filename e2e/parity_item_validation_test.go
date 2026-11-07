@@ -140,6 +140,106 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
+			name: "DeleteItemInvalidReturnValues",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				errs := map[string]string{}
+
+				for _, rv := range []dynamodbtypes.ReturnValue{
+					dynamodbtypes.ReturnValueAllNew,
+					dynamodbtypes.ReturnValueUpdatedOld,
+					dynamodbtypes.ReturnValueUpdatedNew,
+					"BOGUS",
+				} {
+					_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+						TableName: aws.String(parityPokemonTable),
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "007"},
+						},
+						ReturnValues: rv,
+					})
+					require.Error(t, err)
+
+					errs[string(rv)] = normalizeSDKErrorString(err.Error())
+				}
+
+				return []any{errs, len(parityGetPokemon(ctx, t, client, "007")) > 0}
+			},
+		},
+		{
+			name: "DeleteItemInvalidReturnValuesMissingItem",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "does-not-exist"},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueAllNew,
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
+			name: "DeleteItemInvalidReturnValuesFailingCondition",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"id": &dynamodbtypes.AttributeValueMemberS{Value: "007"},
+					},
+					ConditionExpression: aws.String("#t = :t"),
+					ExpressionAttributeNames: map[string]string{
+						"#t": "type",
+					},
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+						":t": &dynamodbtypes.AttributeValueMemberS{Value: "fire"},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueAllNew,
+				})
+				require.Error(t, err)
+
+				var ccf *dynamodbtypes.ConditionalCheckFailedException
+
+				return []any{errors.As(err, &ccf), normalizeSDKErrorString(err.Error()), len(parityGetPokemon(ctx, t, client, "007")) > 0}
+			},
+		},
+		{
+			name: "DeleteItemInvalidReturnValuesInvalidKey",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+					TableName: aws.String(parityPokemonTable),
+					Key: map[string]dynamodbtypes.AttributeValue{
+						"nope": &dynamodbtypes.AttributeValueMemberS{Value: "007"},
+					},
+					ReturnValues: dynamodbtypes.ReturnValueAllNew,
+				})
+				require.Error(t, err)
+
+				return normalizeSDKErrorString(err.Error())
+			},
+		},
+		{
 			name: "GetItemTableNotFound",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()

@@ -784,7 +784,7 @@ func (t *Table) Restore(s TableSnapshot) {
 // Put puts an item into the table. It returns the item it replaced when
 // ReturnValues is ALL_OLD, and nil otherwise (or when there was none).
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) { //nolint:gocognit // conditional write, key resolution, GSI updates
-	if err := validatePutItemReturnValues(input.ReturnValues); err != nil {
+	if err := ValidateNoneOrAllOldReturnValues(input.ReturnValues); err != nil {
 		return nil, err
 	}
 
@@ -847,7 +847,9 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 	return t.LangInterpreter.Update(input)
 }
 
-func validatePutItemReturnValues(rv *string) error {
+// ValidateNoneOrAllOldReturnValues accepts the ReturnValues modes that PutItem
+// and DeleteItem support: empty, NONE and ALL_OLD.
+func ValidateNoneOrAllOldReturnValues(rv *string) error {
 	if rv == nil {
 		return nil
 	}
@@ -1061,6 +1063,10 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 // Delete deletes an item in the table based on the input
 func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) { //nolint:gocognit,gocyclo // conditional delete, key resolution, index cleanup
+	if err := ValidateNoneOrAllOldReturnValues(input.ReturnValues); err != nil {
+		return nil, err
+	}
+
 	if err := types.ValidateItemMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
@@ -1120,7 +1126,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 
 	pos := sort.SearchStrings(t.SortedKeys, key)
 	if pos == len(t.SortedKeys) {
-		return item, nil
+		return deleteReturnAttributes(input.ReturnValues, item), nil
 	}
 
 	copy(t.SortedKeys[pos:], t.SortedKeys[pos+1:])
@@ -1134,7 +1140,15 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		}
 	}
 
-	return item, nil
+	return deleteReturnAttributes(input.ReturnValues, item), nil
+}
+
+func deleteReturnAttributes(rv *string, old map[string]*types.Item) map[string]*types.Item {
+	if rv == nil || *rv != "ALL_OLD" {
+		return nil
+	}
+
+	return old
 }
 
 // Description returns the description of a table

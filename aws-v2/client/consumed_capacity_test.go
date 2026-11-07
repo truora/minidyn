@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -357,4 +358,45 @@ func TestTransactWriteItemsConsumedCapacityDoublesWrite(t *testing.T) {
 		2*aws.ToFloat64(batch.ConsumedCapacity[0].CapacityUnits),
 		aws.ToFloat64(txn.ConsumedCapacity[0].CapacityUnits),
 	)
+}
+
+func TestPutItemConsumedCapacityIndexesChargesGSI(t *testing.T) {
+	c := require.New(t)
+	client := setupCapacityClient(t)
+	c.NoError(ensurePokemonTypeIndex(client))
+
+	out, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item: map[string]dynamodbtypes.AttributeValue{
+			"id":   &dynamodbtypes.AttributeValueMemberS{Value: "010"},
+			"type": &dynamodbtypes.AttributeValueMemberS{Value: "bug"},
+		},
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityIndexes,
+	})
+	c.NoError(err)
+	c.NotNil(out.ConsumedCapacity)
+	c.Contains(out.ConsumedCapacity.GlobalSecondaryIndexes, "by-type")
+}
+
+func TestDeleteItemConsumedCapacityBillsDeletedItemWithoutReturnValues(t *testing.T) {
+	c := require.New(t)
+	client := setupCapacityClient(t)
+
+	_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(tableName),
+		Item: map[string]dynamodbtypes.AttributeValue{
+			"id":   &dynamodbtypes.AttributeValueMemberS{Value: "big"},
+			"name": &dynamodbtypes.AttributeValueMemberS{Value: strings.Repeat("x", 20000)},
+		},
+	})
+	c.NoError(err)
+
+	out, err := client.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName:              aws.String(tableName),
+		Key:                    keyID("big"),
+		ReturnConsumedCapacity: dynamodbtypes.ReturnConsumedCapacityTotal,
+	})
+	c.NoError(err)
+	c.Nil(out.Attributes)
+	c.Equal(20.0, aws.ToFloat64(out.ConsumedCapacity.CapacityUnits))
 }

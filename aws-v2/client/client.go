@@ -406,7 +406,7 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 		ConsumedCapacity: toSDKConsumed(capacity.ForWrite(
 			consumedMode(string(input.ReturnConsumedCapacity)),
 			aws.ToString(input.TableName), max(oldSize, newSize),
-			indexWrites(table, item),
+			indexWrites(table, putInput.Item),
 		)),
 	}, nil
 }

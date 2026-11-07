@@ -369,7 +369,7 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		ConsumedCapacity: toWireConsumed(capacity.ForWrite(
 			consumedMode(string(input.ReturnConsumedCapacity)),
 			aws.ToString(input.TableName), max(oldSize, newSize),
-			indexWrites(table, item),
+			indexWrites(table, putItem),
 		)),
 	}, nil
 }

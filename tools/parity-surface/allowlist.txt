@@ -49,11 +49,6 @@ request DeleteItemInput.ReturnValuesOnConditionCheckFailure
 request Put.ReturnValuesOnConditionCheckFailure
 request PutItemInput.ReturnValuesOnConditionCheckFailure
 
-# accepted: minidyn reads are always consistent
-request GetItemInput.ConsistentRead
-request QueryInput.ConsistentRead
-request ScanInput.ConsistentRead
-
 # not emulated: PartiQL
 operation BatchExecuteStatement
 operation ExecuteStatement
@@ -66,34 +61,15 @@ operation UpdateTimeToLive
 # not emulated: account limits
 operation DescribeLimits
 
-# not emulated: capacity and item collection metrics
-request BatchGetItemInput.ReturnConsumedCapacity
-request BatchWriteItemInput.ReturnConsumedCapacity
+# not emulated: item collection metrics
 request BatchWriteItemInput.ReturnItemCollectionMetrics
-request DeleteItemInput.ReturnConsumedCapacity
 request DeleteItemInput.ReturnItemCollectionMetrics
-request GetItemInput.ReturnConsumedCapacity
-request QueryInput.ReturnConsumedCapacity
-request ScanInput.ReturnConsumedCapacity
-request TransactGetItemsInput.ReturnConsumedCapacity
-request TransactWriteItemsInput.ReturnConsumedCapacity
 request TransactWriteItemsInput.ReturnItemCollectionMetrics
-request UpdateItemInput.ReturnConsumedCapacity
 request UpdateItemInput.ReturnItemCollectionMetrics
-response BatchGetItemOutput.ConsumedCapacity
-response BatchWriteItemOutput.ConsumedCapacity
 response BatchWriteItemOutput.ItemCollectionMetrics
-response DeleteItemOutput.ConsumedCapacity
 response DeleteItemOutput.ItemCollectionMetrics
-response GetItemOutput.ConsumedCapacity
-response PutItemOutput.ConsumedCapacity
 response PutItemOutput.ItemCollectionMetrics
-response QueryOutput.ConsumedCapacity
-response ScanOutput.ConsumedCapacity
-response TransactGetItemsOutput.ConsumedCapacity
-response TransactWriteItemsOutput.ConsumedCapacity
 response TransactWriteItemsOutput.ItemCollectionMetrics
-response UpdateItemOutput.ConsumedCapacity
 response UpdateItemOutput.ItemCollectionMetrics
 
 # not emulated: deployment metadata

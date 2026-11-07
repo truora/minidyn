@@ -29,6 +29,8 @@ type index struct {
 	Table      *Table
 	refs       map[string]string
 	createdAt  time.Time
+	// provisionedThroughput is what the index was created with (nil for on-demand tables).
+	provisionedThroughput *types.ProvisionedThroughput
 }
 
 func newIndex(t *Table, typ indexType, ks keySchema) *index {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -33,17 +34,18 @@ type QueryInput struct {
 
 // Table struct to mock a dynamodb table
 type Table struct {
-	Name                 string
-	Indexes              map[string]*index
-	AttributesDef        map[string]string
-	SortedKeys           []string
-	Data                 map[string]map[string]*types.Item
-	KeySchema            keySchema
-	BillingMode          *string
-	UseNativeInterpreter bool
-	NativeInterpreter    interpreter.Native
-	LangInterpreter      interpreter.Language
-	IndexActivationDelay time.Duration
+	Name                  string
+	Indexes               map[string]*index
+	AttributesDef         map[string]string
+	SortedKeys            []string
+	Data                  map[string]map[string]*types.Item
+	KeySchema             keySchema
+	BillingMode           *string
+	ProvisionedThroughput *types.ProvisionedThroughput
+	UseNativeInterpreter  bool
+	NativeInterpreter     interpreter.Native
+	LangInterpreter       interpreter.Language
+	IndexActivationDelay  time.Duration
 }
 
 // NewTable creates a new Table
@@ -111,6 +113,7 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	}
 
 	t.KeySchema = ks
+	t.ProvisionedThroughput = input.ProvisionedThroughput
 
 	return nil
 }
@@ -174,6 +177,7 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 
 	i := newIndex(t, indexTypeGlobal, ks)
 	i.projection = gsiInput.Projection
+	i.provisionedThroughput = gsiInput.ProvisionedThroughput
 
 	return i, nil
 }
@@ -1160,16 +1164,84 @@ func deleteReturnAttributes(rv *string, old map[string]*types.Item) map[string]*
 
 // Description returns the description of a table
 func (t *Table) Description(name string) *types.TableDescription {
-	// TODO: implement other fields for TableDescription
 	gsi, lsi := t.IndexesDescription()
 
+	// minidyn tables are always ready, and deletion protection is not supported.
 	return &types.TableDescription{
-		TableName:              name,
-		ItemCount:              int64(len(t.SortedKeys)),
-		KeySchema:              t.KeySchema.describe(),
-		GlobalSecondaryIndexes: gsi,
-		LocalSecondaryIndexes:  lsi,
+		TableName:                 name,
+		TableStatus:               "ACTIVE",
+		AttributeDefinitions:      t.attributeDefinitionsDescription(),
+		BillingModeSummary:        t.billingModeSummary(),
+		ProvisionedThroughput:     t.provisionedThroughputDescription(),
+		DeletionProtectionEnabled: new(false),
+		ItemCount:                 int64(len(t.SortedKeys)),
+		KeySchema:                 t.KeySchema.describe(),
+		GlobalSecondaryIndexes:    gsi,
+		LocalSecondaryIndexes:     lsi,
 	}
+}
+
+func (t *Table) isOnDemand() bool {
+	return types.StringValue(t.BillingMode) == "PAY_PER_REQUEST"
+}
+
+// attributeDefinitionsDescription lists the attributes used by the key schemas of the table
+// and its indexes, as DynamoDB does, ordered by name.
+func (t *Table) attributeDefinitionsDescription() []types.AttributeDefinition {
+	used := map[string]struct{}{}
+
+	schemas := []keySchema{t.KeySchema}
+	for _, index := range t.Indexes {
+		schemas = append(schemas, index.keySchema)
+	}
+
+	for _, ks := range schemas {
+		used[ks.HashKey] = struct{}{}
+
+		if ks.RangeKey != "" {
+			used[ks.RangeKey] = struct{}{}
+		}
+	}
+
+	names := make([]string, 0, len(used))
+
+	for attrName := range used {
+		if _, ok := t.AttributesDef[attrName]; ok {
+			names = append(names, attrName)
+		}
+	}
+
+	sort.Strings(names)
+
+	defs := make([]types.AttributeDefinition, 0, len(names))
+	for _, attrName := range names {
+		defs = append(defs, types.AttributeDefinition{
+			AttributeName: new(attrName),
+			AttributeType: new(t.AttributesDef[attrName]),
+		})
+	}
+
+	return defs
+}
+
+func (t *Table) billingModeSummary() *types.BillingModeSummary {
+	if !t.isOnDemand() {
+		return nil
+	}
+
+	return &types.BillingModeSummary{BillingMode: "PAY_PER_REQUEST"}
+}
+
+// provisionedThroughputDescription reports the requested capacity, or 0/0 for on-demand tables
+// whatever capacity the request carried.
+func (t *Table) provisionedThroughputDescription() *types.ProvisionedThroughput {
+	if t.isOnDemand() || t.ProvisionedThroughput == nil {
+		return &types.ProvisionedThroughput{}
+	}
+
+	throughput := *t.ProvisionedThroughput
+
+	return &throughput
 }
 
 // IndexesDescription returns the description of the table indexes
@@ -1178,38 +1250,95 @@ func (t *Table) IndexesDescription() ([]types.GlobalSecondaryIndexDescription, [
 	lsi := []types.LocalSecondaryIndexDescription{}
 
 	for indexName, index := range t.Indexes {
-		schema := index.keySchema.describe()
-		count := index.count()
-
 		switch index.typ {
 		case indexTypeGlobal:
-			{
-				status := "ACTIVE"
-				if t.IndexActivationDelay > 0 && time.Since(index.createdAt) < t.IndexActivationDelay {
-					status = "CREATING"
-				}
-
-				gsi = append(gsi, types.GlobalSecondaryIndexDescription{
-					IndexName:   &indexName,
-					ItemCount:   count,
-					KeySchema:   schema,
-					Projection:  index.projection,
-					IndexStatus: &status,
-				})
-			}
+			gsi = append(gsi, t.globalIndexDescription(indexName, index))
 		case indexTypeLocal:
-			{
-				lsi = append(lsi, types.LocalSecondaryIndexDescription{
-					IndexName:  &indexName,
-					ItemCount:  count,
-					KeySchema:  schema,
-					Projection: index.projection,
-				})
-			}
+			lsi = append(lsi, types.LocalSecondaryIndexDescription{
+				IndexName:  &indexName,
+				ItemCount:  index.count(),
+				KeySchema:  index.keySchema.describe(),
+				Projection: index.projection,
+			})
 		}
 	}
 
 	return gsi, lsi
+}
+
+func (t *Table) globalIndexDescription(indexName string, index *index) types.GlobalSecondaryIndexDescription {
+	status := "ACTIVE"
+	if t.IndexActivationDelay > 0 && time.Since(index.createdAt) < t.IndexActivationDelay {
+		status = "CREATING"
+	}
+
+	return types.GlobalSecondaryIndexDescription{
+		IndexName:             &indexName,
+		ItemCount:             index.count(),
+		KeySchema:             index.keySchema.describe(),
+		Projection:            index.projection,
+		IndexStatus:           &status,
+		ProvisionedThroughput: index.provisionedThroughput,
+	}
+}
+
+// ApplyIndexChanges applies the global secondary index changes in order and returns the
+// description of the table as DynamoDB reports it in an UpdateTable response: created indexes
+// carry their creation markers and deleted ones are still listed, as DELETING. On error the
+// description of the table is still returned.
+func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryIndexUpdate) (*types.TableDescription, error) {
+	var (
+		created []string
+		dropped []types.GlobalSecondaryIndexDescription
+		err     error
+	)
+
+	for _, change := range changes {
+		var droppedDesc *types.GlobalSecondaryIndexDescription
+
+		if change.Delete != nil {
+			if idx, ok := t.Indexes[*change.Delete.IndexName]; ok {
+				d := t.globalIndexDescription(*change.Delete.IndexName, idx)
+				d.IndexStatus = new("DELETING")
+				droppedDesc = &d
+			}
+		}
+
+		if err = t.ApplyIndexChange(change); err != nil {
+			break
+		}
+
+		if change.Create != nil {
+			created = append(created, *change.Create.IndexName)
+		}
+
+		if droppedDesc != nil {
+			dropped = append(dropped, *droppedDesc)
+		}
+	}
+
+	desc := t.Description(name)
+	for i := range desc.GlobalSecondaryIndexes {
+		if slices.Contains(created, *desc.GlobalSecondaryIndexes[i].IndexName) {
+			t.markIndexCreating(&desc.GlobalSecondaryIndexes[i])
+		}
+	}
+
+	desc.GlobalSecondaryIndexes = append(desc.GlobalSecondaryIndexes, dropped...)
+
+	return desc, err
+}
+
+// markIndexCreating sets the fields DynamoDB reports for an index created by UpdateTable.
+func (t *Table) markIndexCreating(g *types.GlobalSecondaryIndexDescription) {
+	g.Backfilling = new(false)
+
+	if t.isOnDemand() {
+		g.OnDemandThroughput = &types.OnDemandThroughput{
+			MaxReadRequestUnits:  new(int64(-1)),
+			MaxWriteRequestUnits: new(int64(-1)),
+		}
+	}
 }
 
 func handleConditionalCheckError(input *types.UpdateItemInput, checkErr *types.ConditionalCheckFailedException, item map[string]*types.Item) {

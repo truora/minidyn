@@ -119,8 +119,8 @@ func runFuzzSeed(t *testing.T, seed uint64, ops int, known bool) {
 		}
 	}
 
-	stateM := fuzzScansOnly(normalizeTrace(captureFinalState(t, minidynEP, []string{fuzzTable})))
-	stateL := fuzzScansOnly(normalizeTrace(captureFinalState(t, localEP, []string{fuzzTable})))
+	stateM := normalizeTrace(captureFinalState(t, minidynEP, []string{fuzzTable}))
+	stateL := normalizeTrace(captureFinalState(t, localEP, []string{fuzzTable}))
 
 	if diffs := diffEntries("final state", fuzzNormalizeAll(stateM), fuzzNormalizeAll(stateL)); len(diffs) > 0 {
 		t.Fatalf("%s", fuzzReport(seed, known, "final state", recL.snapshot(), strings.Join(diffs, "\n")))
@@ -129,20 +129,6 @@ func runFuzzSeed(t *testing.T, seed uint64, ops int, known bool) {
 
 // fuzzComparable is what must match for one call. Outside known mode, error messages are
 // not compared (only the exception type): many validation messages differ (#164).
-// fuzzScansOnly drops DescribeTable from a final-state snapshot: table descriptions are a
-// known gap (#151) and the fuzzer never changes the schema.
-func fuzzScansOnly(entries []traceEntry) []traceEntry {
-	out := entries[:0:0]
-
-	for _, e := range entries {
-		if e.Op != "DescribeTable" {
-			out = append(out, e)
-		}
-	}
-
-	return out
-}
-
 func fuzzComparable(e traceEntry, known bool) map[string]any {
 	resp := e.Response
 

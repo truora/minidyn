@@ -970,6 +970,8 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 			return errObj
 		}
 
+		// resolveNestedTarget only returns a target whose container matches the accessor, so
+		// Set cannot fail here.
 		return addToTarget(path.target, val, func(created Object) { _ = path.pos.Set(path.container, created) })
 	}
 
@@ -1076,6 +1078,7 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 		}
 
 		return deleteFromTarget(path.target, val, func() {
+			// The target exists in a container that matches the accessor, so Remove cannot fail.
 			_ = path.pos.Remove(path.container)
 			env.MarkToCompact(path.container)
 		})

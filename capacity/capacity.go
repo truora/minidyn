@@ -1,6 +1,7 @@
 package capacity
 
 import (
+	"fmt"
 	"math"
 	"sort"
 
@@ -24,16 +25,21 @@ const (
 	ModeIndexes Mode = "INDEXES"
 )
 
-// ParseMode maps a ReturnConsumedCapacity string ("", "NONE", "TOTAL", "INDEXES") to a Mode.
-// Unset and any unknown value map to ModeNone.
-func ParseMode(s string) Mode {
+// ParseMode maps a ReturnConsumedCapacity string ("", "NONE", "TOTAL", "INDEXES") to a Mode. An
+// unset value is NONE. Like DynamoDB it matches case sensitively and rejects anything else with
+// a ValidationException, so callers validate before doing any work.
+func ParseMode(s string) (Mode, error) {
 	switch s {
+	case "", string(ModeNone):
+		return ModeNone, nil
 	case string(ModeTotal):
-		return ModeTotal
+		return ModeTotal, nil
 	case string(ModeIndexes):
-		return ModeIndexes
+		return ModeIndexes, nil
 	default:
-		return ModeNone
+		return ModeNone, types.NewError("ValidationException", fmt.Sprintf(
+			"1 validation error detected: Value '%s' at 'returnConsumedCapacity' failed to satisfy constraint: "+
+				"Member must satisfy enum value set: [INDEXES, TOTAL, NONE]", s), nil)
 	}
 }
 

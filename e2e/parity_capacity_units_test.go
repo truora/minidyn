@@ -2,12 +2,14 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -306,5 +308,139 @@ func TestE2E_ConsumedCapacityExactWrites(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			RunE2E(t, tt.fn)
 		})
+	}
+}
+
+// TestE2E_ConsumedCapacityInvalidMode covers a ReturnConsumedCapacity value outside the enum
+// ("FOO", or "total" since values are case sensitive), on every operation that accepts it.
+//
+// This is not a RunE2E parity case because DynamoDB Local does not validate the value: it
+// accepts it and answers as if it were NONE. DynamoDB itself rejects it with a
+// ValidationException, so minidyn follows the service and this test pins both sides: minidyn
+// must return the service's validation error, and DynamoDB Local must keep accepting the
+// value (when that stops being true, Local started validating and this should become a
+// RunE2E parity case).
+func TestE2E_ConsumedCapacityInvalidMode(t *testing.T) {
+	ops := map[string]func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error{
+		"GetItem": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+				TableName: aws.String(parityPokemonTable), Key: capacityKey("1"), ReturnConsumedCapacity: mode,
+			})
+
+			return err
+		},
+		"PutItem": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+				TableName: aws.String(parityPokemonTable), Item: capacityKey("1"), ReturnConsumedCapacity: mode,
+			})
+
+			return err
+		},
+		"UpdateItem": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+				TableName: aws.String(parityPokemonTable), Key: capacityKey("1"), ReturnConsumedCapacity: mode,
+				UpdateExpression:          aws.String("SET #n = :n"),
+				ExpressionAttributeNames:  map[string]string{"#n": "name"},
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":n": capacityStrValue("s")},
+			})
+
+			return err
+		},
+		"DeleteItem": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: aws.String(parityPokemonTable), Key: capacityKey("1"), ReturnConsumedCapacity: mode,
+			})
+
+			return err
+		},
+		"Query": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.Query(ctx, &dynamodb.QueryInput{
+				TableName: aws.String(parityPokemonTable), ReturnConsumedCapacity: mode,
+				KeyConditionExpression:    aws.String("id = :id"),
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":id": capacityStrValue("1")},
+			})
+
+			return err
+		},
+		"Scan": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.Scan(ctx, &dynamodb.ScanInput{
+				TableName: aws.String(parityPokemonTable), ReturnConsumedCapacity: mode,
+			})
+
+			return err
+		},
+		"BatchGetItem": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{
+				ReturnConsumedCapacity: mode,
+				RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+					parityPokemonTable: {Keys: []map[string]dynamodbtypes.AttributeValue{capacityKey("1")}},
+				},
+			})
+
+			return err
+		},
+		"BatchWriteItem": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+				ReturnConsumedCapacity: mode,
+				RequestItems: map[string][]dynamodbtypes.WriteRequest{
+					parityPokemonTable: {{PutRequest: &dynamodbtypes.PutRequest{Item: capacityKey("1")}}},
+				},
+			})
+
+			return err
+		},
+		"TransactGetItems": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.TransactGetItems(ctx, &dynamodb.TransactGetItemsInput{
+				ReturnConsumedCapacity: mode,
+				TransactItems: []dynamodbtypes.TransactGetItem{
+					{Get: &dynamodbtypes.Get{TableName: aws.String(parityPokemonTable), Key: capacityKey("1")}},
+				},
+			})
+
+			return err
+		},
+		"TransactWriteItems": func(ctx context.Context, client *dynamodb.Client, mode dynamodbtypes.ReturnConsumedCapacity) error {
+			_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+				ReturnConsumedCapacity: mode,
+				TransactItems: []dynamodbtypes.TransactWriteItem{
+					{Put: &dynamodbtypes.Put{TableName: aws.String(parityPokemonTable), Item: capacityKey("1")}},
+				},
+			})
+
+			return err
+		},
+	}
+
+	const wantFormat = "1 validation error detected: Value '%s' at 'returnConsumedCapacity' failed to " +
+		"satisfy constraint: Member must satisfy enum value set: [INDEXES, TOTAL, NONE]"
+
+	for _, mode := range []dynamodbtypes.ReturnConsumedCapacity{"FOO", "total"} {
+		for name, op := range ops {
+			t.Run(fmt.Sprintf("%s/%s", name, mode), func(t *testing.T) {
+				t.Run("minidyn", func(t *testing.T) {
+					ctx := context.Background()
+					client := newTracedSDKClient(t, setupMinidynEndpoint(t), &traceRecorder{})
+					parityCreatePokemonTable(ctx, t, client)
+
+					err := op(ctx, client, mode)
+					require.Error(t, err)
+
+					var apiErr smithy.APIError
+
+					require.ErrorAs(t, err, &apiErr)
+					require.Equal(t, "ValidationException", apiErr.ErrorCode())
+					require.Equal(t, fmt.Sprintf(wantFormat, mode), apiErr.ErrorMessage())
+				})
+
+				t.Run("dynamodb-local", func(t *testing.T) {
+					ctx := context.Background()
+					client := newTracedSDKClient(t, setupDynamoDBLocalEndpoint(t), &traceRecorder{})
+					parityCreatePokemonTable(ctx, t, client)
+
+					// DynamoDB Local does not validate the value.
+					require.NoError(t, op(ctx, client, mode))
+				})
+			})
+		}
 	}
 }

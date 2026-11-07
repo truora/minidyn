@@ -1,19 +1,49 @@
 package capacity
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/truora/minidyn/types"
+)
 
 func TestParseMode(t *testing.T) {
 	cases := map[string]Mode{
-		"":         ModeNone,
-		"NONE":     ModeNone,
-		"TOTAL":    ModeTotal,
-		"INDEXES":  ModeIndexes,
-		"whatever": ModeNone,
+		"":        ModeNone,
+		"NONE":    ModeNone,
+		"TOTAL":   ModeTotal,
+		"INDEXES": ModeIndexes,
 	}
 
 	for in, want := range cases {
-		if got := ParseMode(in); got != want {
+		got, err := ParseMode(in)
+		if err != nil {
+			t.Errorf("ParseMode(%q) returned error %v", in, err)
+		}
+
+		if got != want {
 			t.Errorf("ParseMode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// DynamoDB rejects values outside the enum, and matches them case sensitively.
+func TestParseModeRejectsValuesOutsideTheEnum(t *testing.T) {
+	for _, in := range []string{"FOO", "total", "Indexes", " TOTAL"} {
+		got, err := ParseMode(in)
+		if err == nil {
+			t.Fatalf("ParseMode(%q) = %q, want a validation error", in, got)
+		}
+
+		var apiErr types.Error
+		if !errors.As(err, &apiErr) || apiErr.Code() != "ValidationException" {
+			t.Fatalf("ParseMode(%q) error = %#v, want a ValidationException", in, err)
+		}
+
+		want := "1 validation error detected: Value '" + in + "' at 'returnConsumedCapacity' failed to " +
+			"satisfy constraint: Member must satisfy enum value set: [INDEXES, TOTAL, NONE]"
+		if apiErr.Message() != want {
+			t.Fatalf("ParseMode(%q) message = %q, want %q", in, apiErr.Message(), want)
 		}
 	}
 }

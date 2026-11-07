@@ -323,6 +323,11 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
 	}
@@ -341,8 +346,6 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	}
 
 	putItem := mapAttributeValueMapToTypes(input.Item)
-
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
 	var before map[string]*types.Item
 	if mode != capacity.ModeNone {
@@ -377,6 +380,11 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
 	}
@@ -397,8 +405,6 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	deleteKey := mapAttributeValueMapToTypes(input.Key)
 
 	// Delete only returns the old item for ALL_OLD, so measure it before deleting.
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
-
 	var stored map[string]*types.Item
 	if mode != capacity.ModeNone {
 		stored = table.StoredItem(deleteKey)
@@ -433,6 +439,11 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
 	}
@@ -452,8 +463,6 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 	}
 
 	updateKeyMap := mapAttributeValueMapToTypes(input.Key)
-
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
 	var before map[string]*types.Item
 	if mode != capacity.ModeNone {
@@ -492,6 +501,11 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
@@ -535,7 +549,7 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 	return &GetItemOutput{
 		Item: item,
 		ConsumedCapacity: toWireConsumed(capacity.ForRead(
-			consumedMode(string(input.ReturnConsumedCapacity)),
+			mode,
 			aws.ToString(input.TableName), "", "",
 			capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
 		)),
@@ -546,6 +560,11 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
 		return nil, ferr
@@ -597,7 +616,7 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 	}
 
 	out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
-		consumedMode(string(input.ReturnConsumedCapacity)),
+		mode,
 		aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
 		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
 	))
@@ -609,6 +628,11 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
 		return nil, ferr
@@ -655,7 +679,7 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 	}
 
 	out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
-		consumedMode(string(input.ReturnConsumedCapacity)),
+		mode,
 		aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
 		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
 	))
@@ -735,13 +759,17 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 		return nil, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
 
 	unprocessed := map[string][]WriteRequest{}
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 	acc := capacity.NewWriteAccumulator()
 
 	for tableName, reqs := range input.RequestItems {
@@ -865,6 +893,11 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 		return nil, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
@@ -893,7 +926,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	return &BatchGetItemOutput{
 		Responses:        responses,
 		UnprocessedKeys:  unprocessed,
-		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, true),
+		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable, true),
 	}, nil
 }
 
@@ -998,6 +1031,11 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
 	}
@@ -1006,8 +1044,6 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	if err != nil {
 		return nil, err
 	}
-
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
 	// Sizes are measured before the writes: a delete bills the item it removes and an update
 	// the larger of the item before and after.
@@ -1180,6 +1216,11 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 		return nil, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	responses := make([]ItemResponse, 0, len(input.TransactItems))
 	unitsByTable := map[string]float64{}
 
@@ -1203,7 +1244,7 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 
 	return &TransactGetItemsOutput{
 		Responses:        responses,
-		ConsumedCapacity: wireConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, true),
+		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable, true),
 	}, nil
 }
 

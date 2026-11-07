@@ -373,6 +373,11 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
 	}
@@ -388,8 +393,6 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 	}
 
 	putInput := mapDynamoToTypesPutItemInput(input)
-
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
 	var before map[string]*mtypes.Item
 	if mode != capacity.ModeNone {
@@ -413,6 +416,11 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
@@ -455,8 +463,6 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 	deleteInput := mapDynamoToTypesDeleteItemInput(input)
 
 	// Delete only returns the old item for ALL_OLD, so measure it before deleting.
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
-
 	var stored map[string]*mtypes.Item
 	if mode != capacity.ModeNone {
 		stored = table.StoredItem(deleteInput.Key)
@@ -486,6 +492,11 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
 	}
@@ -501,8 +512,6 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 	}
 
 	updateInput := mapDynamoToTypesUpdateItemInput(input)
-
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
 	var before map[string]*mtypes.Item
 	if mode != capacity.ModeNone {
@@ -540,6 +549,11 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
@@ -586,7 +600,7 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 	}
 
 	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
-		consumedMode(string(input.ReturnConsumedCapacity)),
+		mode,
 		aws.ToString(input.TableName), "", "",
 		capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
 	))
@@ -598,6 +612,11 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := fd.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
 		return nil, ferr
@@ -641,7 +660,7 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 	}
 
 	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
-		consumedMode(string(input.ReturnConsumedCapacity)),
+		mode,
 		aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
 		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
 	))
@@ -653,6 +672,11 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := fd.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
 		return nil, ferr
@@ -703,7 +727,7 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 	}
 
 	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
-		consumedMode(string(input.ReturnConsumedCapacity)),
+		mode,
 		aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
 		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
 	))
@@ -736,13 +760,17 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 		return &dynamodb.BatchWriteItemOutput{}, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	emulation := fd.batchEmulationFor(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
 
 	unprocessed := map[string][]types.WriteRequest{}
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 	acc := capacity.NewWriteAccumulator()
 
 	for table, reqs := range input.RequestItems {
@@ -830,6 +858,11 @@ func batchWriteRequestKey(req types.WriteRequest) map[string]types.AttributeValu
 // whole call. UnprocessedKeys is produced only by EmulateUnprocessedItems, whose
 // predicate selects individual keys to leave unprocessed while the rest are fetched.
 func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	emulation := fd.batchEmulationFor(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
@@ -886,7 +919,7 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 	return &dynamodb.BatchGetItemOutput{
 		Responses:        responses,
 		UnprocessedKeys:  unprocessed,
-		ConsumedCapacity: sdkConsumedSlice(consumedMode(string(input.ReturnConsumedCapacity)), unitsByTable, true),
+		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable, true),
 	}, nil
 }
 
@@ -1006,6 +1039,11 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
 	}
@@ -1014,8 +1052,6 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 	if err != nil {
 		return nil, err
 	}
-
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 
 	// Sizes are measured before the writes: a delete bills the item it removes and an update
 	// the larger of the item before and after.
@@ -1192,8 +1228,12 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 		return nil, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	responses := make([]types.ItemResponse, 0, len(input.TransactItems))
-	mode := consumedMode(string(input.ReturnConsumedCapacity))
 	unitsByTable := map[string]float64{}
 
 	for _, item := range input.TransactItems {

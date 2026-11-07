@@ -7,11 +7,6 @@ import (
 	"github.com/truora/minidyn/types"
 )
 
-// consumedMode resolves the request's ReturnConsumedCapacity enum into a capacity.Mode.
-func consumedMode(s string) capacity.Mode {
-	return capacity.ParseMode(s)
-}
-
 // writeConsumed bills a single-item write to table: before is the item as measured ahead of the
 // write and after the item it left (nil for a delete). See capacity.WriteBilling.
 func writeConsumed(mode capacity.Mode, table *core.Table, name string, key, before, after map[string]*types.Item) *capacity.Consumed {

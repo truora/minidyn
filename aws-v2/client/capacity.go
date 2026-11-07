@@ -147,11 +147,6 @@ func sdkCapacityEntry(c *capacity.Consumed, units float64) types.Capacity {
 	return entry
 }
 
-// consumedMode resolves the request's ReturnConsumedCapacity enum into a capacity.Mode.
-func consumedMode(s string) capacity.Mode {
-	return capacity.ParseMode(s)
-}
-
 // sdkConsumedList maps a per-table Consumed list (e.g. a WriteAccumulator's output) into the SDK
 // ConsumedCapacity slice. Returns nil when nothing is reported.
 func sdkConsumedList(cs []*capacity.Consumed) []types.ConsumedCapacity {

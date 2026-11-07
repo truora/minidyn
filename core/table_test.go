@@ -619,7 +619,7 @@ func TestSearchData(t *testing.T) {
 
 	queryInput := QueryInput{}
 
-	result, lastItem, err := newTable.SearchData(queryInput)
+	result, lastItem, err := searchData(newTable, queryInput)
 	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
@@ -644,7 +644,7 @@ func TestSearchData(t *testing.T) {
 		},
 	}
 
-	result, lastItem, err = newTable.SearchData(queryInput)
+	result, lastItem, err = searchData(newTable, queryInput)
 	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
@@ -668,13 +668,13 @@ func TestSearchData(t *testing.T) {
 	queryInput.Index = "indice"
 	queryInput.started = true
 
-	result, lastItem, err = newTable.SearchData(queryInput)
+	result, lastItem, err = searchData(newTable, queryInput)
 	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
 
 	queryInput.ExclusiveStartKey = item
-	result, lastItem, err = newTable.SearchData(queryInput)
+	result, lastItem, err = searchData(newTable, queryInput)
 	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
@@ -712,7 +712,7 @@ func TestSearchData_duplicateExpressionAttributeValues(t *testing.T) {
 	c.NoError(err)
 
 	a, b := "d", "d"
-	_, _, err = newTable.SearchData(QueryInput{
+	_, err = newTable.SearchData(QueryInput{
 		ExpressionAttributeValues: map[string]*types.Item{
 			":v": {SS: []*string{&a, &b}},
 		},
@@ -757,7 +757,7 @@ func TestSearchData_undeclaredExpressionAttributeName(t *testing.T) {
 
 			// Empty table: the per-item interpreter checks never run, so validation must
 			// happen up front to match DynamoDB.
-			_, _, err = newTable.SearchData(tc.input)
+			_, err = newTable.SearchData(tc.input)
 			c.Error(err)
 
 			var apiErr types.Error
@@ -1204,7 +1204,7 @@ func TestPutItemOverwriteReconcilesGSIKey(t *testing.T) {
 	}
 
 	queryByType := func(typ string) []map[string]*types.Item {
-		items, _, qerr := newTable.SearchData(QueryInput{
+		res, qerr := newTable.SearchData(QueryInput{
 			Index:                     "by-type",
 			KeyConditionExpression:    "#type = :type",
 			Aliases:                   map[string]string{"#type": "type"},
@@ -1213,7 +1213,7 @@ func TestPutItemOverwriteReconcilesGSIKey(t *testing.T) {
 		})
 		c.NoError(qerr)
 
-		return items
+		return res.Items
 	}
 
 	put("001", "grass")
@@ -1405,7 +1405,7 @@ func TestGSIUpdateMovesSecondaryIndexKey(t *testing.T) {
 	queryBySeg := func(seg string) []map[string]*types.Item {
 		t.Helper()
 
-		items, _, qerr := table.SearchData(QueryInput{
+		res, qerr := table.SearchData(QueryInput{
 			Index:                  idxName,
 			KeyConditionExpression: "#s = :s",
 			Aliases:                map[string]string{"#s": "seg"},
@@ -1416,7 +1416,7 @@ func TestGSIUpdateMovesSecondaryIndexKey(t *testing.T) {
 		})
 		c.NoError(qerr)
 
-		return items
+		return res.Items
 	}
 
 	matched := queryBySeg(aVal)
@@ -1466,7 +1466,7 @@ func newSegIndexTable(t *testing.T) (*Table, func(seg string) []map[string]*type
 	query := func(seg string) []map[string]*types.Item {
 		t.Helper()
 
-		items, _, qerr := table.SearchData(QueryInput{
+		res, qerr := table.SearchData(QueryInput{
 			Index:                     idxName,
 			KeyConditionExpression:    "seg = :s",
 			ExpressionAttributeValues: map[string]*types.Item{":s": {S: new(seg)}},
@@ -1474,7 +1474,7 @@ func newSegIndexTable(t *testing.T) (*Table, func(seg string) []map[string]*type
 		})
 		c.NoError(qerr)
 
-		return items
+		return res.Items
 	}
 
 	return table, query
@@ -1685,7 +1685,7 @@ func TestSearchData_projectionExpressionError(t *testing.T) {
 	})
 	c.NoError(err)
 
-	_, _, err = table.SearchData(QueryInput{
+	_, err = table.SearchData(QueryInput{
 		Scan:                 true,
 		ProjectionExpression: "@@@",
 	})
@@ -1869,7 +1869,7 @@ func TestSearchDataWithProjectionExpression(t *testing.T) {
 	})
 	c.NoError(err)
 
-	items, lastKey, err := table.SearchData(QueryInput{
+	items, lastKey, err := searchData(table, QueryInput{
 		Scan:                 true,
 		ProjectionExpression: "#f",
 		Aliases:              map[string]string{"#f": "foo"},
@@ -1929,7 +1929,7 @@ func TestSearchData_secondaryIndexProjectionKeysOnlyAndInclude(t *testing.T) {
 	})
 	c.NoError(err)
 
-	items, _, err := table.SearchData(QueryInput{
+	items, _, err := searchData(table, QueryInput{
 		Index:                  keysOnly,
 		KeyConditionExpression: "gsi_pk = :g",
 		ExpressionAttributeValues: map[string]*types.Item{
@@ -1945,7 +1945,7 @@ func TestSearchData_secondaryIndexProjectionKeysOnlyAndInclude(t *testing.T) {
 	c.NotContains(items[0], "title")
 	c.NotContains(items[0], "extra")
 
-	items2, _, err := table.SearchData(QueryInput{
+	items2, _, err := searchData(table, QueryInput{
 		Index:                  includeIdx,
 		KeyConditionExpression: "gsi_pk = :g",
 		ExpressionAttributeValues: map[string]*types.Item{

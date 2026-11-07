@@ -179,17 +179,6 @@ func fuzzNormalize(e traceEntry) traceEntry {
 
 	switch e.Op {
 	case "Query", "Scan":
-		// #144: ScannedCount is never set; Count 0 and empty Items are omitted.
-		delete(resp, "ScannedCount")
-
-		if c, ok := resp["Count"].(json.Number); ok && c == "0" {
-			delete(resp, "Count")
-		}
-
-		if items, ok := resp["Items"].([]any); ok && len(items) == 0 {
-			delete(resp, "Items")
-		}
-
 		// A GSI query reads one g partition in sk order, but items with the same sk (and
 		// different pk) have no defined order: sort only within those runs, so the sk order
 		// and ScanIndexForward are still checked. (Scan items are already fully sorted.)

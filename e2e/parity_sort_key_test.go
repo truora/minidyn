@@ -156,8 +156,7 @@ func TestE2E_SortKey(t *testing.T) {
 			},
 		},
 		{
-			name:       "QueryFilterCountAndScannedCount",
-			knownIssue: "#144",
+			name: "QueryFilterCountAndScannedCount",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

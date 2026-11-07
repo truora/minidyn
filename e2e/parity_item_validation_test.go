@@ -434,8 +434,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "ScanSelectCount",
-			knownIssue: "#144",
+			name: "ScanSelectCount",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

@@ -500,6 +500,7 @@ func TestEvalAddUpdate(t *testing.T) {
 		{"ADD :binSet :binCSet", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, boolFalse},
 		{"ADD :strSet :textSet", ":strSet", &StringSet{Value: map[string]bool{"a": boolTrue, "b": boolTrue, "text": boolTrue}}, boolFalse},
 		{"ADD newVal :one", "newVal", &Number{Value: 1}, boolFalse},
+		{"ADD newSet :textSet", "newSet", &StringSet{Value: map[string]bool{"text": boolTrue}}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)

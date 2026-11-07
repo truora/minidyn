@@ -68,21 +68,28 @@ func TestSDKConsumedSlice(t *testing.T) {
 	c.Equal(2.0, aws.ToFloat64(out[0].WriteCapacityUnits))
 }
 
-func TestStoredItemAndBillWriteTolerateUnknownTables(t *testing.T) {
+func TestWriteTargetsTolerateUnknownTables(t *testing.T) {
 	c := require.New(t)
 	client := setupCapacityClient(t)
 
-	key := map[string]*mtypes.Item{"id": {S: aws.String("001")}}
-
-	c.Nil(client.storedItem("missing", key))
-	c.NotNil(client.storedItem(tableName, key))
-	c.Nil(client.storedItem(tableName, map[string]*mtypes.Item{}))
-	c.NotNil(client.storedItemLocked(tableName, key))
+	c.NotNil(client.tableOrNil(tableName))
+	c.Nil(client.tableOrNil("missing"))
 
 	// An unknown table is billed by size alone, without index entries.
-	size, indexes := client.billWriteLocked("missing", key, nil, nil)
+	target := capacity.WriteTarget{
+		Table: "missing", Kind: capacity.WriteDelete,
+		Key: map[string]*mtypes.Item{"id": {S: aws.String("001")}},
+	}
+	client.snapshotLocked(&target)
+
+	size, indexes := client.billLocked(&target)
 	c.Positive(size)
 	c.Nil(indexes)
+}
+
+func TestBatchWriteTargetOfAnEmptyRequestIsAnUnbilledCheck(t *testing.T) {
+	target := batchWriteTarget(tableName, dynamodbtypes.WriteRequest{})
+	require.Equal(t, capacity.WriteCheck, target.Kind)
 }
 
 func TestTransactWriteItemsConsumedCapacityUpdate(t *testing.T) {

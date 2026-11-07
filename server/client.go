@@ -369,7 +369,7 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 
 	return &PutItemOutput{
 		Attributes: mapTypesMapToAttributeValue(item),
-		ConsumedCapacity: toWireConsumed(writeConsumed(
+		ConsumedCapacity: toWireConsumed(capacity.ForItemWrite(
 			mode, table, aws.ToString(input.TableName), putItem, before, putItem,
 		)),
 	}, nil
@@ -423,7 +423,7 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 		return nil, mapKnownError(err)
 	}
 
-	consumed := toWireConsumed(writeConsumed(
+	consumed := toWireConsumed(capacity.ForItemWrite(
 		mode, table, aws.ToString(input.TableName), deleteKey, stored, nil,
 	))
 
@@ -491,7 +491,7 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 
 	return &UpdateItemOutput{
 		Attributes: mapTypesMapToAttributeValue(item),
-		ConsumedCapacity: toWireConsumed(writeConsumed(
+		ConsumedCapacity: toWireConsumed(capacity.ForItemWrite(
 			mode, table, aws.ToString(input.TableName), updateKeyMap, before, after,
 		)),
 	}, nil
@@ -803,11 +803,11 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 // reported, bills it into acc. Sizes are measured before the request is applied: a delete bills
 // the item it removes and a put the larger of the item it replaces and the item it writes.
 func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, req WriteRequest, mode capacity.Mode, acc *capacity.WriteAccumulator) error {
-	var target, before map[string]*types.Item
+	var target capacity.WriteTarget
 
 	if mode != capacity.ModeNone {
-		target = batchWriteTarget(req)
-		before = c.storedItemLocked(tableName, target)
+		target = batchWriteTarget(tableName, req)
+		c.snapshotLocked(&target)
 	}
 
 	var err error
@@ -830,35 +830,24 @@ func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, r
 	}
 
 	if mode != capacity.ModeNone {
-		size, indexes := c.billWriteLocked(tableName, target, before, batchWriteAfter(req, target))
+		size, indexes := c.billLocked(&target)
 		acc.Add(tableName, size, indexes, 1)
 	}
 
 	return nil
 }
 
-// batchWriteTarget returns the put item or the delete key of a write request. Both identify the
-// stored item the request replaces or removes.
-func batchWriteTarget(req WriteRequest) map[string]*types.Item {
+// batchWriteTarget describes a put or delete sub-request for billing.
+func batchWriteTarget(tableName string, req WriteRequest) capacity.WriteTarget {
 	if req.PutRequest != nil {
-		return mapAttributeValueMapToTypes(req.PutRequest.Item)
+		return capacity.WriteTarget{Table: tableName, Kind: capacity.WritePut, Key: mapAttributeValueMapToTypes(req.PutRequest.Item)}
 	}
 
 	if req.DeleteRequest != nil {
-		return mapAttributeValueMapToTypes(req.DeleteRequest.Key)
+		return capacity.WriteTarget{Table: tableName, Kind: capacity.WriteDelete, Key: mapAttributeValueMapToTypes(req.DeleteRequest.Key)}
 	}
 
-	return nil
-}
-
-// batchWriteAfter returns the item a write request leaves behind: the put item, nothing for a
-// delete.
-func batchWriteAfter(req WriteRequest, target map[string]*types.Item) map[string]*types.Item {
-	if req.PutRequest != nil {
-		return target
-	}
-
-	return nil
+	return capacity.WriteTarget{Table: tableName, Kind: capacity.WriteCheck}
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
@@ -1065,9 +1054,13 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 
 	// Sizes are measured before the writes: a delete bills the item it removes and an update
 	// the larger of the item before and after.
-	var targets []transactWriteTarget
+	var targets []capacity.WriteTarget
 	if mode != capacity.ModeNone {
-		targets = c.transactWriteTargets(input.TransactItems)
+		targets = transactWriteTargets(input.TransactItems)
+
+		for i := range targets {
+			targets[i].Snapshot(c.tableOrNil)
+		}
 	}
 
 	var execErr error
@@ -1091,9 +1084,9 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 
 	acc := capacity.NewWriteAccumulator()
 
-	for _, target := range targets {
-		size, indexes := c.transactWriteBill(target)
-		acc.AddTransact(target.table, size, indexes)
+	for i := range targets {
+		size, indexes := targets[i].Bill(c.tableOrNil)
+		acc.AddTransact(targets[i].Table, size, indexes)
 	}
 
 	return &TransactWriteItemsOutput{
@@ -1101,57 +1094,33 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	}, nil
 }
 
-// transactWriteTarget is a transactional write item and the state needed to bill it: the stored
-// item before the transaction ran and, for a Put, the item it writes.
-type transactWriteTarget struct {
-	table  string
-	key    map[string]*types.Item // the key, or the whole item for a Put
-	before map[string]*types.Item
-	put    map[string]*types.Item
-	update bool
-}
-
-// transactWriteTargets measures the stored item of every write in the transaction. It must run
-// before the writes are applied. A ConditionCheck is billed by its key.
-func (c *Client) transactWriteTargets(items []TransactWriteItem) []transactWriteTarget {
-	targets := make([]transactWriteTarget, 0, len(items))
+// transactWriteTargets describes every write of the transaction for billing. A ConditionCheck is
+// billed by its key.
+func transactWriteTargets(items []TransactWriteItem) []capacity.WriteTarget {
+	targets := make([]capacity.WriteTarget, 0, len(items))
 
 	for _, item := range items {
-		var t transactWriteTarget
-
 		switch {
 		case item.Put != nil:
-			t.table, t.key = aws.ToString(item.Put.TableName), mapAttributeValueMapToTypes(item.Put.Item)
-			t.put = t.key
-			t.before = c.storedItem(t.table, t.key)
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Put.TableName), Kind: capacity.WritePut, Key: mapAttributeValueMapToTypes(item.Put.Item),
+			})
 		case item.Update != nil:
-			t.table, t.key = aws.ToString(item.Update.TableName), mapAttributeValueMapToTypes(item.Update.Key)
-			t.update = true
-			t.before = c.storedItem(t.table, t.key)
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Update.TableName), Kind: capacity.WriteUpdate, Key: mapAttributeValueMapToTypes(item.Update.Key),
+			})
 		case item.Delete != nil:
-			t.table, t.key = aws.ToString(item.Delete.TableName), mapAttributeValueMapToTypes(item.Delete.Key)
-			t.before = c.storedItem(t.table, t.key)
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Delete.TableName), Kind: capacity.WriteDelete, Key: mapAttributeValueMapToTypes(item.Delete.Key),
+			})
 		case item.ConditionCheck != nil:
-			t.table, t.key = aws.ToString(item.ConditionCheck.TableName), mapAttributeValueMapToTypes(item.ConditionCheck.Key)
-		default:
-			continue
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.ConditionCheck.TableName), Kind: capacity.WriteCheck, Key: mapAttributeValueMapToTypes(item.ConditionCheck.Key),
+			})
 		}
-
-		targets = append(targets, t)
 	}
 
 	return targets
-}
-
-// transactWriteBill returns the base size and per-index footprint of a transactional write item
-// once the transaction has been applied.
-func (c *Client) transactWriteBill(t transactWriteTarget) (int, []capacity.IndexWrite) {
-	after := t.put
-	if t.update {
-		after = c.storedItem(t.table, t.key)
-	}
-
-	return c.billWrite(t.table, t.key, t.before, after)
 }
 
 func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {

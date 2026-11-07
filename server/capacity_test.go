@@ -70,27 +70,28 @@ func newServerWithPokemonTable(t *testing.T) *Client {
 	return c
 }
 
-func TestServerStoredItemAndBillWriteTolerateUnknownTables(t *testing.T) {
+func TestServerWriteTargetsTolerateUnknownTables(t *testing.T) {
 	c := require.New(t)
 	client := newServerWithPokemonTable(t)
 
-	_, err := client.PutItem(context.Background(), &PutItemInput{
-		TableName: aws.String("pokemons"),
-		Item:      map[string]*AttributeValue{"id": {S: aws.String("001")}},
-	})
-	c.NoError(err)
-
-	key := map[string]*types.Item{"id": {S: aws.String("001")}}
-
-	c.Nil(client.storedItem("missing", key))
-	c.NotNil(client.storedItem("pokemons", key))
-	c.Nil(client.storedItem("pokemons", map[string]*types.Item{}))
-	c.NotNil(client.storedItemLocked("pokemons", key))
+	c.NotNil(client.tableOrNil("pokemons"))
+	c.Nil(client.tableOrNil("missing"))
 
 	// An unknown table is billed by size alone, without index entries.
-	size, indexes := client.billWriteLocked("missing", key, nil, nil)
+	target := capacity.WriteTarget{
+		Table: "missing", Kind: capacity.WriteDelete,
+		Key: map[string]*types.Item{"id": {S: aws.String("001")}},
+	}
+	client.snapshotLocked(&target)
+
+	size, indexes := client.billLocked(&target)
 	c.Positive(size)
 	c.Nil(indexes)
+}
+
+func TestServerBatchWriteTargetOfAnEmptyRequestIsAnUnbilledCheck(t *testing.T) {
+	target := batchWriteTarget("pokemons", WriteRequest{})
+	require.Equal(t, capacity.WriteCheck, target.Kind)
 }
 
 func TestServerTransactWriteUpdateConsumedCapacity(t *testing.T) {

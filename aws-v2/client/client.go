@@ -406,7 +406,7 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 
 	return &dynamodb.PutItemOutput{
 		Attributes: mapTypesToDynamoMapItem(item),
-		ConsumedCapacity: toSDKConsumed(writeConsumed(
+		ConsumedCapacity: toSDKConsumed(capacity.ForItemWrite(
 			mode, table, aws.ToString(input.TableName), putInput.Item, before, putInput.Item,
 		)),
 	}, nil
@@ -473,7 +473,7 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 		return nil, mapKnownError(err)
 	}
 
-	consumed := toSDKConsumed(writeConsumed(
+	consumed := toSDKConsumed(capacity.ForItemWrite(
 		mode, table, aws.ToString(input.TableName), deleteInput.Key, stored, nil,
 	))
 
@@ -533,7 +533,7 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 	}
 
 	output := &dynamodb.UpdateItemOutput{
-		ConsumedCapacity: toSDKConsumed(writeConsumed(
+		ConsumedCapacity: toSDKConsumed(capacity.ForItemWrite(
 			mode, table, aws.ToString(input.TableName), updateInput.Key, before, after,
 		)),
 	}
@@ -789,11 +789,11 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 
 			// Sizes are measured before the request is applied: a delete bills the item it
 			// removes and a put the larger of the item it replaces and the item it writes.
-			var target, before map[string]*mtypes.Item
+			var target capacity.WriteTarget
 
 			if mode != capacity.ModeNone {
-				target = batchWriteTarget(req)
-				before = fd.storedItemLocked(table, target)
+				target = batchWriteTarget(table, req)
+				fd.snapshotLocked(&target)
 			}
 
 			if err := executeBatchWriteRequest(ctx, fd, aws.String(table), req); err != nil {
@@ -801,7 +801,7 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 			}
 
 			if mode != capacity.ModeNone {
-				size, indexes := fd.billWriteLocked(table, target, before, batchWriteAfter(req, target))
+				size, indexes := fd.billLocked(&target)
 				acc.Add(table, size, indexes, 1)
 			}
 		}
@@ -814,28 +814,17 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 	}, nil
 }
 
-// batchWriteTarget returns the put item or the delete key of a write request. Both identify the
-// stored item the request replaces or removes.
-func batchWriteTarget(req types.WriteRequest) map[string]*mtypes.Item {
+// batchWriteTarget describes a put or delete sub-request for billing.
+func batchWriteTarget(table string, req types.WriteRequest) capacity.WriteTarget {
 	if req.PutRequest != nil {
-		return mapDynamoToTypesMapItem(req.PutRequest.Item)
+		return capacity.WriteTarget{Table: table, Kind: capacity.WritePut, Key: mapDynamoToTypesMapItem(req.PutRequest.Item)}
 	}
 
 	if req.DeleteRequest != nil {
-		return mapDynamoToTypesMapItem(req.DeleteRequest.Key)
+		return capacity.WriteTarget{Table: table, Kind: capacity.WriteDelete, Key: mapDynamoToTypesMapItem(req.DeleteRequest.Key)}
 	}
 
-	return nil
-}
-
-// batchWriteAfter returns the item a write request leaves behind: the put item, nothing for a
-// delete.
-func batchWriteAfter(req types.WriteRequest, target map[string]*mtypes.Item) map[string]*mtypes.Item {
-	if req.PutRequest != nil {
-		return target
-	}
-
-	return nil
+	return capacity.WriteTarget{Table: table, Kind: capacity.WriteCheck}
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
@@ -1063,9 +1052,13 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 
 	// Sizes are measured before the writes: a delete bills the item it removes and an update
 	// the larger of the item before and after.
-	var targets []transactWriteTarget
+	var targets []capacity.WriteTarget
 	if mode != capacity.ModeNone {
-		targets = fd.transactWriteTargets(input.TransactItems)
+		targets = transactWriteTargets(input.TransactItems)
+
+		for i := range targets {
+			targets[i].Snapshot(fd.tableOrNil)
+		}
 	}
 
 	var execErr error
@@ -1089,9 +1082,9 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 
 	acc := capacity.NewWriteAccumulator()
 
-	for _, target := range targets {
-		size, indexes := fd.transactWriteBill(target)
-		acc.AddTransact(target.table, size, indexes)
+	for i := range targets {
+		size, indexes := targets[i].Bill(fd.tableOrNil)
+		acc.AddTransact(targets[i].Table, size, indexes)
 	}
 
 	return &dynamodb.TransactWriteItemsOutput{
@@ -1099,57 +1092,33 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 	}, nil
 }
 
-// transactWriteTarget is a transactional write item and the state needed to bill it: the stored
-// item before the transaction ran and, for a Put, the item it writes.
-type transactWriteTarget struct {
-	table  string
-	key    map[string]*mtypes.Item // the key, or the whole item for a Put
-	before map[string]*mtypes.Item
-	put    map[string]*mtypes.Item
-	update bool
-}
-
-// transactWriteTargets measures the stored item of every write in the transaction. It must run
-// before the writes are applied. A ConditionCheck is billed by its key.
-func (fd *Client) transactWriteTargets(items []types.TransactWriteItem) []transactWriteTarget {
-	targets := make([]transactWriteTarget, 0, len(items))
+// transactWriteTargets describes every write of the transaction for billing. A ConditionCheck is
+// billed by its key.
+func transactWriteTargets(items []types.TransactWriteItem) []capacity.WriteTarget {
+	targets := make([]capacity.WriteTarget, 0, len(items))
 
 	for _, item := range items {
-		var t transactWriteTarget
-
 		switch {
 		case item.Put != nil:
-			t.table, t.key = aws.ToString(item.Put.TableName), mapDynamoToTypesMapItem(item.Put.Item)
-			t.put = t.key
-			t.before = fd.storedItem(t.table, t.key)
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Put.TableName), Kind: capacity.WritePut, Key: mapDynamoToTypesMapItem(item.Put.Item),
+			})
 		case item.Update != nil:
-			t.table, t.key = aws.ToString(item.Update.TableName), mapDynamoToTypesMapItem(item.Update.Key)
-			t.update = true
-			t.before = fd.storedItem(t.table, t.key)
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Update.TableName), Kind: capacity.WriteUpdate, Key: mapDynamoToTypesMapItem(item.Update.Key),
+			})
 		case item.Delete != nil:
-			t.table, t.key = aws.ToString(item.Delete.TableName), mapDynamoToTypesMapItem(item.Delete.Key)
-			t.before = fd.storedItem(t.table, t.key)
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Delete.TableName), Kind: capacity.WriteDelete, Key: mapDynamoToTypesMapItem(item.Delete.Key),
+			})
 		case item.ConditionCheck != nil:
-			t.table, t.key = aws.ToString(item.ConditionCheck.TableName), mapDynamoToTypesMapItem(item.ConditionCheck.Key)
-		default:
-			continue
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.ConditionCheck.TableName), Kind: capacity.WriteCheck, Key: mapDynamoToTypesMapItem(item.ConditionCheck.Key),
+			})
 		}
-
-		targets = append(targets, t)
 	}
 
 	return targets
-}
-
-// transactWriteBill returns the base size and per-index footprint of a transactional write item
-// once the transaction has been applied.
-func (fd *Client) transactWriteBill(t transactWriteTarget) (int, []capacity.IndexWrite) {
-	after := t.put
-	if t.update {
-		after = fd.storedItem(t.table, t.key)
-	}
-
-	return fd.billWrite(t.table, t.key, t.before, after)
 }
 
 func validateTransactGetItemsInput(fd *Client, input *dynamodb.TransactGetItemsInput) error {

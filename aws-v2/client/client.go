@@ -594,16 +594,18 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 		Item: copyItem(item),
 	}
 
-	sizeSource := stored
-	if len(sizeSource) == 0 {
-		sizeSource = keyMap
-	}
+	if mode != capacity.ModeNone {
+		sizeSource := stored
+		if len(sizeSource) == 0 {
+			sizeSource = keyMap
+		}
 
-	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
-		mode,
-		aws.ToString(input.TableName), "", "",
-		capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
-	))
+		output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), "", "",
+			capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
+		))
+	}
 
 	return output, nil
 }
@@ -659,11 +661,13 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 		output.Items = mapTypesToDynamoSliceMapItem(res.Items)
 	}
 
-	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
-		mode,
-		aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
-		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
-	))
+	if mode != capacity.ModeNone {
+		output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
+			capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+		))
+	}
 
 	return output, nil
 }
@@ -726,11 +730,13 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		output.Items = mapTypesToDynamoSliceMapItem(res.Items)
 	}
 
-	output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
-		mode,
-		aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
-		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
-	))
+	if mode != capacity.ModeNone {
+		output.ConsumedCapacity = toSDKConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), indexName, table.IndexKind(indexName),
+			capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+		))
+	}
 
 	return output, nil
 }
@@ -899,7 +905,9 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 				return nil, err
 			}
 
-			unitsByTable[tableName] += capacity.ReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)), consistent)
+			if mode != capacity.ModeNone {
+				unitsByTable[tableName] += capacity.ReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)), consistent)
+			}
 
 			if len(out.Item) > 0 {
 				responses[tableName] = append(responses[tableName], out.Item)
@@ -1251,7 +1259,9 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 
 		responses = append(responses, types.ItemResponse{Item: out.Item})
 
-		unitsByTable[aws.ToString(get.TableName)] += capacity.TransactReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)))
+		if mode != capacity.ModeNone {
+			unitsByTable[aws.ToString(get.TableName)] += capacity.TransactReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)))
+		}
 	}
 
 	return &dynamodb.TransactGetItemsOutput{

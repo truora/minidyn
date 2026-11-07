@@ -2,14 +2,23 @@ package capacity
 
 import (
 	"encoding/base64"
+	"sync/atomic"
 
 	docsize "github.com/truora/minidyn/calculate-size"
 	"github.com/truora/minidyn/types"
 )
 
+var sizeCalls atomic.Int64
+
+// SizeCalls returns how many items Size has sized so far. Tests use it to prove that operations
+// which do not report consumed capacity skip the sizing work.
+func SizeCalls() int64 { return sizeCalls.Load() }
+
 // Size returns the estimated DynamoDB byte size of an item. A nil/empty item is 0.
 // docsize returns 0 on any conversion error, so capacity accounting never breaks an operation.
 func Size(item map[string]*types.Item) int {
+	sizeCalls.Add(1)
+
 	n, _ := docsize.CalculateDocumentSize(itemToDoc(item))
 
 	return n

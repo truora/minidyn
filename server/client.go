@@ -541,19 +541,22 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
 
-	sizeSource := stored
-	if len(sizeSource) == 0 {
-		sizeSource = keyMap
-	}
+	out := &GetItemOutput{Item: item}
 
-	return &GetItemOutput{
-		Item: item,
-		ConsumedCapacity: toWireConsumed(capacity.ForRead(
+	if mode != capacity.ModeNone {
+		sizeSource := stored
+		if len(sizeSource) == 0 {
+			sizeSource = keyMap
+		}
+
+		out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
 			mode,
 			aws.ToString(input.TableName), "", "",
 			capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
-		)),
-	}, nil
+		))
+	}
+
+	return out, nil
 }
 
 // Query searches items by key condition and optional filter.
@@ -615,11 +618,13 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		out.Items = mapTypesSliceToAttributeValue(res.Items)
 	}
 
-	out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
-		mode,
-		aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
-		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
-	))
+	if mode != capacity.ModeNone {
+		out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
+			capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+		))
+	}
 
 	return out, nil
 }
@@ -678,11 +683,13 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		out.Items = mapTypesSliceToAttributeValue(res.Items)
 	}
 
-	out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
-		mode,
-		aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
-		capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
-	))
+	if mode != capacity.ModeNone {
+		out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
+			capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+		))
+	}
 
 	return out, nil
 }
@@ -917,7 +924,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	unitsByTable := map[string]float64{}
 
 	for tableName, reqs := range input.RequestItems {
-		tableResponses, unprocessedKeys, units, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation)
+		tableResponses, unprocessedKeys, units, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation, mode)
 		if err != nil {
 			return nil, err
 		}
@@ -939,7 +946,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	}, nil
 }
 
-func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
+func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation, mode capacity.Mode) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
 	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
 		return nil, nil, 0, err
 	}
@@ -968,7 +975,9 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 			return nil, nil, 0, err
 		}
 
-		units += capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(item.Item)), consistent)
+		if mode != capacity.ModeNone {
+			units += capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(item.Item)), consistent)
+		}
 
 		if len(item.Item) > 0 {
 			responses = append(responses, item.Item)
@@ -1248,7 +1257,9 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 
 		responses = append(responses, ItemResponse{Item: out.Item})
 
-		unitsByTable[aws.ToString(get.TableName)] += capacity.TransactReadUnits(capacity.Size(mapAttributeValueMapToTypes(out.Item)))
+		if mode != capacity.ModeNone {
+			unitsByTable[aws.ToString(get.TableName)] += capacity.TransactReadUnits(capacity.Size(mapAttributeValueMapToTypes(out.Item)))
+		}
 	}
 
 	return &TransactGetItemsOutput{

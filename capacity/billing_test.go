@@ -87,3 +87,14 @@ func TestForWriteChargesTheReplacedIndexEntry(t *testing.T) {
 		t.Fatalf("unexpected accumulated capacity: %#v", got)
 	}
 }
+
+func TestSizeCallsCountsSizedItems(t *testing.T) {
+	before := SizeCalls()
+
+	Size(billingItem("k", 1))
+	SumSize([]map[string]*types.Item{billingItem("a", 1), billingItem("b", 1)})
+
+	if got := SizeCalls() - before; got != 3 {
+		t.Fatalf("SizeCalls advanced by %d, want 3", got)
+	}
+}

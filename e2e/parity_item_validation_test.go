@@ -517,8 +517,6 @@ func TestE2E_ItemValidation(t *testing.T) {
 
 				paritySeedStarters(ctx, t, client)
 
-				// Compare the full message: normalizeSDKErrorString drops the text after ';',
-				// which carries the operator and operand type.
 				deleteErr := func(attr string, v dynamodbtypes.AttributeValue) string {
 					_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 						TableName: aws.String(parityPokemonTable),
@@ -530,7 +528,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 					})
 					require.Error(t, err)
 
-					return strings.TrimSpace(sdkErrRequestIDRE.ReplaceAllString(err.Error(), "RequestID: , "))
+					return normalizeSDKErrorString(err.Error())
 				}
 
 				return []any{
@@ -540,10 +538,46 @@ func TestE2E_ItemValidation(t *testing.T) {
 					deleteErr("moves", &dynamodbtypes.AttributeValueMemberBOOL{Value: true}),
 					deleteErr("moves", &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}),
 					deleteErr("absent", &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}),
-					// A set of another type than the target's string set. DynamoDB's message has no
-					// "; " detail here, and minidyn's debug detail is cut by the normalizer.
-					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}})),
-					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}})),
+					// A set of another type than the target's string set. minidyn adds debug detail
+					// after " | ", which the normalizer strips.
+					deleteErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}}),
+					deleteErr("moves", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}}),
+					parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
+				}
+			},
+		},
+		{
+			name: "UpdateItemAddInvalidOperand",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySeedStarters(ctx, t, client)
+
+				// Item 004 has lvl (N) and moves (SS).
+				addErr := func(attr string, v dynamodbtypes.AttributeValue) string {
+					_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+						TableName: aws.String(parityPokemonTable),
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"},
+						},
+						UpdateExpression:          aws.String("ADD " + attr + " :v"),
+						ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": v},
+					})
+					require.Error(t, err)
+
+					return normalizeSDKErrorString(err.Error())
+				}
+
+				return []any{
+					// Operands ADD never accepts.
+					addErr("lvl", &dynamodbtypes.AttributeValueMemberS{Value: "x"}),
+					addErr("absent", &dynamodbtypes.AttributeValueMemberBOOL{Value: true}),
+					addErr("lvl", &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}),
+					addErr("moves", &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}),
+					// An allowed operand type that doesn't match the target.
+					addErr("moves", &dynamodbtypes.AttributeValueMemberN{Value: "1"}),
+					addErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}}),
 					parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
 				}
 			},

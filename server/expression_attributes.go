@@ -101,7 +101,7 @@ func keysFromAttributeValueMap(m map[string]*AttributeValue) []string {
 func validateSyntaxExpression(regex *regexp.Regexp, expressions []string, errorMsg string) error {
 	for _, exprName := range expressions {
 		if !regex.MatchString(exprName) {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: fmt.Sprintf("%s: Syntax error; key: %s", errorMsg, exprName)}
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: fmt.Sprintf("%s: Syntax error; key: %q", errorMsg, exprName)}
 		}
 	}
 

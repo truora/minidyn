@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/truora/minidyn/types"
 )
 
 var syntaxErrorTemplate = "syntax error; token: %s" // TODO: See how to add ", near: %s" to the error
@@ -65,10 +67,13 @@ func newError(format string, a ...any) *Error {
 }
 
 func newInvalidDocumentPathError(fieldID, path string) *Error {
-	return newError(
-		"%s; field id: %s; path: %s",
-		invalidDocumentPathMessage, fieldID, path,
-	)
+	return &Error{Message: types.WithDetail(invalidDocumentPathMessage, "field id", fieldID, "path", path)}
+}
+
+// newInvalidFunctionCallError is minidyn's message for a call whose callee is not a function;
+// DynamoDB has no counterpart, so the expression is minidyn-only detail.
+func newInvalidFunctionCallError(node *CallExpression) *Error {
+	return &Error{Message: types.WithDetail("invalid function call", "expression", node.String())}
 }
 
 func isError(obj Object) bool {
@@ -810,7 +815,7 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 
 	funcObj, ok := fn.(*Function)
 	if !ok {
-		return newError("invalid function call; expression: %s", node.String())
+		return newInvalidFunctionCallError(node)
 	}
 
 	if funcObj.ForUpdate {
@@ -824,7 +829,7 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 
 	function, ok := fn.(*Function)
 	if !ok {
-		return newError("invalid function call; expression: %s", node.String())
+		return newInvalidFunctionCallError(node)
 	}
 
 	return function.Value(args...)
@@ -838,7 +843,7 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 
 	funcObj, ok := fn.(*Function)
 	if !ok {
-		return newError("invalid function call; expression: %s", node.String())
+		return newInvalidFunctionCallError(node)
 	}
 
 	if !funcObj.ForUpdate {
@@ -852,7 +857,7 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 
 	function, ok := fn.(*Function)
 	if !ok {
-		return newError("invalid function call; expression: %s", node.String())
+		return newInvalidFunctionCallError(node)
 	}
 
 	return function.Value(args...)
@@ -943,13 +948,20 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 		}
 
 		if obj == UNDEFINED {
+			// ADD only takes a number or a set operand, whether or not the target exists.
+			_, isNumber := val.(*Number)
+			if _, isSet := val.(DetachableObject); !isNumber && !isSet {
+				return newIncorrectAddOperandError(obj, val)
+			}
+
 			env.Set(id.Value, val)
+
 			return obj
 		}
 
 		addObj, ok := obj.(AppendableObject)
 		if !ok {
-			return newError("An operand in the update expression has an incorrect data type")
+			return newIncorrectDataTypeError("ADD", obj, val)
 		}
 
 		return addObj.Add(val)

@@ -19,7 +19,7 @@ func TestGetKeyTypeMismatch(t *testing.T) {
 		_, err := ks.GetKey(attrs, map[string]*types.Item{"id": {N: new("1")}})
 		require.ErrorIs(t, err, ErrKeyTypeMismatch)
 		require.EqualError(t, err,
-			"One or more parameter values were invalid: Type mismatch for key; id expected: S actual: N")
+			"One or more parameter values were invalid: Type mismatch for key | field: id; expected: S; actual: N")
 	})
 
 	t.Run("primary_range_wrong_type", func(t *testing.T) {
@@ -28,7 +28,7 @@ func TestGetKeyTypeMismatch(t *testing.T) {
 		ks := keySchema{HashKey: "id", RangeKey: "sk"}
 		_, err := ks.GetKey(attrs, map[string]*types.Item{"id": {S: new("a")}, "sk": {S: new("b")}})
 		require.ErrorIs(t, err, ErrKeyTypeMismatch)
-		require.Contains(t, err.Error(), "sk expected: N actual: S")
+		require.Contains(t, err.Error(), "field: sk; expected: N; actual: S")
 	})
 
 	t.Run("empty_value_keeps_generic_error", func(t *testing.T) {

@@ -464,10 +464,10 @@ func TestGetKey(t *testing.T) {
 	c.Equal("range.HASH", k)
 
 	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
-	c.EqualError(err, `Invalid attribute value type; field "HASH"`)
+	c.EqualError(err, `Invalid attribute value type | field: HASH`)
 
 	_, err = newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
-	c.EqualError(err, `Invalid attribute value type; field "range"`)
+	c.EqualError(err, `Invalid attribute value type | field: range`)
 
 	newTable.KeySchema = keySchema{"", "", true}
 	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
@@ -553,7 +553,7 @@ func TestDeleteItem(t *testing.T) {
 	}
 
 	_, err = newTable.Delete(inp)
-	c.EqualError(err, `ValidationException: The number of conditions on the keys is invalid; expected 2 keys, got 1`)
+	c.EqualError(err, `ValidationException: The number of conditions on the keys is invalid | expected keys: 2; got keys: 1`)
 }
 
 func TestDeleteIndex(t *testing.T) {
@@ -1156,7 +1156,7 @@ func TestPutItem(t *testing.T) {
 	}
 
 	_, err := newTable.Put(input)
-	c.EqualError(err, `ValidationException: One of the required keys was not given a value; field: ""`)
+	c.EqualError(err, `ValidationException: One of the required keys was not given a value | field: `)
 
 	newTable.AttributesDef = map[string]string{"id": "S", "name": "S"}
 	newTable.KeySchema = keySchema{"id", "name", false}

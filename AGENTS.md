@@ -40,3 +40,4 @@ After implementation, invoke the **qa-engineer** sub-agent (see `.agents/agents/
 - **Never** modify `e2e/` tests to make them pass — they are parity references only
 - `server/requests.go` is generated — run `go run ./tools/generate_requests` when input shapes change
 - Every package must contain a `doc.go` file
+- Error messages start with DynamoDB's exact text, including any `;` part DynamoDB itself returns. minidyn-only debug detail goes after ` | ` as `key: value` pairs separated by `; ` (e.g. `...incorrect data type | operator: DELETE; target type: SS; operand type: NS`), built with `types.WithDetail` (or `types.Detail` to append to a wrapped error). The parity normalizer strips from the last ` | `, so the detail never affects parity.

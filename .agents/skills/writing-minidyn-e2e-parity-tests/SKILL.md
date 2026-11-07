@@ -67,7 +67,8 @@ When comparing errors, normalize SDK strings through `normalizeSDKErrorString`.
 Current normalization includes:
 - RequestID stripping
 - Known DynamoDB Local text differences
-- Trimming extra minidyn diagnostic suffixes after `;`
+- Stripping minidyn-only debug detail from the last ` | ` (see `types.WithDetail`); DynamoDB's own text, including any `;` part, is compared in full
+- Cutting the text after `Syntax error` for parse errors, until #188 makes minidyn report the token and context like DynamoDB (the `contains invalid key` message is compared in full)
 
 Guideline:
 - Keep parity checks strict on semantic error meaning.

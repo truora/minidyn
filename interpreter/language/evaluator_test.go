@@ -675,30 +675,6 @@ func TestEvalDELETEEmptiedSetRemovesAttribute(t *testing.T) {
 	}
 }
 
-func TestIsEmptySet(t *testing.T) {
-	tests := []struct {
-		name string
-		obj  Object
-		want bool
-	}{
-		{"empty string set", &StringSet{Value: map[string]bool{}}, true},
-		{"string set", &StringSet{Value: map[string]bool{"a": true}}, false},
-		{"empty number set", &NumberSet{Value: map[float64]bool{}}, true},
-		{"number set", &NumberSet{Value: map[float64]bool{1: true}}, false},
-		{"empty binary set", &BinarySet{}, true},
-		{"binary set", &BinarySet{Value: [][]byte{[]byte("a")}}, false},
-		{"not a set", &String{Value: "a"}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isEmptySet(tt.obj); got != tt.want {
-				t.Errorf("isEmptySet() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestEvalDELETEPartialSetKeepsAttribute(t *testing.T) {
 	env := startEvalUpdateEnv(t)
 

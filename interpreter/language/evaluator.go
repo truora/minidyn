@@ -964,8 +964,9 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 		return val
 	}
 
-	// DELETE only takes a set operand, whether or not the target exists.
-	if !isSetObject(val) {
+	// DELETE only takes a set operand, whether or not the target exists. Sets are the only
+	// DetachableObjects.
+	if _, ok := val.(DetachableObject); !ok {
 		return newError(
 			"Invalid UpdateExpression: Incorrect operand type for operator or function; "+
 				"operator: DELETE, operand type: %s, typeSet: ALLOWED_FOR_DELETE_OPERAND",
@@ -997,7 +998,7 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 		}
 
 		// DynamoDB does not keep empty sets: removing the last elements removes the attribute.
-		if isEmptySet(obj) {
+		if sized, ok := obj.(SizableObject); ok && sized.Size() == 0 {
 			env.Remove(id.Value)
 		}
 
@@ -1005,15 +1006,6 @@ func evalActionDelete(node *ActionExpression, env *Environment) Object {
 	}
 
 	return UNDEFINED
-}
-
-func isSetObject(obj Object) bool {
-	switch obj.(type) {
-	case *StringSet, *NumberSet, *BinarySet:
-		return true
-	}
-
-	return false
 }
 
 // dynamoDBTypeName returns the long type name DynamoDB uses in validation messages.
@@ -1036,19 +1028,6 @@ func dynamoDBTypeName(t ObjectType) string {
 	}
 
 	return string(t)
-}
-
-func isEmptySet(obj Object) bool {
-	switch set := obj.(type) {
-	case *StringSet:
-		return len(set.Value) == 0
-	case *NumberSet:
-		return len(set.Value) == 0
-	case *BinarySet:
-		return len(set.Value) == 0
-	}
-
-	return false
 }
 
 func evalActionRemove(node *ActionExpression, env *Environment) Object {

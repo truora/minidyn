@@ -213,7 +213,7 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 
 	c.tables[tableName] = table
 
-	return &CreateTableOutput{TableDescription: mapTableDescriptionToDDB(table.Description(tableName))}, nil
+	return &CreateTableOutput{TableDescription: describeTableJSON(table.Description(tableName))}, nil
 }
 
 // UpdateTable applies metadata changes, including GSI updates.
@@ -229,13 +229,9 @@ func (c *Client) UpdateTable(ctx context.Context, input *UpdateTableInput) (*Upd
 		table.SetAttributeDefinition(mapAttributeDefinitions(input.AttributeDefinitions))
 	}
 
-	for _, change := range mapGSIUpdate(input.GlobalSecondaryIndexUpdates) {
-		if err := table.ApplyIndexChange(change); err != nil {
-			return &UpdateTableOutput{TableDescription: mapTableDescriptionToDDB(table.Description(tableName))}, mapKnownError(err)
-		}
-	}
+	desc, err := table.ApplyIndexChanges(tableName, mapGSIUpdate(input.GlobalSecondaryIndexUpdates))
 
-	return &UpdateTableOutput{TableDescription: mapTableDescriptionToDDB(table.Description(tableName))}, nil
+	return &UpdateTableOutput{TableDescription: describeTableJSON(desc)}, mapKnownError(err)
 }
 
 // DeleteTable removes a table and its data.
@@ -247,7 +243,7 @@ func (c *Client) DeleteTable(ctx context.Context, input *DeleteTableInput) (*Del
 		return nil, err
 	}
 
-	desc := mapTableDescriptionToDDB(table.Description(tableName))
+	desc := describeTableJSON(table.Description(tableName))
 	delete(c.tables, tableName)
 
 	return &DeleteTableOutput{TableDescription: desc}, nil
@@ -262,7 +258,7 @@ func (c *Client) DescribeTable(ctx context.Context, input *DescribeTableInput) (
 		return nil, err
 	}
 
-	return &DescribeTableOutput{Table: mapTableDescriptionToDDB(table.Description(tableName))}, nil
+	return &DescribeTableOutput{Table: describeTableJSON(table.Description(tableName))}, nil
 }
 
 // ListTables returns the table names in byte order, one page at a time.

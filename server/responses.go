@@ -1,7 +1,70 @@
 package server
 
+import (
+	"bytes"
+	"encoding/json"
+
+	"github.com/truora/minidyn/types"
+)
+
 // Minimal output shapes encoded back to the client.
 // They mirror DynamoDB JSON responses closely enough for SDK decoding.
+
+// unsetFieldsOmitted marshals v like encoding/json but leaves out the fields the SDK
+// types leave unset (nil pointers, nil slices and empty enums), which would otherwise be
+// sent as explicit nulls and empty strings.
+type unsetFieldsOmitted struct{ v any }
+
+func (u unsetFieldsOmitted) MarshalJSON() ([]byte, error) {
+	raw, err := json.Marshal(u.v)
+	if err != nil {
+		return nil, err
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+
+	var generic any
+	if err := dec.Decode(&generic); err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(dropUnset(generic))
+}
+
+func dropUnset(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		for k, child := range val {
+			if child == nil || child == "" {
+				delete(val, k)
+				continue
+			}
+
+			val[k] = dropUnset(child)
+		}
+
+		return val
+	case []any:
+		for i, child := range val {
+			val[i] = dropUnset(child)
+		}
+
+		return val
+	default:
+		return v
+	}
+}
+
+// describeTableJSON wraps a table description for a response, or returns nil for none.
+func describeTableJSON(td *types.TableDescription) any {
+	desc := mapTableDescriptionToDDB(td)
+	if desc == nil {
+		return nil
+	}
+
+	return unsetFieldsOmitted{desc}
+}
 
 // CreateTableOutput mirrors DynamoDB CreateTableOutput.
 type CreateTableOutput struct {

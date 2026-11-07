@@ -76,8 +76,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 			},
 		},
 		{
-			name:       "TableDescriptionFields",
-			knownIssue: "#151",
+			name: "TableDescriptionFields",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -118,8 +117,7 @@ func TestE2E_ResponseShape(t *testing.T) {
 			},
 		},
 		{
-			name:       "UpdateTableDeleteIndexDescription",
-			knownIssue: "#151",
+			name: "UpdateTableDeleteIndexDescription",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

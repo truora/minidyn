@@ -45,8 +45,7 @@ MINIDYN_E2E_TRACE=report MINIDYN_E2E_TRACE_OUT=/tmp/trace.jsonl go run ./tools/r
 `report` logs differences (and writes one JSON line per diverging test to the
 `_OUT` file) and keeps tests green; `strict` fails them. Benign differences
 (ARNs, timestamps, set and Scan order, explicit `null`s, number formatting,
-index `CREATING` vs `ACTIVE`) are normalized in `trace_test.go`. While they are
-open, #151 (table descriptions) shows up in most tests.
+index `CREATING` vs `ACTIVE`) are normalized in `trace_test.go`.
 
 ### Ignored API surface
 

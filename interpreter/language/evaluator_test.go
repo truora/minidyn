@@ -2,6 +2,8 @@ package language
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1398,5 +1400,258 @@ func TestNewInvalidFunctionCallErrorKeepsExpressionAsDetail(t *testing.T) {
 
 	if want := "invalid function call | expression: " + node.String(); got.Message != want {
 		t.Errorf("wrong message.\n got=%q\nwant=%q", got.Message, want)
+	}
+}
+
+const (
+	nestedPathInvalidMsg = "The document path provided in the update expression is invalid for update"
+	nestedBadTypeMsg     = "An operand in the update expression has an incorrect data type"
+	nestedAddOperandMsg  = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
+		"operator: ADD, operand type: %s, typeSet: ALLOWED_FOR_ADD_OPERAND"
+	nestedDeleteOperandMsg = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
+		"operator: DELETE, operand type: %s, typeSet: ALLOWED_FOR_DELETE_OPERAND"
+
+	nestedWantM = "{n:1 ns:{1,2} s:a ss:{x,y}}"
+	nestedWantL = "[{x,y} 1 {1,2} a]"
+)
+
+func startNestedUpdateEnv(t *testing.T) *Environment {
+	t.Helper()
+
+	env := startEvalUpdateEnv(t)
+
+	err := env.AddAttributes(map[string]*types.Item{
+		"m": {M: map[string]*types.Item{
+			"ss": {SS: []*string{new("x"), new("y")}},
+			"ns": {NS: []*string{new("1"), new("2")}},
+			"n":  {N: new("1")},
+			"s":  {S: new("a")},
+		}},
+		"l": {L: []*types.Item{
+			{SS: []*string{new("x"), new("y")}},
+			{N: new("1")},
+			{NS: []*string{new("1"), new("2")}},
+			{S: new("a")},
+		}},
+		":xSet":     {SS: []*string{new("x")}},
+		":xySet":    {SS: []*string{new("x"), new("y")}},
+		":zSet":     {SS: []*string{new("z")}},
+		":threeSet": {NS: []*string{new("3")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return env
+}
+
+// TestEvalNestedDeleteAndAdd checks DELETE and ADD on document paths below the top level
+// against DynamoDB Local (#184). An empty wantM or wantL means the attribute is unchanged.
+func TestEvalNestedDeleteAndAdd(t *testing.T) {
+	tests := []struct {
+		update string
+		wantM  string
+		wantL  string
+	}{
+		// DELETE on a nested set.
+		{"DELETE m.ss :xSet", "{n:1 ns:{1,2} s:a ss:{y}}", ""},
+		{"DELETE m.ss :xySet", "{n:1 ns:{1,2} s:a}", ""},
+		{"DELETE m.ss :zSet", "", ""},
+		{"DELETE m.ns :oneSet", "{n:1 ns:{2} s:a ss:{x,y}}", ""},
+		{"DELETE m.nope :xSet", "", ""},
+		// DELETE on list elements.
+		{"DELETE l[0] :xSet", "", "[{y} 1 {1,2} a]"},
+		{"DELETE l[0] :xySet", "", "[1 {1,2} a]"},
+		{"DELETE l[2] :oneSet", "", "[{x,y} 1 {2} a]"},
+		{"DELETE l[9] :xSet", "", ""},
+		{"DELETE l[0] :xySet, l[2] :oneSet", "", "[1 {2} a]"},
+		// ADD to nested sets and numbers.
+		{"ADD m.ss :zSet", "{n:1 ns:{1,2} s:a ss:{x,y,z}}", ""},
+		{"ADD m.ns :threeSet", "{n:1 ns:{1,2,3} s:a ss:{x,y}}", ""},
+		{"ADD m.n :one", "{n:2 ns:{1,2} s:a ss:{x,y}}", ""},
+		{"ADD l[0] :zSet", "", "[{x,y,z} 1 {1,2} a]"},
+		{"ADD l[1] :one", "", "[{x,y} 2 {1,2} a]"},
+		{"ADD l[2] :threeSet", "", "[{x,y} 1 {1,2,3} a]"},
+		// ADD creating the key.
+		{"ADD m.new :one", "{n:1 new:1 ns:{1,2} s:a ss:{x,y}}", ""},
+		{"ADD m.new :zSet", "{n:1 new:{z} ns:{1,2} s:a ss:{x,y}}", ""},
+		{"ADD l[9] :one", "", "[{x,y} 1 {1,2} a 1]"},
+		{"ADD l[9] :zSet", "", "[{x,y} 1 {1,2} a {z}]"},
+		// Several nested actions in one update.
+		{"DELETE m.ss :xSet ADD m.n :one", "{n:2 ns:{1,2} s:a ss:{y}}", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.update, func(t *testing.T) {
+			env := startNestedUpdateEnv(t)
+
+			if result := testEvalUpdate(t, tt.update, env); isError(result) {
+				t.Fatalf("unexpected error: %s", result.Inspect())
+			}
+
+			wantM, wantL := tt.wantM, tt.wantL
+			if wantM == "" {
+				wantM = nestedWantM
+			}
+
+			if wantL == "" {
+				wantL = nestedWantL
+			}
+
+			if got := nestedInspect(env.Get("m")); got != wantM {
+				t.Errorf("wrong m.\n got=%s\nwant=%s", got, wantM)
+			}
+
+			if got := nestedInspect(env.Get("l")); got != wantL {
+				t.Errorf("wrong l.\n got=%s\nwant=%s", got, wantL)
+			}
+		})
+	}
+}
+
+// nestedInspect renders an object with sorted map keys and set members and no type noise.
+func nestedInspect(obj Object) string {
+	switch o := obj.(type) {
+	case *Map:
+		keys := make([]string, 0, len(o.Value))
+		for k := range o.Value {
+			keys = append(keys, k)
+		}
+
+		sort.Strings(keys)
+
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+":"+nestedInspect(o.Value[k]))
+		}
+
+		return "{" + strings.Join(parts, " ") + "}"
+	case *List:
+		parts := make([]string, 0, len(o.Value))
+		for _, e := range o.Value {
+			parts = append(parts, nestedInspect(e))
+		}
+
+		return "[" + strings.Join(parts, " ") + "]"
+	case *StringSet:
+		members := make([]string, 0, len(o.Value))
+		for k := range o.Value {
+			members = append(members, k)
+		}
+
+		sort.Strings(members)
+
+		return "{" + strings.Join(members, ",") + "}"
+	case *NumberSet:
+		members := make([]string, 0, len(o.Value))
+		for k := range o.Value {
+			members = append(members, strconv.FormatFloat(k, 'f', -1, 64))
+		}
+
+		sort.Strings(members)
+
+		return "{" + strings.Join(members, ",") + "}"
+	case *Number:
+		return strconv.FormatFloat(o.Value, 'f', -1, 64)
+	case *String:
+		return o.Value
+	}
+
+	return obj.Inspect()
+}
+
+// TestEvalNestedDeleteAndAddErrors checks the failures DynamoDB Local reports for DELETE and
+// ADD on nested paths (#184), and that a failed update leaves the item untouched.
+func TestEvalNestedDeleteAndAddErrors(t *testing.T) {
+	tests := []struct {
+		update string
+		want   string
+	}{
+		// A parent that is missing or not a map/list.
+		{"DELETE nope.x :xSet", nestedPathInvalidMsg},
+		{"DELETE m.nope.x :xSet", nestedPathInvalidMsg},
+		{"DELETE m.s.x :xSet", nestedPathInvalidMsg},
+		{"DELETE m.ss.x :xSet", nestedPathInvalidMsg},
+		{"DELETE nope[0] :xSet", nestedPathInvalidMsg},
+		{"DELETE m[0] :xSet", nestedPathInvalidMsg},
+		{"ADD nope.x :one", nestedPathInvalidMsg},
+		{"ADD nope.x :zSet", nestedPathInvalidMsg},
+		{"ADD m.nope.x :one", nestedPathInvalidMsg},
+		{"ADD m.s.x :one", nestedPathInvalidMsg},
+		{"ADD m.ss.x :one", nestedPathInvalidMsg},
+		{"ADD nope[0] :one", nestedPathInvalidMsg},
+		{"ADD m[0] :one", nestedPathInvalidMsg},
+		// A target of the wrong type.
+		{"DELETE m.ns :xSet", nestedBadTypeMsg},
+		{"DELETE m.n :xSet", nestedBadTypeMsg},
+		{"DELETE m.s :xSet", nestedBadTypeMsg},
+		{"DELETE l[1] :xSet", nestedBadTypeMsg},
+		{"DELETE l[0] :oneSet", nestedBadTypeMsg},
+		{"ADD m.ss :threeSet", nestedBadTypeMsg},
+		{"ADD m.ns :zSet", nestedBadTypeMsg},
+		{"ADD m.n :zSet", nestedBadTypeMsg},
+		{"ADD m.ss :one", nestedBadTypeMsg},
+		{"ADD m.s :one", nestedBadTypeMsg},
+		{"ADD m.s :zSet", nestedBadTypeMsg},
+		{"ADD l[1] :zSet", nestedBadTypeMsg},
+		{"ADD l[0] :one", nestedBadTypeMsg},
+		{"ADD l[3] :one", nestedBadTypeMsg},
+		// An operand that is not a set (or a number for ADD) wins over a missing path.
+		{"ADD m.ss :val", fmt.Sprintf(nestedAddOperandMsg, "STRING")},
+		{"ADD m.new :x", fmt.Sprintf(nestedAddOperandMsg, "BOOLEAN")},
+		{"ADD nope.x :val", fmt.Sprintf(nestedAddOperandMsg, "STRING")},
+		{"DELETE nope.x :val", fmt.Sprintf(nestedDeleteOperandMsg, "STRING")},
+		{"DELETE m.nope :two", fmt.Sprintf(nestedDeleteOperandMsg, "NUMBER")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.update, func(t *testing.T) {
+			env := startNestedUpdateEnv(t)
+
+			errObj, ok := testEvalUpdate(t, tt.update, env).(*Error)
+			if !ok {
+				t.Fatalf("expected an error")
+			}
+
+			if got, _, _ := strings.Cut(errObj.Message, " | "); got != tt.want {
+				t.Errorf("wrong message.\n got=%q\nwant=%q", got, tt.want)
+			}
+
+			if got := nestedInspect(env.Get("m")); got != nestedWantM {
+				t.Errorf("m changed: got=%s", got)
+			}
+
+			if got := nestedInspect(env.Get("l")); got != nestedWantL {
+				t.Errorf("l changed: got=%s", got)
+			}
+		})
+	}
+}
+
+// TestEvalNestedDeleteAddWithAliases resolves #name placeholders on nested paths.
+func TestEvalNestedDeleteAddWithAliases(t *testing.T) {
+	env := startNestedUpdateEnv(t)
+	env.Aliases["#m"] = "m"
+	env.Aliases["#ss"] = "ss"
+	env.Aliases["#n"] = "n"
+	env.Aliases["#nope"] = "nope"
+
+	for _, update := range []string{"DELETE #m.#ss :xSet", "ADD #m.#n :one", "DELETE #m.#nope :xSet"} {
+		if result := testEvalUpdate(t, update, env); isError(result) {
+			t.Fatalf("%s: unexpected error: %s", update, result.Inspect())
+		}
+	}
+
+	if got, want := nestedInspect(env.Get("m")), "{n:2 ns:{1,2} s:a ss:{y}}"; got != want {
+		t.Errorf("wrong m.\n got=%s\nwant=%s", got, want)
+	}
+
+	errObj, ok := testEvalUpdate(t, "DELETE #nope.#x :xSet", env).(*Error)
+	if !ok {
+		t.Fatalf("expected an error")
+	}
+
+	if !strings.HasPrefix(errObj.Message, nestedPathInvalidMsg+" | ") {
+		t.Errorf("wrong message: %q", errObj.Message)
 	}
 }

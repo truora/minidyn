@@ -517,8 +517,6 @@ func TestE2E_ItemValidation(t *testing.T) {
 
 				paritySeedStarters(ctx, t, client)
 
-				// Compare the full message: normalizeSDKErrorString drops the text after ';',
-				// which carries the operator and operand type.
 				deleteErr := func(attr string, v dynamodbtypes.AttributeValue) string {
 					_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 						TableName: aws.String(parityPokemonTable),
@@ -530,7 +528,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 					})
 					require.Error(t, err)
 
-					return strings.TrimSpace(sdkErrRequestIDRE.ReplaceAllString(err.Error(), "RequestID: , "))
+					return normalizeSDKErrorString(err.Error())
 				}
 
 				return []any{
@@ -540,10 +538,10 @@ func TestE2E_ItemValidation(t *testing.T) {
 					deleteErr("moves", &dynamodbtypes.AttributeValueMemberBOOL{Value: true}),
 					deleteErr("moves", &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{}}),
 					deleteErr("absent", &dynamodbtypes.AttributeValueMemberM{Value: map[string]dynamodbtypes.AttributeValue{}}),
-					// A set of another type than the target's string set. DynamoDB's message has no
-					// "; " detail here, and minidyn's debug detail is cut by the normalizer.
-					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}})),
-					normalizeSDKErrorString(deleteErr("moves", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}})),
+					// A set of another type than the target's string set. minidyn adds debug detail
+					// after " | ", which the normalizer strips.
+					deleteErr("moves", &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1"}}),
+					deleteErr("moves", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}}),
 					parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
 				}
 			},

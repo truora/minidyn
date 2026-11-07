@@ -22,9 +22,8 @@ var (
 
 	// ErrKeyTypeMismatch when a primary key attribute has a different type than
 	// the one declared in the table's attribute definitions. Real DynamoDB
-	// writes "Type mismatch for key id expected: S actual: N" (space, no
-	// semicolon); the ";" is deliberate so the parity normalizer trims the
-	// detail down to DynamoDB Local's shorter message.
+	// writes "Type mismatch for key id expected: S actual: N", but DynamoDB Local
+	// stops after "Type mismatch for key", so minidyn's detail goes after " | ".
 	ErrKeyTypeMismatch = errors.New("One or more parameter values were invalid: Type mismatch for key") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 )
 
@@ -172,13 +171,13 @@ func mapToDynamoDBType(v any) string {
 func getItemValue(item map[string]*types.Item, field, typ string) (any, error) {
 	val, ok := item[field]
 	if !ok {
-		return nil, fmt.Errorf("%w; field: %q", errMissingField, field)
+		return nil, fmt.Errorf("%w%s", errMissingField, types.Detail("field", field))
 	}
 
 	goVal, ok := getGoValue(val, typ)
 	if !ok {
 		// revive:disable-next-line
-		return nil, fmt.Errorf("%w; field %q", ErrInvalidAtrributeValue, field)
+		return nil, fmt.Errorf("%w%s", ErrInvalidAtrributeValue, types.Detail("field", field))
 	}
 
 	return goVal, nil

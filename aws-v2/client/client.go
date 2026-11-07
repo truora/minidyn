@@ -1232,7 +1232,7 @@ func validateSyntaxExpression(regex *regexp.Regexp, expressions []string, errorM
 	for _, exprName := range expressions {
 		ok := regex.MatchString(exprName)
 		if !ok {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: fmt.Sprintf("%s: Syntax error; key: %s", errorMsg, exprName)}
+			return &smithy.GenericAPIError{Code: "ValidationException", Message: fmt.Sprintf("%s: Syntax error; key: %q", errorMsg, exprName)}
 		}
 	}
 

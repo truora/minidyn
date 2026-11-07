@@ -131,7 +131,7 @@ func numToString(v float64) string {
 func (i *Number) Add(obj Object) Object {
 	n, ok := obj.(*Number)
 	if !ok {
-		return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+		return newIncorrectAddOperandError(i, obj)
 	}
 
 	i.Value += n.Value
@@ -478,7 +478,7 @@ func (l *List) Add(obj Object) Object {
 	if obj.Type() == ObjectTypeList {
 		list, ok := obj.(*List)
 		if !ok {
-			return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+			return newIncorrectAddOperandError(l, obj)
 		}
 
 		l.Value = append(l.Value, list.Value...)
@@ -590,7 +590,7 @@ func (ss *StringSet) Add(obj Object) Object {
 		}
 	}
 
-	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	return newIncorrectAddOperandError(ss, obj)
 }
 
 // Delete if the obj is a string set it removes the value from the Set
@@ -736,7 +736,7 @@ func (bs *BinarySet) Add(obj Object) Object {
 		return UNDEFINED
 	}
 
-	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	return newIncorrectAddOperandError(bs, obj)
 }
 
 // NumberSet is the representation of a number set
@@ -840,7 +840,7 @@ func (ns *NumberSet) Add(obj Object) Object {
 		}
 	}
 
-	return newError("Incorrect operand type for operator or function; operator: ADD, operand type: %s", obj.Type())
+	return newIncorrectAddOperandError(ns, obj)
 }
 
 // Delete if the obj is a number set it removes the value from the Set
@@ -857,8 +857,29 @@ func (ns *NumberSet) Delete(obj Object) Object {
 }
 
 // newIncorrectDeleteOperandError is DynamoDB's message for a DELETE whose target or operand
-// has the wrong type, with the types after "; " for debugging.
+// has the wrong type, with the types as minidyn-only detail.
 func newIncorrectDeleteOperandError(target, operand Object) *Error {
-	return newError("An operand in the update expression has an incorrect data type; "+
-		"operator: DELETE; target type: %s; operand type: %s", target.Type(), operand.Type())
+	return newIncorrectDataTypeError("DELETE", target, operand)
+}
+
+// newIncorrectAddOperandError is DynamoDB's message for an ADD whose operand is not a number
+// or a set, or does not fit the target's type.
+func newIncorrectAddOperandError(target, operand Object) *Error {
+	switch operand.(type) {
+	case *Number, *StringSet, *NumberSet, *BinarySet:
+		return newIncorrectDataTypeError("ADD", target, operand)
+	}
+
+	return newError(
+		"Invalid UpdateExpression: Incorrect operand type for operator or function; "+
+			"operator: ADD, operand type: %s, typeSet: ALLOWED_FOR_ADD_OPERAND",
+		dynamoDBTypeName(operand.Type()),
+	)
+}
+
+// newIncorrectDataTypeError is DynamoDB's message for an operand whose type does not fit the
+// target's, with the operator and both types as minidyn-only detail.
+func newIncorrectDataTypeError(operator string, target, operand Object) *Error {
+	return &Error{Message: types.WithDetail("An operand in the update expression has an incorrect data type",
+		"operator", operator, "target type", string(target.Type()), "operand type", string(operand.Type()))}
 }

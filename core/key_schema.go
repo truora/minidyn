@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/truora/minidyn/types"
@@ -33,16 +34,17 @@ func (ks keySchema) validatePrimaryKeyMap(key map[string]*types.Item) error {
 	}
 
 	if len(key) != want {
-		return fmt.Errorf("%w; expected %d keys, got %d", errInvalidKeyConditionCount, want, len(key))
+		return fmt.Errorf("%w%s", errInvalidKeyConditionCount,
+			types.Detail("expected keys", strconv.Itoa(want), "got keys", strconv.Itoa(len(key))))
 	}
 
 	if _, ok := key[ks.HashKey]; !ok {
-		return fmt.Errorf("%w; missing hash key", errMissingField)
+		return fmt.Errorf("%w%s", errMissingField, types.Detail("missing", "hash key"))
 	}
 
 	if ks.RangeKey != "" {
 		if _, ok := key[ks.RangeKey]; !ok {
-			return fmt.Errorf("%w; missing range key", errMissingField)
+			return fmt.Errorf("%w%s", errMissingField, types.Detail("missing", "range key"))
 		}
 	}
 
@@ -61,14 +63,14 @@ func (ks keySchema) GetKey(attrs map[string]string, item map[string]*types.Item)
 
 // keyAttrValue reads a key attribute, reporting a DynamoDB-style type mismatch
 // for primary keys whose value type differs from the declared one. See
-// ErrKeyTypeMismatch for why the detail is separated with ";". Values with no
+// ErrKeyTypeMismatch for why the detail goes after " | ". Values with no
 // recognizable type (nil or empty) keep the generic invalid attribute error.
 func (ks keySchema) keyAttrValue(attrs map[string]string, item map[string]*types.Item, field string) (any, error) {
 	val, err := getItemValue(item, field, attrs[field])
 	if err != nil && !ks.Secondary && errors.Is(err, ErrInvalidAtrributeValue) && attrs[field] != "" {
 		if actual := itemTypeName(item[field]); actual != "" {
-			return nil, fmt.Errorf("%w; %s expected: %s actual: %s",
-				ErrKeyTypeMismatch, field, attrs[field], actual)
+			return nil, fmt.Errorf("%w%s", ErrKeyTypeMismatch,
+				types.Detail("field", field, "expected", attrs[field], "actual", actual))
 		}
 	}
 

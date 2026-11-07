@@ -598,7 +598,7 @@ func TestEvalDELETEUpdateMissingAttribute(t *testing.T) {
 }
 
 func TestEvalDELETERejectsMismatchedSetType(t *testing.T) {
-	const prefix = "An operand in the update expression has an incorrect data type; "
+	const prefix = "An operand in the update expression has an incorrect data type | "
 
 	tests := []struct {
 		update string
@@ -629,6 +629,45 @@ func TestEvalDELETERejectsMismatchedSetType(t *testing.T) {
 
 			if got := env.Get(tt.field).Inspect(); got != before {
 				t.Errorf("target changed: got=%v, want=%v", got, before)
+			}
+		})
+	}
+}
+
+func TestEvalADDRejectsInvalidOperand(t *testing.T) {
+	const typeSetMsg = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
+		"operator: ADD, operand type: %s, typeSet: ALLOWED_FOR_ADD_OPERAND"
+
+	const dataTypeMsg = "An operand in the update expression has an incorrect data type | " +
+		"operator: ADD; target type: %s; operand type: %s"
+
+	tests := []struct {
+		update string
+		want   string
+	}{
+		{"ADD :one :val", fmt.Sprintf(typeSetMsg, "STRING")},
+		{"ADD :one :x", fmt.Sprintf(typeSetMsg, "BOOLEAN")},
+		{"ADD :one :list", fmt.Sprintf(typeSetMsg, "LIST")},
+		{"ADD :numSet :hash", fmt.Sprintf(typeSetMsg, "MAP")},
+		{"ADD :binSet :val", fmt.Sprintf(typeSetMsg, "STRING")},
+		{"ADD :strSet :hash", fmt.Sprintf(typeSetMsg, "MAP")},
+		{"ADD :strSet :one", fmt.Sprintf(dataTypeMsg, "SS", "N")},
+		{"ADD :numSet :strSet", fmt.Sprintf(dataTypeMsg, "NS", "SS")},
+		{"ADD :binSet :one", fmt.Sprintf(dataTypeMsg, "BS", "N")},
+		{"ADD :val :one", fmt.Sprintf(dataTypeMsg, "S", "N")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.update, func(t *testing.T) {
+			env := startEvalUpdateEnv(t)
+
+			errObj, ok := testEvalUpdate(t, tt.update, env).(*Error)
+			if !ok {
+				t.Fatalf("expected an error")
+			}
+
+			if errObj.Message != tt.want {
+				t.Errorf("wrong message.\n got=%q\nwant=%q", errObj.Message, tt.want)
 			}
 		})
 	}
@@ -1113,39 +1152,39 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"SET h.bar = :one",
-			"The document path provided in the update expression is invalid for update; field id: h; path: bar",
+			"The document path provided in the update expression is invalid for update | field id: h; path: bar",
 		},
 		{
 			"SET notFound.bar = :one",
-			"The document path provided in the update expression is invalid for update; field id: notFound; path: bar",
+			"The document path provided in the update expression is invalid for update | field id: notFound; path: bar",
 		},
 		{
 			"SET :val.bar = :one",
-			"The document path provided in the update expression is invalid for update; field id: :val; path: bar",
+			"The document path provided in the update expression is invalid for update | field id: :val; path: bar",
 		},
 		{
 			"SET notFound[0] = :one",
-			"The document path provided in the update expression is invalid for update; field id: notFound; path: 0",
+			"The document path provided in the update expression is invalid for update | field id: notFound; path: 0",
 		},
 		{
 			"SET info.a.b = :one",
-			"The document path provided in the update expression is invalid for update; field id: info; path: a.b",
+			"The document path provided in the update expression is invalid for update | field id: info; path: a.b",
 		},
 		{
 			"SET entry_list[0].a.b = :one",
-			"The document path provided in the update expression is invalid for update; field id: entry_list; path: 0.a.b",
+			"The document path provided in the update expression is invalid for update | field id: entry_list; path: 0.a.b",
 		},
 		{
 			"SET wrapper.label[0] = :one",
-			"The document path provided in the update expression is invalid for update; field id: wrapper; path: label.0",
+			"The document path provided in the update expression is invalid for update | field id: wrapper; path: label.0",
 		},
 		{
 			"ADD :voidVal :one",
-			"An operand in the update expression has an incorrect data type",
+			"An operand in the update expression has an incorrect data type | operator: ADD; target type: NULL; operand type: N",
 		},
 		{
 			"SET :x[1] = :one",
-			"The document path provided in the update expression is invalid for update; field id: :x; path: 1",
+			"The document path provided in the update expression is invalid for update | field id: :x; path: 1",
 		},
 		{
 			"SET :list[:x] = :val",
@@ -1161,7 +1200,7 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"DELETE :x :set",
-			"An operand in the update expression has an incorrect data type; operator: DELETE; target type: BOOL; operand type: SS",
+			"An operand in the update expression has an incorrect data type | operator: DELETE; target type: BOOL; operand type: SS",
 		},
 		{
 			"DELETE :list sizze(:x)",
@@ -1337,5 +1376,18 @@ func TestDynamoDBTypeName(t *testing.T) {
 		if got := dynamoDBTypeName(in); got != want {
 			t.Errorf("dynamoDBTypeName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestNewInvalidFunctionCallErrorKeepsExpressionAsDetail(t *testing.T) {
+	node := &CallExpression{
+		Function:  &Identifier{Value: "f"},
+		Arguments: []Expression{&Identifier{Value: "a"}},
+	}
+
+	got := newInvalidFunctionCallError(node)
+
+	if want := "invalid function call | expression: " + node.String(); got.Message != want {
+		t.Errorf("wrong message.\n got=%q\nwant=%q", got.Message, want)
 	}
 }

@@ -35,19 +35,20 @@ type expectation struct {
 }
 
 var scalingExpectations = map[string]expectation{
-	"GetItem":                {},
-	"PutItemOverwrite":       {},
-	"PutItemNewThenDelete":   {knownIssue: "P3"},
-	"UpdateItemCounter":      {},
-	"UpdateItemIndexKey":     {knownIssue: "P3"},
-	"QueryPartition":         {},
-	"QueryRangeLimit":        {},
-	"QueryWithFilter":        {},
-	"QueryGSI":               {},
-	"QueryGSIAfterWrite":     {knownIssue: "P3"},
-	"BatchGetItem25":         {},
-	"TransactWritePutUpdate": {knownIssue: "P2"},
-	"ScanFilterFullTable":    {linear: true},
+	"GetItem":                  {},
+	"PutItemOverwrite":         {},
+	"PutItemNewThenDelete":     {knownIssue: "P3"},
+	"UpdateItemCounter":        {},
+	"UpdateItemNamedCondition": {},
+	"UpdateItemIndexKey":       {knownIssue: "P3"},
+	"QueryPartition":           {},
+	"QueryRangeLimit":          {},
+	"QueryWithFilter":          {},
+	"QueryGSI":                 {},
+	"QueryGSIAfterWrite":       {knownIssue: "P3"},
+	"BatchGetItem25":           {},
+	"TransactWritePutUpdate":   {knownIssue: "P2"},
+	"ScanFilterFullTable":      {linear: true},
 }
 
 // TestScaling fails when an operation's cost grows with the table size beyond its

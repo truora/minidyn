@@ -1195,7 +1195,7 @@ func TestUpdateItemWithConditionalExpression(t *testing.T) {
 
 	uexpr := "SET second_type = :ntype"
 	expr := map[string]dynamodbtypes.AttributeValue{
-		":ntyp": &dynamodbtypes.AttributeValueMemberS{
+		":ntype": &dynamodbtypes.AttributeValueMemberS{
 			Value: "poison",
 		},
 	}

@@ -413,29 +413,83 @@ func validateSearchInputMaps(input QueryInput) error {
 // DynamoDB validates this before scanning, so it must error even when the table is empty or
 // no item matches (when the per-item interpreter checks would never run).
 func validateSearchExpressionAttributeNames(input QueryInput) error {
-	checks := []struct {
-		label      string
-		expression string
-	}{
-		{"KeyConditionExpression", input.KeyConditionExpression},
-		{"FilterExpression", input.FilterExpression},
-		{"ProjectionExpression", input.ProjectionExpression},
+	checks := []interpreter.LabeledExpression{
+		{Label: "KeyConditionExpression", Expression: input.KeyConditionExpression},
+		{Label: "FilterExpression", Expression: input.FilterExpression},
+		{Label: "ProjectionExpression", Expression: input.ProjectionExpression},
 	}
 
-	for _, c := range checks {
-		if err := interpreter.ValidateExpressionAttributeNamesDeclared(c.label, c.expression, input.Aliases); err != nil {
-			return types.NewError("ValidationException", err.Error(), nil)
-		}
+	if err := interpreter.ValidateExpressionAttributeNamesDeclared(input.Aliases, checks...); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
 	}
 
 	// A wrong operand count is rejected the same way, before any item is read.
 	for _, c := range checks[:2] {
-		if err := interpreter.ValidateFunctionOperandCounts(c.label, c.expression); err != nil {
+		if err := interpreter.ValidateFunctionOperandCounts(c.Label, c.Expression); err != nil {
 			return types.NewError("ValidationException", err.Error(), nil)
 		}
 	}
 
 	return nil
+}
+
+// validateSearchExpressionAttributeValues rejects up front any Query/Scan expression that
+// references a value placeholder (:value) missing from ExpressionAttributeValues. DynamoDB
+// validates this before reading any item, so it must error even when the table is empty or
+// no item matches. It reports the filter before the key condition.
+func validateSearchExpressionAttributeValues(input QueryInput) error {
+	err := interpreter.ValidateExpressionAttributeValuesDeclared(input.ExpressionAttributeValues,
+		interpreter.LabeledExpression{Label: "FilterExpression", Expression: input.FilterExpression},
+		interpreter.LabeledExpression{Label: "KeyConditionExpression", Expression: input.KeyConditionExpression},
+		// Front ends run write conditions through SearchData as a pre-check.
+		interpreter.LabeledExpression{Label: "ConditionExpression", Expression: derefString(input.ConditionExpression)},
+	)
+
+	return validationException(err)
+}
+
+// validationException wraps a placeholder validation error as DynamoDB's ValidationException.
+func validationException(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return types.NewError("ValidationException", err.Error(), nil)
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+
+	return *s
+}
+
+// validateWriteExpressions rejects up front any write expression that references a name or
+// value placeholder missing from aliases or values, even when the table is empty or the
+// condition would never be evaluated. DynamoDB reports an undeclared name before an undefined
+// value, across all the expressions of the request.
+func validateWriteExpressions(aliases map[string]string, values map[string]*types.Item, exprs ...interpreter.LabeledExpression) error {
+	return validationException(interpreter.ValidateExpressionPlaceholders(aliases, values, exprs...))
+}
+
+// validateConditionExpression applies validateWriteExpressions to an optional condition.
+func validateConditionExpression(aliases map[string]string, values map[string]*types.Item, condition *string) error {
+	return validateWriteExpressions(aliases, values,
+		interpreter.LabeledExpression{Label: "ConditionExpression", Expression: derefString(condition)})
+}
+
+// deleteAliases converts the pointer-valued ExpressionAttributeNames of a DeleteItemInput.
+func deleteAliases(names map[string]*string) map[string]string {
+	aliases := make(map[string]string, len(names))
+
+	for k, v := range names {
+		if v != nil {
+			aliases[k] = *v
+		}
+	}
+
+	return aliases
 }
 
 // validateKeyCondition rejects up front a Query key condition that does not match the key
@@ -747,6 +801,10 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		return SearchResult{}, err
 	}
 
+	if err := validateSearchExpressionAttributeValues(input); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := t.validateKeyCondition(input); err != nil {
 		return SearchResult{}, err
 	}
@@ -984,6 +1042,10 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
 
+	if err := validateConditionExpression(input.ExpressionAttributeNames, input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
+		return nil, err
+	}
+
 	item := copyItem(input.Item)
 
 	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
@@ -1163,6 +1225,14 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
+	// DynamoDB reports the update expression before the condition.
+	if err := validateWriteExpressions(input.ExpressionAttributeNames, input.ExpressionAttributeValues,
+		interpreter.LabeledExpression{Label: "UpdateExpression", Expression: input.UpdateExpression},
+		interpreter.LabeledExpression{Label: "ConditionExpression", Expression: derefString(input.ConditionExpression)},
+	); err != nil {
+		return nil, err
+	}
+
 	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
@@ -1261,6 +1331,10 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 
 	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if err := validateConditionExpression(deleteAliases(input.ExpressionAttributeNames), input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
+		return nil, err
 	}
 
 	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {

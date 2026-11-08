@@ -48,6 +48,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, err
 	}
 
+	if err := validateDeclaredValues(matchExpressionLabel(input.ExpressionType), parsed.values, input.Attributes); err != nil {
+		return false, err
+	}
+
 	if parsed.operandErr != nil {
 		return false, &operandCountError{expressionType: matchExpressionLabel(input.ExpressionType), cause: parsed.operandErr}
 	}
@@ -113,7 +117,7 @@ func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) 
 		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(p.Errors(), "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 	}
 
-	if err := ValidateExpressionAttributeNamesDeclared("ProjectionExpression", input.Expression, input.Aliases); err != nil {
+	if err := ValidateExpressionAttributeNamesDeclared(input.Aliases, LabeledExpression{"ProjectionExpression", input.Expression}); err != nil {
 		return nil, err
 	}
 
@@ -180,7 +184,7 @@ func (li *Language) Update(input UpdateInput) error {
 		return fmt.Errorf("%w: %s", errType, strings.Join(p.Errors(), "\n"))
 	}
 
-	if err := ValidateExpressionAttributeNamesDeclared("UpdateExpression", input.Expression, aliases); err != nil {
+	if err := ValidateExpressionAttributeNamesDeclared(aliases, LabeledExpression{"UpdateExpression", input.Expression}); err != nil {
 		return err
 	}
 

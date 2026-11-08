@@ -150,6 +150,21 @@ var benchOps = []benchOp{
 
 		return err
 	}},
+	{"UpdateItemNamedCondition", func(ctx context.Context, c *client.Client, size, i int) error {
+		// Update and condition expressions with #names and :values, all validated up front.
+		_, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                aws.String(benchTable),
+			Key:                      key(spread(i, size)),
+			UpdateExpression:         aws.String("SET #n = #n + :one, #st = :st"),
+			ConditionExpression:      aws.String("attribute_exists(#pk) AND #n >= :zero"),
+			ExpressionAttributeNames: map[string]string{"#n": "n", "#st": "status", "#pk": "pk"},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":one": n(1), ":st": s("active"), ":zero": n(0),
+			},
+		})
+
+		return err
+	}},
 	{"UpdateItemIndexKey", func(ctx context.Context, c *client.Client, size, i int) error {
 		// Moves an item between GSI groups, which re-sorts the index.
 		_, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{

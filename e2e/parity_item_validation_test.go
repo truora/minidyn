@@ -735,6 +735,11 @@ func TestE2E_ItemValidation(t *testing.T) {
 				return results
 			},
 		},
+		{
+			// A value placeholder missing from ExpressionAttributeValues is rejected (#190).
+			name: "UndefinedExpressionAttributeValues",
+			fn:   parityUndefinedExpressionAttributeValues,
+		},
 	}
 
 	for _, tt := range tests {
@@ -868,4 +873,150 @@ func parityUpdateItemAddScalarOnSet(t *testing.T, client *dynamodb.Client) any {
 		add("bs", &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{[]byte("b")}}),
 		parityNormalizeItemSets(parityGetPokemon(ctx, t, client, "004")),
 	}
+}
+
+// parityUndefinedExpressionAttributeValues sends a value placeholder that is not declared
+// through every expression context, on an empty table, so it must be rejected before any
+// item is read (#190).
+func parityUndefinedExpressionAttributeValues(t *testing.T, client *dynamodb.Client) any {
+	t.Helper()
+	ctx := context.Background()
+
+	parityCreatePokemonTable(ctx, t, client)
+
+	table := aws.String(parityPokemonTable)
+	key := map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "004"}}
+	declared := map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: "x"}}
+
+	errString := func(err error) string {
+		if err == nil {
+			return "accepted"
+		}
+
+		return normalizeSDKErrorString(err.Error())
+	}
+
+	transact := func(item dynamodbtypes.TransactWriteItem) error {
+		_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
+			TransactItems: []dynamodbtypes.TransactWriteItem{item},
+		})
+
+		return err
+	}
+
+	update := func(in dynamodb.UpdateItemInput) error {
+		in.TableName, in.Key = table, key
+		_, err := client.UpdateItem(ctx, &in)
+
+		return err
+	}
+
+	scan := func(in dynamodb.ScanInput) error {
+		in.TableName = table
+		_, err := client.Scan(ctx, &in)
+
+		return err
+	}
+
+	query := func(in dynamodb.QueryInput) error {
+		in.TableName = table
+		_, err := client.Query(ctx, &in)
+
+		return err
+	}
+
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"Update SET", update(dynamodb.UpdateItemInput{UpdateExpression: aws.String("SET a = :nope")})},
+		{"Update SET with another declared", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET a = :nope"), ExpressionAttributeValues: declared,
+		})},
+		{"Update SET one used one undefined", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET a = :v, b = :nope"), ExpressionAttributeValues: declared,
+		})},
+		{"Update condition", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET a = :v"), ConditionExpression: aws.String("b = :nope"),
+			ExpressionAttributeValues: declared,
+		})},
+		{"Update REMOVE with condition", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("REMOVE a"), ConditionExpression: aws.String("b = :nope"),
+		})},
+		{"Put condition", func() error {
+			_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+				TableName: table, Item: key, ConditionExpression: aws.String("a = :nope"),
+			})
+
+			return err
+		}()},
+		{"Delete condition", func() error {
+			_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: table, Key: key, ConditionExpression: aws.String("a = :nope"),
+			})
+
+			return err
+		}()},
+		{"Scan filter", scan(dynamodb.ScanInput{FilterExpression: aws.String("a = :nope")})},
+		{"Scan filter function", scan(dynamodb.ScanInput{
+			FilterExpression: aws.String("begins_with(a, :nope) AND b = :v"), ExpressionAttributeValues: declared,
+		})},
+		{"Query key", query(dynamodb.QueryInput{KeyConditionExpression: aws.String("id = :nope")})},
+		{"Query filter", query(dynamodb.QueryInput{
+			KeyConditionExpression: aws.String("id = :v"), FilterExpression: aws.String("a = :nope"),
+			ExpressionAttributeValues: declared,
+		})},
+		{"Query key and filter undefined", query(dynamodb.QueryInput{
+			KeyConditionExpression: aws.String("id = :k"), FilterExpression: aws.String("a = :nope"),
+		})},
+		{"Update and condition both undefined", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET a = :u"), ConditionExpression: aws.String("b = :c"),
+		})},
+		{"Update undeclared name, condition value undefined", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET #n = :v"), ConditionExpression: aws.String("b = :nope"),
+			ExpressionAttributeValues: declared,
+		})},
+		{"Update undeclared name and value in one expression", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET #n = :nope"),
+		})},
+		{"Put undeclared name and value", func() error {
+			_, err := client.PutItem(ctx, &dynamodb.PutItemInput{
+				TableName: table, Item: key, ConditionExpression: aws.String("#n = :nope"),
+			})
+
+			return err
+		}()},
+		{"Delete undeclared name and value", func() error {
+			_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: table, Key: key, ConditionExpression: aws.String("#n = :nope"),
+			})
+
+			return err
+		}()},
+		{"Update undefined only in update", update(dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET a = :u"), ConditionExpression: aws.String("b = :v"),
+			ExpressionAttributeValues: declared,
+		})},
+		{"Undefined name and value", scan(dynamodb.ScanInput{FilterExpression: aws.String("#n = :nope")})},
+		{"Transact Update", transact(dynamodbtypes.TransactWriteItem{Update: &dynamodbtypes.Update{
+			TableName: table, Key: key, UpdateExpression: aws.String("SET a = :nope"), ExpressionAttributeValues: declared,
+		}})},
+		{"Transact ConditionCheck", transact(dynamodbtypes.TransactWriteItem{ConditionCheck: &dynamodbtypes.ConditionCheck{
+			TableName: table, Key: key, ConditionExpression: aws.String("a = :nope"),
+		}})},
+		{"Transact Put", transact(dynamodbtypes.TransactWriteItem{Put: &dynamodbtypes.Put{
+			TableName: table, Item: key, ConditionExpression: aws.String("a = :nope"),
+		}})},
+		{"Transact Delete", transact(dynamodbtypes.TransactWriteItem{Delete: &dynamodbtypes.Delete{
+			TableName: table, Key: key, ConditionExpression: aws.String("a = :nope"),
+		}})},
+	}
+
+	out := make([]any, 0, len(cases)*2)
+
+	for _, c := range cases {
+		out = append(out, c.name, errString(c.err))
+	}
+
+	return out
 }

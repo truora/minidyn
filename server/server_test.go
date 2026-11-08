@@ -874,7 +874,7 @@ func TestServerUpdateItemWithConditionalExpression(t *testing.T) {
 
 	uexpr := "SET second_type = :ntype"
 	expr := map[string]ddbtypes.AttributeValue{
-		":ntyp": &ddbtypes.AttributeValueMemberS{Value: "poison"},
+		":ntype": &ddbtypes.AttributeValueMemberS{Value: "poison"},
 	}
 	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String("pokemons"),

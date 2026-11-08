@@ -533,8 +533,9 @@ func (g *fuzzGen) query() fuzzOp {
 	}
 
 	if !g.known && in.Limit != nil && strings.Contains(*in.KeyConditionExpression, " AND ") {
-		// #153: minidyn returns a LastEvaluatedKey when a full page ends exactly at
-		// the end of the sort key range.
+		// #153 (intentional divergence, see e2e/README.md): minidyn returns a
+		// LastEvaluatedKey when a full page ends exactly at the end of the sort key
+		// range, as DynamoDB documents; DynamoDB Local omits it.
 		in.KeyConditionExpression = aws.String(strings.SplitN(*in.KeyConditionExpression, " AND ", 2)[0])
 	}
 

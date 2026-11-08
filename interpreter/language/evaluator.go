@@ -60,10 +60,31 @@ func EvalUpdate(n Node, env *Environment) Object {
 	return newError("unsupported expression: %s", n.String())
 }
 
+const (
+	// missingOperandMessage is DynamoDB's error for an update expression that reads a path
+	// that does not resolve in the item.
+	missingOperandMessage = "The provided expression refers to an attribute that does not exist in the item"
+	// operandTypeMessage is DynamoDB's error for an update expression operand of the wrong
+	// type, found in the item.
+	operandTypeMessage = "An operand in the update expression has an incorrect data type"
+)
+
 const invalidDocumentPathMessage = "The document path provided in the update expression is invalid for update"
 
 func newError(format string, a ...any) *Error {
 	return &Error{Message: fmt.Sprintf(format, a...)}
+}
+
+// newMissingOperandError is DynamoDB's error for an update operand that does not resolve,
+// with minidyn detail naming it.
+func newMissingOperandError(detail ...string) *Error {
+	return &Error{Message: types.WithDetail(missingOperandMessage, detail...)}
+}
+
+// newOperandTypeError is DynamoDB's error for an update operand of the wrong type read from
+// the item, with minidyn detail naming it and its type.
+func newOperandTypeError(operand Object, detail ...string) *Error {
+	return &Error{Message: types.WithDetail(operandTypeMessage, append(detail, "operand type", string(operand.Type()))...)}
 }
 
 func newInvalidDocumentPathError(fieldID, path string) *Error {
@@ -195,7 +216,60 @@ func evalInfixParts(node *InfixExpression, env *Environment) Object {
 		return right
 	}
 
+	if errObj := staticInfixError(node, left, right); errObj != nil {
+		return errObj
+	}
+
 	return evalInfixExpression(node.Operator, left, right)
+}
+
+// isValueOperand reports whether expr is an expression attribute value (:name). Its type is
+// known before reading any item, unlike the type of a document path.
+func isValueOperand(expr Expression) bool {
+	id, ok := expr.(*Identifier)
+
+	return ok && strings.HasPrefix(id.Value, ":")
+}
+
+func isOrderingOperator(operator string) bool {
+	switch operator {
+	case "<", "<=", ">", ">=":
+		return true
+	}
+
+	return false
+}
+
+// staticInfixError returns the error for an ordering comparison DynamoDB rejects before
+// reading any item: a value that is not N, S or B, or two values of different types. A
+// stored value of another type is not an error, the comparison is just false.
+func staticInfixError(node *InfixExpression, left, right Object) Object {
+	if !isOrderingOperator(node.Operator) {
+		return nil
+	}
+
+	leftIsValue, rightIsValue := isValueOperand(node.Left), isValueOperand(node.Right)
+	bothDefined := !isUndefined(left) && !isUndefined(right)
+
+	// A value that cannot be ordered is rejected even when the other side is a missing path.
+	invalid := (leftIsValue && !isUndefined(left) && !comparableTypes[left.Type()]) ||
+		(rightIsValue && !isUndefined(right) && !comparableTypes[right.Type()]) ||
+		(bothDefined && leftIsValue && rightIsValue && left.Type() != right.Type())
+	if !invalid {
+		return nil
+	}
+
+	if left.Type() != right.Type() {
+		return newError("type mismatch: %s %s %s", left.Type(), node.Operator, right.Type())
+	}
+
+	return newError("unknown operator: %s %s %s", left.Type(), node.Operator, right.Type())
+}
+
+// mismatchedOperandsResult is the result of comparing values of different types, or of types
+// that cannot be ordered: they are never equal, so only <> holds.
+func mismatchedOperandsResult(operator string) Object {
+	return nativeBoolToBooleanObject(operator == "<>")
 }
 
 func checkSyntaxInfixParts(node *InfixExpression) Object {
@@ -228,10 +302,8 @@ func evalInfixExpression(operator string, left, right Object) Object {
 		return nativeBoolToBooleanObject(equalObject(left, right))
 	case operator == "<>":
 		return nativeBoolToBooleanObject(!equalObject(left, right))
-	case !matchTypes(left.Type(), left, right):
-		return newError("type mismatch: %s %s %s", left.Type(), operator, right.Type())
 	default:
-		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
+		return mismatchedOperandsResult(operator)
 	}
 }
 
@@ -259,6 +331,10 @@ func evalComparableInfixExpression(operator string, left, right Object) Object {
 
 	if oneSideIsUndefined {
 		return evalNullInfixExpression(operator, left, right)
+	}
+
+	if left.Type() != right.Type() {
+		return mismatchedOperandsResult(operator)
 	}
 
 	switch left.Type() {
@@ -433,11 +509,10 @@ func evalIndex(node *IndexExpression, env *Environment) Object {
 
 	obj := o
 
+	// Reading a path that does not resolve, such as a key of a NULL or an index of a map,
+	// gives no value, it is not an error.
 	for _, pos := range slices.Backward(positions) {
-		obj = pos.Get(obj)
-		if isError(obj) {
-			return obj
-		}
+		obj = pos.lookup(obj)
 	}
 
 	return obj
@@ -487,6 +562,23 @@ func documentPathSuffix(positions []indexAccessor) string {
 	}
 
 	return strings.Join(parts, ".")
+}
+
+// lookup reads the segment from container, or UNDEFINED when container is not a map or list
+// matching the segment or has no such entry.
+func (i indexAccessor) lookup(container Object) Object {
+	switch c := container.(type) {
+	case *List:
+		if pos, ok := i.val.(int64); ok && i.kind == ObjectTypeList {
+			return c.Get(pos)
+		}
+	case *Map:
+		if pos, ok := i.val.(string); ok && i.kind == ObjectTypeMap {
+			return c.Get(pos)
+		}
+	}
+
+	return UNDEFINED
 }
 
 func (i indexAccessor) Get(container Object) Object {
@@ -543,7 +635,7 @@ func (i indexAccessor) Set(container, val Object) Object {
 }
 
 func handleIndexIdentifier(n Expression, env *Environment, positions []indexAccessor, assign bool) ([]indexAccessor, Object, Object) {
-	obj, errObj := evalIndexObj(n, env)
+	obj, errObj := evalIndexObj(n, env, assign)
 	if isError(errObj) {
 		if assign {
 			fieldID := ""
@@ -618,7 +710,9 @@ func evalIndexPositions(n Expression, env *Environment, assign bool) ([]indexAcc
 	}
 }
 
-func evalIndexObj(identifierExpression Expression, env *Environment) (Object, Object) {
+// evalIndexObj evaluates the root of a document path. When reading, a root that is not a map
+// or list is returned as is and the path just does not resolve; assigning to it is an error.
+func evalIndexObj(identifierExpression Expression, env *Environment, assign bool) (Object, Object) {
 	identifier, ok := identifierExpression.(*Identifier)
 	if !ok {
 		return nil, newError("identifier expected: got %q", identifierExpression.String())
@@ -634,7 +728,7 @@ func evalIndexObj(identifierExpression Expression, env *Environment) (Object, Ob
 		return nil, obj
 	}
 
-	if isUndefined(obj) {
+	if isUndefined(obj) || !assign {
 		return obj, nil
 	}
 
@@ -695,36 +789,59 @@ func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
 }
 
 func evalBetween(node *BetweenExpression, env *Environment) Object {
-	val := evalBetweenOperand(node.Left, env)
+	val := evalOperand(node.Left, env)
 	if isError(val) {
 		return val
 	}
 
-	min := evalBetweenOperand(node.Range[0], env)
+	min := evalOperand(node.Range[0], env)
 	if isError(min) {
 		return min
 	}
 
-	max := evalBetweenOperand(node.Range[1], env)
+	max := evalOperand(node.Range[1], env)
 	if isError(max) {
 		return max
+	}
+
+	// The bounds that are values have a known type: DynamoDB rejects a wrong one even when
+	// the path is missing.
+	if errObj := staticBetweenError(node, min, max); errObj != nil {
+		return errObj
 	}
 
 	if isUndefined(val) || isUndefined(min) || isUndefined(max) {
 		return FALSE
 	}
 
-	if !matchTypes(val.Type(), val, min, max) {
+	// A stored value of another type is just not between the bounds.
+	if !comparableTypes[val.Type()] || !matchTypes(val.Type(), val, min, max) {
+		return FALSE
+	}
+
+	return compareRange(val, min, max)
+}
+
+func staticBetweenError(node *BetweenExpression, min, max Object) Object {
+	bounds := []Object{min, max}
+
+	for i, bound := range bounds {
+		if isValueOperand(node.Range[i]) && !isUndefined(bound) && !comparableTypes[bound.Type()] {
+			return newError(
+				"unexpected type: %q should be a comparable type(N,S,B) got %q", node.Range[i].String(), bound.Type(),
+			)
+		}
+	}
+
+	if isValueOperand(node.Range[0]) && isValueOperand(node.Range[1]) && min.Type() != max.Type() {
 		return newError("mismatch type: BETWEEN operands must have the same type")
 	}
 
-	b := compareRange(val, min, max)
-
-	return b
+	return nil
 }
 
 func evalIn(node *InExpression, env *Environment) Object {
-	val := evalIdentifierOperand(node.Left, env)
+	val := evalOperand(node.Left, env)
 	if isError(val) {
 		return val
 	}
@@ -732,7 +849,7 @@ func evalIn(node *InExpression, env *Environment) Object {
 	rangeObjects := &List{Value: make([]Object, 0, len(node.Range))}
 
 	for _, exp := range node.Range {
-		obj := evalIdentifierOperand(exp, env)
+		obj := evalOperand(exp, env)
 		if isError(obj) {
 			return obj
 		}
@@ -775,36 +892,9 @@ func compareRange(value, min, max Object) Object {
 	return newError("unsupported type: between do not support comparing %s", value.Type())
 }
 
-func evalBetweenOperand(exp Expression, env *Environment) Object {
-	identifier, ok := exp.(*Identifier)
-	if !ok {
-		return newError("identifier expected: got %q", exp.String())
-	}
-
-	val := evalIdentifier(identifier, env, true)
-	if val.Type() == ObjectTypeError {
-		return val
-	}
-
-	if !comparableTypes[val.Type()] && !isUndefined(val) {
-		return newError("unexpected type: %q should be a comparable type(N,S,B) got %q", exp.String(), val.Type())
-	}
-
-	return val
-}
-
-func evalIdentifierOperand(exp Expression, env *Environment) Object {
-	identifier, ok := exp.(*Identifier)
-	if !ok {
-		return newError("identifier expected: got %q", exp.String())
-	}
-
-	val := evalIdentifier(identifier, env, true)
-	if val.Type() == ObjectTypeError {
-		return val
-	}
-
-	return val
+// evalOperand evaluates a path or value operand of BETWEEN and IN.
+func evalOperand(exp Expression, env *Environment) Object {
+	return Eval(exp, env)
 }
 
 func evalFunctionCall(node *CallExpression, env *Environment) Object {
@@ -831,12 +921,39 @@ func evalFunctionCall(node *CallExpression, env *Environment) Object {
 		return args[0]
 	}
 
-	function, ok := fn.(*Function)
-	if !ok {
-		return newInvalidFunctionCallError(node)
+	if errObj := staticFunctionError(funcObj, node.Arguments, args); errObj != nil {
+		return errObj
 	}
 
-	return function.Value(args...)
+	return funcObj.Value(args...)
+}
+
+// staticFunctionError returns the error for an operand whose type DynamoDB rejects before
+// reading any item: only values have a known type, a stored value of another type makes the
+// function false (or its size missing) instead.
+func staticFunctionError(fn *Function, exprs []Expression, args []Object) Object {
+	for i, arg := range args {
+		if i >= len(exprs) || !isValueOperand(exprs[i]) {
+			continue
+		}
+
+		switch fn.Name {
+		case "begins_with":
+			if arg.Type() != ObjectTypeString && arg.Type() != ObjectTypeBinary && !isUndefined(arg) {
+				if i == 0 {
+					return newError("invalid type %s", arg.Type())
+				}
+
+				return newError("invalid substr type %s", arg.Type())
+			}
+		case "size":
+			if _, ok := arg.(SizableObject); !ok {
+				return newError("type not supported: size %s", arg.Type())
+			}
+		}
+	}
+
+	return nil
 }
 
 func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
@@ -858,6 +975,10 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 		return newError("%s", err.Error())
 	}
 
+	if errObj := staticUpdateFunctionError(funcObj, node.Arguments, env); errObj != nil {
+		return errObj
+	}
+
 	args := evalUpdateExpressions(node.Arguments, env)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
@@ -869,6 +990,95 @@ func evalUpdateFunctionCall(node *CallExpression, env *Environment) Object {
 	}
 
 	return function.Value(args...)
+}
+
+// staticUpdateFunctionError returns the errors DynamoDB reports for an update function call
+// before reading the item: values of the wrong type and if_not_exists operands that repeat
+// the first one.
+func staticUpdateFunctionError(fn *Function, exprs []Expression, env *Environment) Object {
+	switch fn.Name {
+	case "list_append":
+		for _, expr := range exprs {
+			if !isValueOperand(expr) {
+				continue
+			}
+
+			if val := EvalUpdate(expr, env); !isError(val) && !isUndefined(val) && val.Type() != ObjectTypeList {
+				return newIncorrectOperandTypeError(fn.Name, val)
+			}
+		}
+	case "if_not_exists":
+		return staticIfNotExistsError(exprs, env)
+	}
+
+	return nil
+}
+
+func staticIfNotExistsError(exprs []Expression, env *Environment) Object {
+	first, ok := documentPathText(exprs[0], env)
+	if !ok {
+		return nil
+	}
+
+	for _, expr := range exprs[1:] {
+		if other, isPath := documentPathText(expr, env); isPath && other == first {
+			return newError("Invalid UpdateExpression: The first operand must be distinct from the remaining "+
+				"operands for this operator or function; operator: if_not_exists, first operand: %s", first)
+		}
+	}
+
+	return nil
+}
+
+// documentPathText formats a document path as DynamoDB does in its messages, such as
+// [m, k] or [l, [0]]; ok is false when expr is not a document path.
+func documentPathText(expr Expression, env *Environment) (string, bool) {
+	if isValueOperand(expr) {
+		return "", false
+	}
+
+	elements, err := ExtractPath(expr, env)
+	if err != nil {
+		return "", false
+	}
+
+	parts := make([]string, len(elements))
+
+	for i, el := range elements {
+		if el.Kind == PathKindListIndex {
+			parts[i] = "[" + strconv.FormatInt(el.Index, 10) + "]"
+
+			continue
+		}
+
+		parts[i] = el.Key
+	}
+
+	return "[" + strings.Join(parts, ", ") + "]", true
+}
+
+// operandText formats an update operand for error detail: a document path as written in an
+// expression, with names resolved (m.k or l[0]), and anything else as is.
+func operandText(expr Expression, env *Environment) string {
+	elements, err := ExtractPath(expr, env)
+	if err != nil {
+		return expr.String()
+	}
+
+	var b strings.Builder
+
+	for i, el := range elements {
+		switch {
+		case el.Kind == PathKindListIndex:
+			b.WriteString("[" + strconv.FormatInt(el.Index, 10) + "]")
+		case i > 0:
+			b.WriteString("." + el.Key)
+		default:
+			b.WriteString(el.Key)
+		}
+	}
+
+	return b.String()
 }
 
 func evalFunctionCallIdentifer(node *CallExpression, env *Environment) Object {
@@ -913,6 +1123,10 @@ func evalActionSet(node *ActionExpression, env *Environment) Object {
 	val := EvalUpdate(node.Right, env)
 	if isError(val) {
 		return val
+	}
+
+	if isUndefined(val) {
+		return newMissingOperandError("operand", operandText(node.Right, env))
 	}
 
 	id, ok := node.Left.(*Identifier)
@@ -1151,27 +1365,23 @@ func evalActionRemove(node *ActionExpression, env *Environment) Object {
 
 	indexField, ok := node.Left.(*IndexExpression)
 	if ok {
-		positions, o, errObj := evalIndexPositions(indexField, env, false)
+		// Like DynamoDB, removing a path whose parent does not resolve is an invalid document
+		// path, while a missing last segment is left alone.
+		path, errObj := resolveNestedTarget(indexField, env)
 		if isError(errObj) {
 			return errObj
 		}
 
-		var (
-			obj = o
-			pos indexAccessor
-		)
-
-		for i := len(positions) - 1; i > 0; i-- {
-			pos = positions[i]
-			obj = pos.Get(obj)
+		if isUndefined(path.target) {
+			return UNDEFINED
 		}
 
-		errObj = positions[0].Remove(obj)
+		errObj = path.pos.Remove(path.container)
 		if isError(errObj) {
 			return errObj
 		}
 
-		env.MarkToCompact(obj)
+		env.MarkToCompact(path.container)
 
 		return UNDEFINED
 	}
@@ -1240,27 +1450,56 @@ func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object
 }
 
 func evalArithmeticTerms(node *InfixExpression, env *Environment) (*Number, *Number, Object) {
-	leftTerm := EvalUpdate(node.Left, env)
-	if isError(leftTerm) {
-		return nil, nil, leftTerm
+	// The values are checked first: DynamoDB knows their type before reading the item.
+	for _, operand := range []Expression{node.Left, node.Right} {
+		if !isValueOperand(operand) {
+			continue
+		}
+
+		if val := EvalUpdate(operand, env); !isError(val) && !isUndefined(val) && !isNumber(val) {
+			return nil, nil, newIncorrectOperandTypeError(node.Operator, val)
+		}
 	}
 
-	rightTerm := EvalUpdate(node.Right, env)
-	if isError(rightTerm) {
-		return nil, nil, rightTerm
+	leftNumber, errObj := evalArithmeticTerm(node.Operator, node.Left, env)
+	if isError(errObj) {
+		return nil, nil, errObj
 	}
 
-	leftNumber, ok := leftTerm.(*Number)
-	if !ok {
-		return nil, nil, newError("invalid operation: %s %s %s", leftTerm.Type(), node.Operator, rightTerm.Type())
-	}
-
-	rightNumber, ok := rightTerm.(*Number)
-	if !ok {
-		return nil, nil, newError("invalid operation: %s %s %s", leftTerm.Type(), node.Operator, rightTerm.Type())
+	rightNumber, errObj := evalArithmeticTerm(node.Operator, node.Right, env)
+	if isError(errObj) {
+		return nil, nil, errObj
 	}
 
 	return leftNumber, rightNumber, UNDEFINED
+}
+
+// evalArithmeticTerm evaluates one operand of + or -: it must exist and be a number.
+func evalArithmeticTerm(operator string, expr Expression, env *Environment) (*Number, Object) {
+	term := EvalUpdate(expr, env)
+	if isError(term) {
+		return nil, term
+	}
+
+	if isUndefined(term) {
+		return nil, newMissingOperandError("operator", operator, "operand", operandText(expr, env))
+	}
+
+	number, ok := term.(*Number)
+	if !ok {
+		return nil, newOperandTypeError(term, "operator", operator, "operand", operandText(expr, env))
+	}
+
+	return number, nil
+}
+
+// newIncorrectOperandTypeError is DynamoDB's error for a value of the wrong type used as
+// operand of an operator or function in an update expression.
+func newIncorrectOperandTypeError(operator string, operand Object) *Error {
+	return newError(
+		"Invalid UpdateExpression: Incorrect operand type for operator or function; "+
+			"operator or function: %s, operand type: %s", operator, operand.Type(),
+	)
 }
 
 func evalExpressions(exps []Expression, env *Environment) []Object {

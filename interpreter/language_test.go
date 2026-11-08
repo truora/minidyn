@@ -77,15 +77,25 @@ func TestLanguageMatch(t *testing.T) {
 			expectedErr: ErrSyntaxError,
 		},
 		{
-			name: "type mismatch",
+			name: "type mismatch on stored value is false",
 			input: MatchInput{
 				TableName:  "test",
-				Expression: "contains(txt, :b)",
+				Expression: "contains(n, :t) OR begins_with(b, :t) OR size(missing_attr) > :one",
 				Item:       item,
 				Attributes: map[string]*types.Item{
-					":b": {
-						BOOL: &boolTrue,
-					},
+					":t":   {S: new("x")},
+					":one": {N: new("1")},
+				},
+			},
+		},
+		{
+			name: "static operand type error",
+			input: MatchInput{
+				TableName:  "test",
+				Expression: "begins_with(txt, :n)",
+				Item:       item,
+				Attributes: map[string]*types.Item{
+					":n": {N: new("1")},
 				},
 			},
 			expectedErr: ErrSyntaxError,
@@ -410,5 +420,28 @@ func BenchmarkLanguageMatch(b *testing.B) {
 		if _, err := li.Match(input); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// A projected path through a value that is not a map or list is left out, not an error (#143).
+func TestLanguageProject_skipsPathThroughOtherTypes(t *testing.T) {
+	interp := &Language{}
+
+	out, err := interp.Project(ProjectInput{
+		Expression: "id, nul[0], nul.x, s.x, s[0], l.k, m[0], l[9]",
+		Item: map[string]*types.Item{
+			"id":  {S: new("1")},
+			"nul": {NULL: &boolTrue},
+			"s":   {S: new("abc")},
+			"l":   {L: []*types.Item{{S: new("a")}}},
+			"m":   {M: map[string]*types.Item{"k": {S: new("v")}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(out) != 1 || out["id"] == nil {
+		t.Fatalf("expected only id, got=%v", out)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -33,12 +32,6 @@ type fuzzOp struct {
 // fuzzGen generates operations. With known=false it stays away from areas with an open
 // parity issue, so a default run is green and any divergence is new. In that mode:
 //
-//   - items always have every attribute but g (which no function reads) and UpdateItem only
-//     touches existing items, because functions on a missing attribute fail the request in
-//     minidyn (#143);
-//   - write conditions use no functions (same reason: the item may not exist yet);
-//   - every string set contains "z" and DELETE never removes it, so sets never disappear and
-//     functions never read a missing ss (#143);
 //   - an update expression uses each path once and conditions have no redundant
 //     parentheses (#164: minidyn accepts invalid expressions).
 type fuzzGen struct {
@@ -95,27 +88,15 @@ func (g *fuzzGen) strSet() dynamodbtypes.AttributeValue {
 	return &dynamodbtypes.AttributeValueMemberSS{Value: g.someOf("x", "y", "z")}
 }
 
-// deletableSet is a set for DELETE: outside known mode it never includes "z".
-func (g *fuzzGen) deletableSet() dynamodbtypes.AttributeValue {
-	if g.known {
-		return g.strSet()
-	}
+// deletableSet is a set for DELETE.
+func (g *fuzzGen) deletableSet() dynamodbtypes.AttributeValue { return g.strSet() }
 
-	return &dynamodbtypes.AttributeValueMemberSS{Value: g.someOf("x", "y")}
-}
-
-// someOf returns a non-empty random subset of xs, in random order. Outside known mode,
-// sets of x/y/z always include "z".
+// someOf returns a non-empty random subset of xs, in random order.
 func (g *fuzzGen) someOf(xs ...string) []string {
 	all := append([]string(nil), xs...)
 	g.rng.Shuffle(len(all), func(i, j int) { all[i], all[j] = all[j], all[i] })
-	out := all[:1+g.rng.IntN(len(all))]
 
-	if !g.known && len(xs) == 3 && !slices.Contains(out, "z") {
-		out = append(out, "z")
-	}
-
-	return out
+	return all[:1+g.rng.IntN(len(all))]
 }
 
 func (g *fuzzGen) mapVal() dynamodbtypes.AttributeValue {
@@ -137,8 +118,10 @@ func (g *fuzzGen) mapVal() dynamodbtypes.AttributeValue {
 
 // attrValue returns a random value for a named non-key attribute.
 func (g *fuzzGen) attrValue(name string) dynamodbtypes.AttributeValue {
-	if g.known && g.chance(0.1) {
-		return &dynamodbtypes.AttributeValueMemberNULL{Value: true} // #143
+	// #213: minidyn accepts a NULL index key, DynamoDB rejects it. Only known mode puts
+	// NULL in g.
+	if g.chance(0.1) && (g.known || name != "g") {
+		return &dynamodbtypes.AttributeValueMemberNULL{Value: true}
 	}
 
 	switch name {
@@ -163,12 +146,7 @@ func (g *fuzzGen) item() map[string]dynamodbtypes.AttributeValue {
 	it := g.key()
 
 	for _, a := range fuzzAttrs {
-		keep := !g.known || g.chance(0.6)
-		if a == "g" && !g.known {
-			keep = g.chance(0.7) // only attribute_exists reads g, so it may be missing
-		}
-
-		if keep {
+		if g.chance(0.6) {
 			it[a] = g.attrValue(a)
 		}
 	}
@@ -215,10 +193,10 @@ func (e *fuzzExpr) valuesOrNil() map[string]dynamodbtypes.AttributeValue {
 	return e.values
 }
 
-// condition returns a random condition or filter expression over item attributes. Write
-// conditions (write=true) use no functions outside known mode, see fuzzGen.
+// condition returns a random condition or filter expression over item attributes; write
+// conditions (write=true) may refer to the key attributes.
 func (g *fuzzGen) condition(e *fuzzExpr, write bool) string {
-	fns := g.known || !write
+	fns := true
 	// #164: minidyn accepts filters on key attributes (g is the index's hash key).
 	keys := g.known || write
 	c := g.atom(e, fns, keys)
@@ -347,10 +325,9 @@ func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
 		}
 
 		if g.chance(0.6) {
-			// Only n and g: filters call functions on s, l, m and ss (#143), and REMOVE m
-			// would overlap the m.k and m.j paths (#164). Removing g drops the item from
-			// the by-g index.
-			return "REMOVE", e.name(pick(g, "n", "g"))
+			// Not m: REMOVE m would overlap the m.k and m.j paths (#164). Removing g
+			// drops the item from the by-g index.
+			return "REMOVE", e.name(pick(g, "n", "s", "l", "ss", "g"))
 		}
 
 		return "REMOVE", e.name("m") + "." + e.name("j")
@@ -405,8 +382,13 @@ func (g *fuzzGen) updateItem() fuzzOp {
 		TableName:        aws.String(fuzzTable),
 		Key:              g.key(),
 		UpdateExpression: aws.String(expr),
-		ReturnValues: pick(g, dynamodbtypes.ReturnValueNone, dynamodbtypes.ReturnValueAllNew,
-			dynamodbtypes.ReturnValueAllOld),
+		ReturnValues:     pick(g, dynamodbtypes.ReturnValueNone, dynamodbtypes.ReturnValueAllNew),
+	}
+
+	if g.known && g.chance(0.4) {
+		// #214: updating a missing item with ALL_OLD returns its key in minidyn, nothing in
+		// DynamoDB.
+		in.ReturnValues = dynamodbtypes.ReturnValueAllOld
 	}
 
 	if g.known && g.chance(0.4) {
@@ -418,12 +400,6 @@ func (g *fuzzGen) updateItem() fuzzOp {
 
 	if g.chance(0.3) {
 		conds = append(conds, g.condition(e, true))
-	}
-
-	// Only update existing (complete) items, see fuzzGen (#143). In known mode, upserts also
-	// exercise DELETE on a missing set.
-	if !g.known {
-		conds = append(conds, "attribute_exists("+e.name("pk")+")")
 	}
 
 	switch len(conds) {

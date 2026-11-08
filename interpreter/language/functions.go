@@ -1,8 +1,8 @@
 package language
 
 import (
-	"bytes"
-	"strings"
+	"slices"
+	"strconv"
 
 	"github.com/truora/minidyn/types"
 )
@@ -107,30 +107,16 @@ func attributeType(args ...Object) Object {
 	return newError("invalid type %s", typ.Type())
 }
 
+// A path that is missing or holds a value of another type never makes begins_with, contains
+// or size fail: DynamoDB evaluates them to false (or no size), see #143.
+
 func beginsWith(args ...Object) Object {
-	path := args[0]
-	substr := args[1]
-
-	if path.Type() == ObjectTypeString {
-		if substr.Type() != ObjectTypeString {
-			return newError("invalid substr type %s", substr.Type())
-		}
-
-		return nativeBoolToBooleanObject(strings.HasPrefix(path.Inspect(), substr.Inspect()))
+	prefixed, ok := args[0].(PrefixObject)
+	if !ok {
+		return FALSE
 	}
 
-	if path.Type() == ObjectTypeBinary {
-		if substr.Type() != ObjectTypeBinary {
-			return newError("invalid substr type %s", substr.Type())
-		}
-
-		binarySubstr, _ := substr.(*Binary)
-		binaryPath, _ := path.(*Binary)
-
-		return nativeBoolToBooleanObject(bytes.HasPrefix(binaryPath.Value, binarySubstr.Value))
-	}
-
-	return newError("invalid type %s", path.Type())
+	return nativeBoolToBooleanObject(prefixed.HasPrefix(args[1]))
 }
 
 func contains(args ...Object) Object {
@@ -138,12 +124,8 @@ func contains(args ...Object) Object {
 	operand := args[1]
 
 	container, ok := path.(ContainerObject)
-	if !ok {
-		return newError("contains is not supported for path=%s", path.Type())
-	}
-
-	if !container.CanContain(operand.Type()) {
-		return newError("contains is not supported for path=%s operand=%s", path.Type(), operand.Type())
+	if !ok || !container.CanContain(operand.Type()) {
+		return FALSE
 	}
 
 	return nativeBoolToBooleanObject(container.Contains(operand))
@@ -156,39 +138,38 @@ func objectSize(args ...Object) Object {
 		return &Number{Value: float64(sizable.Size())}
 	}
 
-	return newError("type not supported: size %s", path.Type())
+	return UNDEFINED
 }
 
 func ifNotExists(args ...Object) Object {
-	obj := args[0]
+	if isUndefined(args[1]) {
+		return newMissingOperandError("function", "if_not_exists", "operand", "2")
+	}
 
-	if isUndefined(obj) {
+	if isUndefined(args[0]) {
 		return args[1]
 	}
 
-	return obj
+	return args[0]
 }
 
 func listAppend(args ...Object) Object {
-	value1 := args[0]
-	if value1.Type() != ObjectTypeList {
-		return newError("list_append is not supported for list1=%s", value1.Type())
+	lists := make([]*List, 0, len(args))
+
+	for i, arg := range args {
+		operand := strconv.Itoa(i + 1)
+
+		if isUndefined(arg) {
+			return newMissingOperandError("function", "list_append", "operand", operand)
+		}
+
+		list, ok := arg.(*List)
+		if !ok {
+			return newOperandTypeError(arg, "function", "list_append", "operand", operand)
+		}
+
+		lists = append(lists, list)
 	}
 
-	value2 := args[1]
-	if value2.Type() != ObjectTypeList {
-		return newError("list_append is not supported for list2=%s", value2.Type())
-	}
-
-	list1, ok := value1.(*List)
-	if !ok {
-		return newError("list_append is not supported for list1=%s", value1.Type())
-	}
-
-	list2, ok := value2.(*List)
-	if !ok {
-		return newError("list_append is not supported for list2=%s", value2.Type())
-	}
-
-	return &List{Value: append(list1.Value, list2.Value...)}
+	return &List{Value: append(slices.Clone(lists[0].Value), lists[1].Value...)}
 }

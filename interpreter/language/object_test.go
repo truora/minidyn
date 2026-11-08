@@ -64,6 +64,31 @@ func TestBinaryContains(t *testing.T) {
 	}
 }
 
+func TestHasPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		obj    PrefixObject
+		prefix Object
+		want   bool
+	}{
+		{"string prefix", &String{Value: "hello"}, &String{Value: "he"}, true},
+		{"string not prefix", &String{Value: "hello"}, &String{Value: "lo"}, false},
+		{"string with binary prefix", &String{Value: "hello"}, &Binary{Value: []byte("he")}, false},
+		{"binary prefix", &Binary{Value: []byte("hello")}, &Binary{Value: []byte("he")}, true},
+		{"binary not prefix", &Binary{Value: []byte("hello")}, &Binary{Value: []byte("lo")}, false},
+		{"binary with string prefix", &Binary{Value: []byte("hello")}, &String{Value: "he"}, false},
+		{"string with missing prefix", &String{Value: "hello"}, UNDEFINED, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.obj.HasPrefix(tt.prefix); got != tt.want {
+				t.Fatalf("HasPrefix() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStringInspect(t *testing.T) {
 	str := String{Value: "hello"}
 	if str.Inspect() != "hello" {

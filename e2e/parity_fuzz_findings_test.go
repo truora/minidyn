@@ -249,8 +249,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			},
 		},
 		{
-			name:       "ConditionFunctionOnMissingAttribute",
-			knownIssue: "#143",
+			name: "ConditionFunctionOnMissingAttribute",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

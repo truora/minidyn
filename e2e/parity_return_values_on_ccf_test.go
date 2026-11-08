@@ -279,20 +279,65 @@ func TestE2E_ReturnValuesOnConditionCheckFailure(t *testing.T) {
 		{"TransactPutAllOld", parityCCFTransactPut(allOld, failsOnExisting, true)},
 		{"TransactPutNone", parityCCFTransactPut(none, failsOnExisting, true)},
 		{"TransactPutAllOldMissingItem", parityCCFTransactPut(allOld, failsOnMissing, false)},
-		{"TransactPutInvalidValue", parityCCFTransactPut(bogus, failsOnExisting, true)},
 		{"TransactDeleteAllOld", parityCCFTransactDelete(allOld, failsOnExisting, true)},
 		{"TransactDeleteNone", parityCCFTransactDelete(none, failsOnExisting, true)},
 		{"TransactDeleteAllOldMissingItem", parityCCFTransactDelete(allOld, failsOnMissing, false)},
-		{"TransactDeleteInvalidValue", parityCCFTransactDelete(bogus, failsOnExisting, true)},
 		{"UpdateItemInvalidValue", parityCCFUpdate(bogus, failsOnExisting, true)},
-		{"TransactUpdateInvalidValue", parityCCFTransactUpdate(bogus, failsOnExisting, true)},
-		{"TransactConditionCheckInvalidValue", parityCCFTransactConditionCheck(bogus, failsOnExisting, true)},
 		{"DeleteItemConditionMatchesOtherItem", parityCCFDeleteOtherItemMatches},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			RunE2E(t, tt.fn)
+		})
+	}
+}
+
+// TestE2E_TransactReturnValuesOnConditionCheckFailureInvalidValue covers a
+// ReturnValuesOnConditionCheckFailure outside ALL_OLD and NONE on the Put, Delete, Update and
+// ConditionCheck of TransactWriteItems.
+//
+// This is not a RunE2E parity case because DynamoDB Local does not validate the value inside a
+// transaction: it cancels the transaction with ConditionalCheckFailed. The API reference lists
+// "Valid Values: ALL_OLD | NONE" for these shapes, so minidyn rejects the whole request with a
+// ValidationException. The test pins both sides every run: when Local starts validating, this
+// should become RunE2E parity cases. Real DynamoDB verification is tracked in #224.
+func TestE2E_TransactReturnValuesOnConditionCheckFailureInvalidValue(t *testing.T) {
+	const (
+		bogus           = ccfMode("BOGUS")
+		failsOnExisting = "attribute_not_exists(id)"
+	)
+
+	ops := []struct {
+		name  string
+		shape string
+		fn    func(t *testing.T, client *dynamodb.Client) any
+	}{
+		{"TransactPut", "put", parityCCFTransactPut(bogus, failsOnExisting, true)},
+		{"TransactDelete", "delete", parityCCFTransactDelete(bogus, failsOnExisting, true)},
+		{"TransactUpdate", "update", parityCCFTransactUpdate(bogus, failsOnExisting, true)},
+		{"TransactConditionCheck", "conditionCheck", parityCCFTransactConditionCheck(bogus, failsOnExisting, true)},
+	}
+
+	for _, op := range ops {
+		t.Run(op.name, func(t *testing.T) {
+			t.Run("minidyn", func(t *testing.T) {
+				got := op.fn(t, newTracedSDKClient(t, setupMinidynEndpoint(t), &traceRecorder{})).([]any)
+
+				// A ValidationException, not a cancellation: the summary has only the error.
+				require.Len(t, got, 1)
+				require.Contains(t, got[0],
+					"ValidationException: 1 validation error detected: Value 'BOGUS' at 'transactItems.1.member."+op.shape+
+						".returnValuesOnConditionCheckFailure' failed to satisfy constraint: Member must satisfy enum value set: [ALL_OLD, NONE]")
+			})
+
+			t.Run("dynamodb-local", func(t *testing.T) {
+				got := op.fn(t, newTracedSDKClient(t, setupDynamoDBLocalEndpoint(t), &traceRecorder{})).([]any)
+
+				// DynamoDB Local does not validate the value: the failed condition cancels it.
+				require.Len(t, got, 4)
+				require.Equal(t, "ConditionalCheckFailed", got[1])
+			})
 		})
 	}
 }

@@ -62,6 +62,27 @@ stays visible and is checked on every run:
   NONE`"; the value is case sensitive, so `total` is
   invalid). The test asserts the error on minidyn and the silent success on
   Local.
+- **`ReturnValuesOnConditionCheckFailure` outside `ALL_OLD` and `NONE` inside
+  `TransactWriteItems`**
+  (`TestE2E_TransactReturnValuesOnConditionCheckFailureInvalidValue`).
+  DynamoDB Local does not validate the value on the transactional `Put`,
+  `Update`, `Delete` and `ConditionCheck`: a failed condition cancels the
+  transaction with `ConditionalCheckFailed`. minidyn rejects the whole
+  request, before any write, with a `ValidationException` ("1 validation error
+  detected: Value 'BOGUS' at
+  'transactItems.1.member.put.returnValuesOnConditionCheckFailure' failed to
+  satisfy constraint: Member must satisfy enum value set: [ALL_OLD, NONE]"),
+  as the [TransactWriteItems reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html)
+  and its nested shapes
+  ([Put](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Put.html),
+  [Update](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Update.html),
+  [Delete](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Delete.html),
+  [ConditionCheck](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ConditionCheck.html))
+  list "Valid Values: `ALL_OLD | NONE`". The standalone `PutItem`,
+  `UpdateItem` and `DeleteItem` already reject it on both engines. The test
+  asserts the error on minidyn and the cancellation on Local. The exact
+  message text of the nested path is taken from the documented shape, and
+  verification against real DynamoDB is tracked in #224.
 - **Transactional `ConditionCheck` billing**
   (`TestE2E_ConsumedCapacityConditionCheck`). DynamoDB Local bills 2 x the
   read units of the checked item (20 KB item: 10). The

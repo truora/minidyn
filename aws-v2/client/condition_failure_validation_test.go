@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,8 +45,9 @@ func TestUpdateItemInvalidReturnValuesOnConditionCheckFailure(t *testing.T) {
 	require.ErrorContains(t, err, bogusModeMessage)
 }
 
-// DynamoDB Local does not validate the mode inside a transaction: the failed condition cancels it.
-func TestTransactionInvalidReturnValuesOnConditionCheckFailureIsNotValidated(t *testing.T) {
+// DynamoDB Local accepts the mode inside a transaction; minidyn follows the API reference
+// (Valid Values: ALL_OLD | NONE) and rejects the whole transaction before any write.
+func TestTransactionInvalidReturnValuesOnConditionCheckFailureIsRejected(t *testing.T) {
 	ctx := context.Background()
 	key := map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "001"}}
 	const bogus = dynamodbtypes.ReturnValuesOnConditionCheckFailure("BOGUS")
@@ -69,6 +71,8 @@ func TestTransactionInvalidReturnValuesOnConditionCheckFailureIsNotValidated(t *
 		}},
 	}
 
+	shapes := map[string]string{"Put": "put", "Delete": "delete", "Update": "update", "ConditionCheck": "conditionCheck"}
+
 	for name, item := range items {
 		t.Run(name, func(t *testing.T) {
 			client := setupClient(tableName)
@@ -79,11 +83,23 @@ func TestTransactionInvalidReturnValuesOnConditionCheckFailureIsNotValidated(t *
 			_, err := client.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{
 				TransactItems: []dynamodbtypes.TransactWriteItem{item},
 			})
+			require.Error(t, err)
 
-			tce, ok := errors.AsType[*dynamodbtypes.TransactionCanceledException](err)
-			require.True(t, ok, "%v", err)
-			require.Equal(t, "ConditionalCheckFailed", aws.ToString(tce.CancellationReasons[0].Code))
-			require.Empty(t, tce.CancellationReasons[0].Item)
+			_, isCancelled := errors.AsType[*dynamodbtypes.TransactionCanceledException](err)
+			require.False(t, isCancelled, "%v", err)
+
+			var apiErr smithy.APIError
+
+			require.ErrorAs(t, err, &apiErr)
+			require.Equal(t, "ValidationException", apiErr.ErrorCode())
+			require.Equal(t,
+				"1 validation error detected: Value 'BOGUS' at 'transactItems.1.member."+shapes[name]+".returnValuesOnConditionCheckFailure' failed to satisfy constraint: Member must satisfy enum value set: [ALL_OLD, NONE]",
+				apiErr.ErrorMessage())
+
+			// Rejected before any write: the stored item is untouched.
+			got, gerr := client.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tableName), Key: key})
+			require.NoError(t, gerr)
+			require.Equal(t, "Bulbasaur", got.Item["name"].(*dynamodbtypes.AttributeValueMemberS).Value)
 		})
 	}
 }

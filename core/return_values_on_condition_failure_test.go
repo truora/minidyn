@@ -107,3 +107,39 @@ func TestValidateNoneOrAllOldReturnValues(t *testing.T) {
 		"Return values set to invalid value"+types.Detail("value", "BOGUS", "field", "ReturnValues"),
 		tErr.Message())
 }
+
+func TestValidateTransactItemReturnValuesOnConditionCheckFailure(t *testing.T) {
+	for _, rv := range []*string{nil, new(""), new("NONE"), new("ALL_OLD")} {
+		require.NoError(t, ValidateTransactItemReturnValuesOnConditionCheckFailure(0, "put", rv))
+	}
+
+	err := ValidateTransactItemReturnValuesOnConditionCheckFailure(1, "conditionCheck", new("BOGUS"))
+
+	var tErr types.Error
+
+	require.True(t, errors.As(err, &tErr))
+	require.Equal(t, "ValidationException", tErr.Code())
+	require.Equal(t,
+		"1 validation error detected: Value 'BOGUS' at 'transactItems.2.member.conditionCheck.returnValuesOnConditionCheckFailure' failed to satisfy constraint: Member must satisfy enum value set: [ALL_OLD, NONE]",
+		tErr.Message())
+}
+
+// Put, Update and Delete validate the mode themselves, so core never runs with a bad one.
+func TestWriteOperationsRejectInvalidReturnValuesOnConditionCheckFailure(t *testing.T) {
+	table := NewTable(tableName)
+	table.AttributesDef = map[string]string{"id": "S"}
+	table.KeySchema = keySchema{HashKey: "id"}
+	key := map[string]*types.Item{"id": {S: new("025")}}
+	bogus := new("BOGUS")
+
+	_, err := table.Put(&types.PutItemInput{TableName: &table.Name, Item: key, ReturnValuesOnConditionCheckFailure: bogus})
+	require.ErrorContains(t, err, "at 'returnValuesOnConditionCheckFailure'")
+
+	_, err = table.Delete(&types.DeleteItemInput{TableName: &table.Name, Key: key, ReturnValuesOnConditionCheckFailure: bogus})
+	require.ErrorContains(t, err, "at 'returnValuesOnConditionCheckFailure'")
+
+	_, err = table.Update(&types.UpdateItemInput{
+		TableName: &table.Name, Key: key, UpdateExpression: "REMOVE x", ReturnValuesOnConditionCheckFailure: bogus,
+	})
+	require.ErrorContains(t, err, "at 'returnValuesOnConditionCheckFailure'")
+}

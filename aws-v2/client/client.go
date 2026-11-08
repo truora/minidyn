@@ -1034,6 +1034,10 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 		return nil, fd.forceFailureErr
 	}
 
+	if err := validateTransactReturnValuesOnConditionCheckFailure(input.TransactItems); err != nil {
+		return nil, err
+	}
+
 	snapshots, err := fd.prepareTransact(input.TransactItems)
 	if err != nil {
 		return nil, err
@@ -1277,6 +1281,36 @@ func (fd *Client) runTransactUpdate(i, n int, update *types.Update) error {
 		}
 
 		return newTransactionCancelledError(i, n, opErr)
+	}
+
+	return nil
+}
+
+// validateTransactReturnValuesOnConditionCheckFailure rejects the whole transaction, before any
+// write, when an item has a ReturnValuesOnConditionCheckFailure outside ALL_OLD and NONE.
+// DynamoDB Local accepts the value; minidyn follows the API reference (see e2e/README.md).
+func validateTransactReturnValuesOnConditionCheckFailure(items []types.TransactWriteItem) error {
+	for i, item := range items {
+		var shape string
+
+		var rv types.ReturnValuesOnConditionCheckFailure
+
+		switch {
+		case item.Put != nil:
+			shape, rv = "put", item.Put.ReturnValuesOnConditionCheckFailure
+		case item.Update != nil:
+			shape, rv = "update", item.Update.ReturnValuesOnConditionCheckFailure
+		case item.Delete != nil:
+			shape, rv = "delete", item.Delete.ReturnValuesOnConditionCheckFailure
+		case item.ConditionCheck != nil:
+			shape, rv = "conditionCheck", item.ConditionCheck.ReturnValuesOnConditionCheckFailure
+		default:
+			continue
+		}
+
+		if err := core.ValidateTransactItemReturnValuesOnConditionCheckFailure(i, shape, aws.String(string(rv))); err != nil {
+			return mapKnownError(err)
+		}
 	}
 
 	return nil

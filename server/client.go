@@ -1061,6 +1061,10 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateTransactReturnValuesOnConditionCheckFailure(input.TransactItems); err != nil {
+		return nil, err
+	}
+
 	snapshots, err := c.prepareTransact(input.TransactItems)
 	if err != nil {
 		return nil, err
@@ -1106,6 +1110,36 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	return &TransactWriteItemsOutput{
 		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
 	}, nil
+}
+
+// validateTransactReturnValuesOnConditionCheckFailure rejects the whole transaction, before any
+// write, when an item has a ReturnValuesOnConditionCheckFailure outside ALL_OLD and NONE.
+// DynamoDB Local accepts the value; minidyn follows the API reference (see e2e/README.md).
+func validateTransactReturnValuesOnConditionCheckFailure(items []TransactWriteItem) error {
+	for i, item := range items {
+		var shape string
+
+		var rv ddbtypes.ReturnValuesOnConditionCheckFailure
+
+		switch {
+		case item.Put != nil:
+			shape, rv = "put", item.Put.ReturnValuesOnConditionCheckFailure
+		case item.Update != nil:
+			shape, rv = "update", item.Update.ReturnValuesOnConditionCheckFailure
+		case item.Delete != nil:
+			shape, rv = "delete", item.Delete.ReturnValuesOnConditionCheckFailure
+		case item.ConditionCheck != nil:
+			shape, rv = "conditionCheck", item.ConditionCheck.ReturnValuesOnConditionCheckFailure
+		default:
+			continue
+		}
+
+		if err := core.ValidateTransactItemReturnValuesOnConditionCheckFailure(i, shape, toStringPtr(string(rv))); err != nil {
+			return mapKnownError(err)
+		}
+	}
+
+	return nil
 }
 
 // transactWriteTargets describes every write of the transaction for billing. A ConditionCheck is

@@ -120,6 +120,30 @@ func TestServerCreateTableRejectsMalformedIndexes(t *testing.T) {
 		},
 		{"GSIWithoutProjection", []ddbtypes.GlobalSecondaryIndex{{IndexName: aws.String("by-id"), KeySchema: keys}}, nil, "Indexes must have a projection specified | index: by-id"},
 		{"LSIWithoutName", nil, []ddbtypes.LocalSecondaryIndex{{KeySchema: keys, Projection: all}}, invalidName},
+		{
+			"LSIWithoutKeySchema", nil,
+			[]ddbtypes.LocalSecondaryIndex{{IndexName: aws.String("by-id"), Projection: all}},
+			"No defined key schema.  A key schema containing at least a hash key must be defined for all tables | index: by-id",
+		},
+		// the local indexes are checked before the global ones, name first
+		{
+			"LSIWithoutNameBeforeGSIWithoutKeySchema",
+			[]ddbtypes.GlobalSecondaryIndex{{IndexName: aws.String("by-id"), Projection: all}},
+			[]ddbtypes.LocalSecondaryIndex{{KeySchema: keys, Projection: all}},
+			invalidName,
+		},
+		{
+			"LSIWithoutKeySchemaBeforeGSIWithoutName",
+			[]ddbtypes.GlobalSecondaryIndex{{KeySchema: keys, Projection: all}},
+			[]ddbtypes.LocalSecondaryIndex{{IndexName: aws.String("by-id"), Projection: all}},
+			"No defined key schema.  A key schema containing at least a hash key must be defined for all tables | index: by-id",
+		},
+		{
+			"LSIWithoutProjectionBeforeGSIWithoutKeySchema",
+			[]ddbtypes.GlobalSecondaryIndex{{IndexName: aws.String("by-gsi"), Projection: all}},
+			[]ddbtypes.LocalSecondaryIndex{{IndexName: aws.String("by-lsi"), KeySchema: keys}},
+			"Indexes must have a projection specified | index: by-lsi",
+		},
 	}
 
 	for _, tt := range tests {
@@ -138,6 +162,10 @@ func TestServerCreateTableRejectsMalformedIndexes(t *testing.T) {
 				LocalSecondaryIndexes:  tt.lsis,
 			}, skipInputValidation)
 			requireServerAPIError(t, err, "ValidationException", tt.message)
+
+			// the rejected table does not exist
+			_, err = cli.DescribeTable(context.Background(), &dynamodb.DescribeTableInput{TableName: aws.String("tbl")})
+			require.Error(t, err)
 		})
 	}
 }

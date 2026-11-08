@@ -190,7 +190,10 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 	}
 
 	table := core.NewTable(tableName)
-	table.SetAttributeDefinition(mapAttributeDefinitions(input.AttributeDefinitions))
+	if err := table.SetAttributeDefinition(mapAttributeDefinitions(input.AttributeDefinitions)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	table.BillingMode = toStringPtr(string(input.BillingMode))
 	table.NativeInterpreter = *c.nativeInterpreter
 	table.UseNativeInterpreter = c.useNativeInterpreter
@@ -204,11 +207,7 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 		return nil, mapKnownError(err)
 	}
 
-	if err := table.AddGlobalIndexes(mapGSI(input.GlobalSecondaryIndexes)); err != nil {
-		return nil, mapKnownError(err)
-	}
-
-	if err := table.AddLocalIndexes(mapLSI(input.LocalSecondaryIndexes)); err != nil {
+	if err := table.AddIndexes(mapGSI(input.GlobalSecondaryIndexes), mapLSI(input.LocalSecondaryIndexes)); err != nil {
 		return nil, mapKnownError(err)
 	}
 
@@ -226,11 +225,7 @@ func (c *Client) UpdateTable(ctx context.Context, input *UpdateTableInput) (*Upd
 		return nil, &ddbtypes.ResourceNotFoundException{Message: aws.String("Cannot do operations on a non-existent table")}
 	}
 
-	if input.AttributeDefinitions != nil {
-		table.SetAttributeDefinition(mapAttributeDefinitions(input.AttributeDefinitions))
-	}
-
-	desc, err := table.ApplyIndexChanges(tableName, mapGSIUpdate(input.GlobalSecondaryIndexUpdates))
+	desc, err := table.UpdateTable(tableName, mapAttributeDefinitions(input.AttributeDefinitions), mapGSIUpdate(input.GlobalSecondaryIndexUpdates))
 
 	return &UpdateTableOutput{TableDescription: describeTableJSON(desc)}, mapKnownError(err)
 }

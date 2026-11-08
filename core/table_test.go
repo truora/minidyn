@@ -1751,7 +1751,7 @@ func TestSetAttributeDefinition(t *testing.T) {
 		},
 	}
 
-	newTable.SetAttributeDefinition(newAttributesDef)
+	c.NoError(newTable.SetAttributeDefinition(newAttributesDef))
 	c.Equal(types.StringValue(newAttributesDef[0].AttributeType), newTable.AttributesDef["name"])
 }
 

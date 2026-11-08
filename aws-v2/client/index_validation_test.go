@@ -109,6 +109,25 @@ func TestCreateTableRejectsMalformedIndexes(t *testing.T) {
 			[]dynamodbtypes.LocalSecondaryIndex{{IndexName: aws.String("by-pk"), Projection: all}},
 			"No defined key schema.  A key schema containing at least a hash key must be defined for all tables | index: by-pk",
 		},
+		// the local indexes are checked before the global ones, name first
+		{
+			"LSIWithoutNameBeforeGSIWithoutKeySchema",
+			[]dynamodbtypes.GlobalSecondaryIndex{{IndexName: aws.String("by-pk"), Projection: all}},
+			[]dynamodbtypes.LocalSecondaryIndex{{KeySchema: keys, Projection: all}},
+			invalidName,
+		},
+		{
+			"LSIWithoutKeySchemaBeforeGSIWithoutName",
+			[]dynamodbtypes.GlobalSecondaryIndex{{KeySchema: keys, Projection: all}},
+			[]dynamodbtypes.LocalSecondaryIndex{{IndexName: aws.String("by-pk"), Projection: all}},
+			"No defined key schema.  A key schema containing at least a hash key must be defined for all tables | index: by-pk",
+		},
+		{
+			"LSIWithoutProjectionBeforeGSIWithoutKeySchema",
+			[]dynamodbtypes.GlobalSecondaryIndex{{IndexName: aws.String("by-gsi"), Projection: all}},
+			[]dynamodbtypes.LocalSecondaryIndex{{IndexName: aws.String("by-lsi"), KeySchema: keys}},
+			"Indexes must have a projection specified | index: by-lsi",
+		},
 	}
 
 	for _, tt := range tests {

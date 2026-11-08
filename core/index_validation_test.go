@@ -232,3 +232,46 @@ func TestAddLocalIndexesRejectsMalformedIndexes(t *testing.T) {
 		})
 	}
 }
+
+func TestAddIndexesChecksLocalIndexesBeforeGlobalOnes(t *testing.T) {
+	lsiKeys := []*types.KeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}, {AttributeName: "gk", KeyType: "RANGE"}}
+	shapeless := func(name string) *types.GlobalSecondaryIndex {
+		return &types.GlobalSecondaryIndex{IndexName: new(name)}
+	}
+	nameless := &types.GlobalSecondaryIndex{KeySchema: gsiHashKey(), Projection: gsiAllProjection()}
+	namelessLSI := &types.LocalSecondaryIndex{KeySchema: lsiKeys, Projection: gsiAllProjection()}
+
+	tests := []struct {
+		name    string
+		gsis    []*types.GlobalSecondaryIndex
+		lsis    []*types.LocalSecondaryIndex
+		message string
+	}{
+		{"LSINameBeforeGSIShape", []*types.GlobalSecondaryIndex{shapeless("by-gk")}, []*types.LocalSecondaryIndex{namelessLSI}, msgInvalidIndexName},
+		{"LSIShapeBeforeGSIName", []*types.GlobalSecondaryIndex{nameless}, []*types.LocalSecondaryIndex{{IndexName: new("by-gk")}}, types.WithDetail(msgNoProjection, "index", "by-gk")},
+		{
+			"GSIShapeAfterLSIShape",
+			[]*types.GlobalSecondaryIndex{shapeless("by-gsi")},
+			[]*types.LocalSecondaryIndex{{IndexName: new("by-lsi"), KeySchema: lsiKeys}},
+			types.WithDetail(msgNoProjection, "index", "by-lsi"),
+		},
+		{
+			"LSIUndefinedAttributeBeforeGSIShape",
+			[]*types.GlobalSecondaryIndex{shapeless("by-gsi")},
+			[]*types.LocalSecondaryIndex{{IndexName: new("by-lsi"), Projection: gsiAllProjection(), KeySchema: []*types.KeySchemaElement{
+				{AttributeName: "pk", KeyType: "HASH"}, {AttributeName: "undefined", KeyType: "RANGE"},
+			}}},
+			"Local Secondary Index Range Key not specified in Attribute Definitions.  Type unknown.",
+		},
+		{"SecondGSIName", []*types.GlobalSecondaryIndex{{IndexName: new("ok"), KeySchema: gsiHashKey(), Projection: gsiAllProjection()}, nameless}, nil, msgInvalidIndexName},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			table := newDescribedTable(t, "PAY_PER_REQUEST", nil)
+
+			requireValidation(t, table.AddIndexes(tt.gsis, tt.lsis), "ValidationException", tt.message)
+			require.Empty(t, table.Indexes)
+		})
+	}
+}

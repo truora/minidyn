@@ -232,6 +232,11 @@ func TestE2E_CreateTableIndexValidation(t *testing.T) {
 		{name: "LSIWithoutProjection", lsis: lsi(name, localKeys, nil)},
 		{name: "LSINameOnly", lsis: lsi(name, nil, nil)},
 		{name: "GSIWithoutNameBeforeLSIWithoutName", gsis: gsi(nil, gsiKeySchema(), gsiAll()), lsis: lsi(nil, localKeys, gsiAll())},
+		// the local indexes are checked, name then definition, before the global ones
+		{name: "LSIWithoutNameBeforeGSIWithoutKeySchema", gsis: gsi(name, nil, gsiAll()), lsis: lsi(nil, localKeys, gsiAll())},
+		{name: "LSIWithoutKeySchemaBeforeGSIWithoutName", gsis: gsi(nil, gsiKeySchema(), gsiAll()), lsis: lsi(name, nil, gsiAll())},
+		{name: "LSIWithoutKeySchemaBeforeGSIWithoutProjection", gsis: gsi(name, gsiKeySchema(), nil), lsis: lsi(aws.String("other"), nil, gsiAll())},
+		{name: "LSIWithoutProjectionBeforeGSIWithoutKeySchema", gsis: gsi(name, nil, gsiAll()), lsis: lsi(aws.String("other"), localKeys, nil)},
 	}
 
 	for _, tt := range tests {

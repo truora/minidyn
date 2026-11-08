@@ -11,15 +11,17 @@ import (
 )
 
 const (
-	msgInvalidGSIName   = "Invalid global secondary index name"
-	msgInvalidIndexName = "Invalid table/index name.  Table/index names must be between 3 and 255 characters long, and may contain only the characters a-z, A-Z, 0-9, '_', '-', and '.'"
-	msgNoProjection     = "Indexes must have a projection specified"
-	msgNoKeySchema      = "No defined key schema.  A key schema containing at least a hash key must be defined for all tables"
-	msgNoKeyAttribute   = "Attribute name must be specified."
-	msgNullGSIAction    = "Update global secondary index action is null"
-	msgOneUpdatePerName = "Only one global secondary index update per index is allowed simultaneously."
-	msgIndexExists      = "Attempting to create an index which already exists"
-	msgIndexLimit       = "Subscriber limit exceeded: Only 1 online index can be created or deleted simultaneously per table"
+	msgInvalidGSIName     = "Invalid global secondary index name"
+	msgInvalidIndexName   = "Invalid table/index name.  Table/index names must be between 3 and 255 characters long, and may contain only the characters a-z, A-Z, 0-9, '_', '-', and '.'"
+	msgNoProjection       = "Indexes must have a projection specified"
+	msgNoKeySchema        = "No defined key schema.  A key schema containing at least a hash key must be defined for all tables"
+	msgEmptyAttributeName = "Names of key attributes and attributes projected into an index must be between 1 and 255 characters, inclusive"
+	msgNoKeyAttribute     = "Attribute name must be specified."
+	msgNoAttributeType    = "Invalid Attribute value. Must contain exactly one of the supported datatypes."
+	msgNullGSIAction      = "Update global secondary index action is null"
+	msgOneUpdatePerName   = "Only one global secondary index update per index is allowed simultaneously."
+	msgIndexExists        = "Attempting to create an index which already exists"
+	msgIndexLimit         = "Subscriber limit exceeded: Only 1 online index can be created or deleted simultaneously per table"
 )
 
 // validateIndexName checks the name of an index sent to CreateTable.

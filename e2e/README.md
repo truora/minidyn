@@ -31,6 +31,32 @@ Fix minidyn (test first), then remove the `knownIssue` field from every test
 that references the issue, and any fuzzer restriction or `parity-surface`
 allowlist entry that names it.
 
+### Intentional divergences
+
+DynamoDB Local is the parity reference, but where it disagrees with the
+documented behavior of DynamoDB, minidyn follows DynamoDB. These tests keep
+their `knownIssue` marker even though the issue is closed, so the difference
+stays visible and is checked on every run:
+
+- **`ReturnConsumedCapacity` outside `INDEXES`, `TOTAL` and `NONE`**
+  (`TestE2E_ConsumedCapacityInvalidMode`). DynamoDB Local accepts any value
+  and answers as if it were `NONE`. minidyn rejects it with a
+  `ValidationException` ("Member must satisfy enum value set: [INDEXES, TOTAL,
+  NONE]") before the operation runs, as the
+  [Query reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html)
+  requires for `ReturnConsumedCapacity` ("Valid Values: `INDEXES | TOTAL |
+  NONE`"; the value is case sensitive, so `total` is
+  invalid). The test asserts the error on minidyn and the silent success on
+  Local.
+- **Transactional `ConditionCheck` billing**
+  (`TestE2E_ConsumedCapacityConditionCheck`). DynamoDB Local bills 2 x the
+  read units of the checked item (20 KB item: 10). The
+  [transactions guide](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis.html#transaction-capacity-handling)
+  only says that "DynamoDB performs two underlying reads or writes of every
+  item in the transaction" and does not say which a `ConditionCheck` is, so
+  minidyn keeps its approximation: 2 x the write units of the key (2). The
+  test asserts both numbers.
+
 ## Finding new gaps
 
 ### Full-response tracing

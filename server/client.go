@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
+	"github.com/truora/minidyn/capacity"
 	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
 	"github.com/truora/minidyn/types"
@@ -322,6 +323,11 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
 	}
@@ -337,6 +343,13 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	table, err := c.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, err
+	}
+
+	putItem := mapAttributeValueMapToTypes(input.Item)
+
+	var before map[string]*types.Item
+	if mode != capacity.ModeNone {
+		before = table.StoredItem(putItem)
 	}
 
 	item, err := table.Put(&types.PutItemInput{
@@ -345,7 +358,7 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		ConditionalOperator:         toStringPtr(string(input.ConditionalOperator)),
 		ExpressionAttributeNames:    input.ExpressionAttributeNames,
 		ExpressionAttributeValues:   mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Item:                        mapAttributeValueMapToTypes(input.Item),
+		Item:                        putItem,
 		ReturnConsumedCapacity:      toStringPtr(string(input.ReturnConsumedCapacity)),
 		ReturnItemCollectionMetrics: toStringPtr(string(input.ReturnItemCollectionMetrics)),
 		ReturnValues:                toStringPtr(string(input.ReturnValues)),
@@ -354,13 +367,23 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		return nil, mapKnownError(err)
 	}
 
-	return &PutItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
+	return &PutItemOutput{
+		Attributes: mapTypesMapToAttributeValue(item),
+		ConsumedCapacity: toWireConsumed(capacity.ForItemWrite(
+			mode, table, aws.ToString(input.TableName), putItem, before, putItem,
+		)),
+	}, nil
 }
 
 // DeleteItem removes an item and optionally returns old values.
 func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*DeleteItemOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
@@ -379,30 +402,47 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 		return nil, err
 	}
 
+	deleteKey := mapAttributeValueMapToTypes(input.Key)
+
+	// Delete only returns the old item for ALL_OLD, so measure it before deleting.
+	var stored map[string]*types.Item
+	if mode != capacity.ModeNone {
+		stored = table.StoredItem(deleteKey)
+	}
+
 	item, err := table.Delete(&types.DeleteItemInput{
 		TableName:                 input.TableName,
 		ConditionExpression:       input.ConditionExpression,
 		ConditionalOperator:       toStringPtr(string(input.ConditionalOperator)),
 		ExpressionAttributeNames:  toStringPtrMap(input.ExpressionAttributeNames),
 		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Key:                       mapAttributeValueMapToTypes(input.Key),
+		Key:                       deleteKey,
 		ReturnValues:              toStringPtr(string(input.ReturnValues)),
 	})
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
+	consumed := toWireConsumed(capacity.ForItemWrite(
+		mode, table, aws.ToString(input.TableName), deleteKey, stored, nil,
+	))
+
 	if item == nil {
-		return &DeleteItemOutput{}, nil
+		return &DeleteItemOutput{ConsumedCapacity: consumed}, nil
 	}
 
-	return &DeleteItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
+	return &DeleteItemOutput{Attributes: mapTypesMapToAttributeValue(item), ConsumedCapacity: consumed}, nil
 }
 
 // UpdateItem modifies attributes of an item using an update expression.
 func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*UpdateItemOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
@@ -422,13 +462,20 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, err
 	}
 
+	updateKeyMap := mapAttributeValueMapToTypes(input.Key)
+
+	var before map[string]*types.Item
+	if mode != capacity.ModeNone {
+		before = table.StoredItem(updateKeyMap)
+	}
+
 	item, err := table.Update(&types.UpdateItemInput{
 		TableName:                           input.TableName,
 		ConditionExpression:                 input.ConditionExpression,
 		ConditionalOperator:                 toStringPtr(string(input.ConditionalOperator)),
 		ExpressionAttributeNames:            input.ExpressionAttributeNames,
 		ExpressionAttributeValues:           mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Key:                                 mapAttributeValueMapToTypes(input.Key),
+		Key:                                 updateKeyMap,
 		UpdateExpression:                    aws.ToString(input.UpdateExpression),
 		ReturnValues:                        toStringPtr(string(input.ReturnValues)),
 		ReturnValuesOnConditionCheckFailure: toStringPtr(string(input.ReturnValuesOnConditionCheckFailure)),
@@ -437,13 +484,28 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, mapKnownError(err)
 	}
 
-	return &UpdateItemOutput{Attributes: mapTypesMapToAttributeValue(item)}, nil
+	var after map[string]*types.Item
+	if mode != capacity.ModeNone {
+		after = table.StoredItem(updateKeyMap)
+	}
+
+	return &UpdateItemOutput{
+		Attributes: mapTypesMapToAttributeValue(item),
+		ConsumedCapacity: toWireConsumed(capacity.ForItemWrite(
+			mode, table, aws.ToString(input.TableName), updateKeyMap, before, after,
+		)),
+	}, nil
 }
 
 // GetItem returns a single item by key.
 func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
@@ -479,13 +541,33 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
 	}
 
-	return &GetItemOutput{Item: item}, nil
+	out := &GetItemOutput{Item: item}
+
+	if mode != capacity.ModeNone {
+		sizeSource := stored
+		if len(sizeSource) == 0 {
+			sizeSource = keyMap
+		}
+
+		out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), "", "",
+			capacity.Size(sizeSource), aws.ToBool(input.ConsistentRead),
+		))
+	}
+
+	return out, nil
 }
 
 // Query searches items by key condition and optional filter.
 func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
 		return nil, ferr
@@ -536,6 +618,14 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		out.Items = mapTypesSliceToAttributeValue(res.Items)
 	}
 
+	if mode != capacity.ModeNone {
+		out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
+			capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+		))
+	}
+
 	return out, nil
 }
 
@@ -543,6 +633,11 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), aws.ToString(input.IndexName)); ferr != nil {
 		return nil, ferr
@@ -586,6 +681,14 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 
 	if input.Select != ddbtypes.SelectCount {
 		out.Items = mapTypesSliceToAttributeValue(res.Items)
+	}
+
+	if mode != capacity.ModeNone {
+		out.ConsumedCapacity = toWireConsumed(capacity.ForRead(
+			mode,
+			aws.ToString(input.TableName), aws.ToString(input.IndexName), table.IndexKind(aws.ToString(input.IndexName)),
+			capacity.SumSize(res.Items), aws.ToBool(input.ConsistentRead),
+		))
 	}
 
 	return out, nil
@@ -663,12 +766,18 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 		return nil, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
 
 	unprocessed := map[string][]WriteRequest{}
+	acc := capacity.NewWriteAccumulator()
 
 	for tableName, reqs := range input.RequestItems {
 		for i, req := range reqs {
@@ -678,28 +787,67 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 				continue
 			}
 
-			var err error
-			if req.PutRequest != nil {
-				_, err = c.PutItem(ctx, &PutItemInput{
-					TableName: aws.String(tableName),
-					Item:      req.PutRequest.Item,
-				})
-			}
-
-			if req.DeleteRequest != nil {
-				_, err = c.DeleteItem(ctx, &DeleteItemInput{
-					TableName: aws.String(tableName),
-					Key:       req.DeleteRequest.Key,
-				})
-			}
-
-			if err != nil {
+			if err := c.applyBatchWriteRequest(ctx, tableName, req, mode, acc); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	return &BatchWriteItemOutput{UnprocessedItems: unprocessed}, nil
+	return &BatchWriteItemOutput{
+		UnprocessedItems: unprocessed,
+		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
+	}, nil
+}
+
+// applyBatchWriteRequest runs one put or delete sub-request and, when consumed capacity is
+// reported, bills it into acc. Sizes are measured before the request is applied: a delete bills
+// the item it removes and a put the larger of the item it replaces and the item it writes.
+func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, req WriteRequest, mode capacity.Mode, acc *capacity.WriteAccumulator) error {
+	var target capacity.WriteTarget
+
+	if mode != capacity.ModeNone {
+		target = batchWriteTarget(tableName, req)
+		c.snapshotLocked(&target)
+	}
+
+	var err error
+	if req.PutRequest != nil {
+		_, err = c.PutItem(ctx, &PutItemInput{
+			TableName: aws.String(tableName),
+			Item:      req.PutRequest.Item,
+		})
+	}
+
+	if req.DeleteRequest != nil {
+		_, err = c.DeleteItem(ctx, &DeleteItemInput{
+			TableName: aws.String(tableName),
+			Key:       req.DeleteRequest.Key,
+		})
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if mode != capacity.ModeNone {
+		size, indexes := c.billLocked(&target)
+		acc.Add(tableName, size, indexes, 1)
+	}
+
+	return nil
+}
+
+// batchWriteTarget describes a put or delete sub-request for billing.
+func batchWriteTarget(tableName string, req WriteRequest) capacity.WriteTarget {
+	if req.PutRequest != nil {
+		return capacity.WriteTarget{Table: tableName, Kind: capacity.WritePut, Key: mapAttributeValueMapToTypes(req.PutRequest.Item)}
+	}
+
+	if req.DeleteRequest != nil {
+		return capacity.WriteTarget{Table: tableName, Kind: capacity.WriteDelete, Key: mapAttributeValueMapToTypes(req.DeleteRequest.Key)}
+	}
+
+	return capacity.WriteTarget{Table: tableName, Kind: capacity.WriteCheck}
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
@@ -750,6 +898,11 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 		return nil, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
@@ -757,14 +910,16 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 
 	responses := map[string][]map[string]*AttributeValue{}
 	unprocessed := map[string]KeysAndAttributes{}
+	unitsByTable := map[string]float64{}
 
 	for tableName, reqs := range input.RequestItems {
-		tableResponses, unprocessedKeys, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation)
+		tableResponses, unprocessedKeys, units, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation, mode)
 		if err != nil {
 			return nil, err
 		}
 
 		responses[tableName] = tableResponses
+		unitsByTable[tableName] += units
 
 		if len(unprocessedKeys) > 0 {
 			tableUnprocessed := reqs
@@ -773,16 +928,23 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 		}
 	}
 
-	return &BatchGetItemOutput{Responses: responses, UnprocessedKeys: unprocessed}, nil
+	return &BatchGetItemOutput{
+		Responses:        responses,
+		UnprocessedKeys:  unprocessed,
+		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable),
+	}, nil
 }
 
-func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation) ([]map[string]*AttributeValue, []map[string]*AttributeValue, error) {
+func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation, mode capacity.Mode) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
 	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 
 	responses := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
 	unprocessedKeys := make([]map[string]*AttributeValue, 0, len(reqs.Keys))
+
+	consistent := aws.ToBool(reqs.ConsistentRead)
+	units := 0.0
 
 	for i, key := range reqs.Keys {
 		if emulation.unprocessed(tableName, i, key) {
@@ -799,7 +961,11 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 			ProjectionExpression:     reqs.ProjectionExpression,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
+		}
+
+		if mode != capacity.ModeNone {
+			units += capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(item.Item)), consistent)
 		}
 
 		if len(item.Item) > 0 {
@@ -807,7 +973,7 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 		}
 	}
 
-	return responses, unprocessedKeys, nil
+	return responses, unprocessedKeys, units, nil
 }
 
 func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {
@@ -872,6 +1038,11 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	if c.forceFailureErr != nil {
 		return nil, c.forceFailureErr
 	}
@@ -879,6 +1050,17 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	snapshots, err := c.prepareTransact(input.TransactItems)
 	if err != nil {
 		return nil, err
+	}
+
+	// Sizes are measured before the writes: a delete bills the item it removes and an update
+	// the larger of the item before and after.
+	var targets []capacity.WriteTarget
+	if mode != capacity.ModeNone {
+		targets = transactWriteTargets(input.TransactItems)
+
+		for i := range targets {
+			targets[i].Snapshot(c.tableOrNil)
+		}
 	}
 
 	var execErr error
@@ -900,7 +1082,45 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 		}
 	}
 
-	return &TransactWriteItemsOutput{}, nil
+	acc := capacity.NewWriteAccumulator()
+
+	for i := range targets {
+		size, indexes := targets[i].Bill(c.tableOrNil)
+		acc.AddTransact(targets[i].Table, size, indexes)
+	}
+
+	return &TransactWriteItemsOutput{
+		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
+	}, nil
+}
+
+// transactWriteTargets describes every write of the transaction for billing. A ConditionCheck is
+// billed by its key.
+func transactWriteTargets(items []TransactWriteItem) []capacity.WriteTarget {
+	targets := make([]capacity.WriteTarget, 0, len(items))
+
+	for _, item := range items {
+		switch {
+		case item.Put != nil:
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Put.TableName), Kind: capacity.WritePut, Key: mapAttributeValueMapToTypes(item.Put.Item),
+			})
+		case item.Update != nil:
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Update.TableName), Kind: capacity.WriteUpdate, Key: mapAttributeValueMapToTypes(item.Update.Key),
+			})
+		case item.Delete != nil:
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.Delete.TableName), Kind: capacity.WriteDelete, Key: mapAttributeValueMapToTypes(item.Delete.Key),
+			})
+		case item.ConditionCheck != nil:
+			targets = append(targets, capacity.WriteTarget{
+				Table: aws.ToString(item.ConditionCheck.TableName), Kind: capacity.WriteCheck, Key: mapAttributeValueMapToTypes(item.ConditionCheck.Key),
+			})
+		}
+	}
+
+	return targets
 }
 
 func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {
@@ -983,7 +1203,13 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 		return nil, err
 	}
 
+	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
+	if modeErr != nil {
+		return nil, mapKnownError(modeErr)
+	}
+
 	responses := make([]ItemResponse, 0, len(input.TransactItems))
+	unitsByTable := map[string]float64{}
 
 	for _, item := range input.TransactItems {
 		get := item.Get
@@ -999,9 +1225,16 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 		}
 
 		responses = append(responses, ItemResponse{Item: out.Item})
+
+		if mode != capacity.ModeNone {
+			unitsByTable[aws.ToString(get.TableName)] += capacity.TransactReadUnits(capacity.Size(mapAttributeValueMapToTypes(out.Item)))
+		}
 	}
 
-	return &TransactGetItemsOutput{Responses: responses}, nil
+	return &TransactGetItemsOutput{
+		Responses:        responses,
+		ConsumedCapacity: wireConsumedSlice(mode, unitsByTable),
+	}, nil
 }
 
 func (c *Client) runTransactItem(i, n int, item TransactWriteItem) error {

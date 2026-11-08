@@ -69,6 +69,117 @@ func (t *Table) ValidatePrimaryKeyMap(key map[string]*types.Item) error {
 	return t.KeySchema.validatePrimaryKeyMap(key)
 }
 
+// IndexKind classifies a secondary index by name: "GSI" for a global secondary index,
+// "LSI" for a local one. It returns "" for the primary index or an unknown name. Used to
+// place per-index entries when reporting ConsumedCapacity at the INDEXES level.
+func (t *Table) IndexKind(name string) string {
+	idx, ok := t.Indexes[name]
+	if !ok {
+		return ""
+	}
+
+	if idx.typ == indexTypeLocal {
+		return "LSI"
+	}
+
+	return "GSI"
+}
+
+// IndexWriteDelta is how a write touches one secondary index, used to compute the per-index
+// write ConsumedCapacity. Before and After are the item as it sat in the index and as it lands in
+// it (honoring the index's ProjectionType); each is nil when the item is not indexed there, which
+// is how a sparse index is entered or left. KeyChanged reports that the item stays in the index
+// under a different index key, so the old entry is deleted and a new one written.
+type IndexWriteDelta struct {
+	Name       string
+	Kind       string
+	Before     map[string]*types.Item
+	After      map[string]*types.Item
+	KeyChanged bool
+}
+
+// WriteIndexDeltas returns one IndexWriteDelta per secondary index a write from the item before
+// to the item after has to write: an index the item enters, leaves, or stays in with a different
+// entry (an index needs a complete index key). Mirroring DynamoDB, which only charges write
+// capacity on indexes a write actually changes, an index whose entry comes out the same is
+// omitted: the write changed only attributes that are neither index keys nor projected. Either
+// item may be nil (a put has no before, a delete no after). Entries are name-sorted for
+// deterministic reporting.
+func (t *Table) WriteIndexDeltas(before, after map[string]*types.Item) []IndexWriteDelta {
+	if (len(before) == 0 && len(after) == 0) || len(t.Indexes) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(t.Indexes))
+	for name := range t.Indexes {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	out := make([]IndexWriteDelta, 0, len(names))
+
+	for _, name := range names {
+		idx := t.Indexes[name]
+		beforeKey := t.indexKeyOf(idx, before)
+		afterKey := t.indexKeyOf(idx, after)
+
+		if beforeKey == "" && afterKey == "" {
+			continue
+		}
+
+		d := IndexWriteDelta{Name: name, Kind: t.IndexKind(name), KeyChanged: beforeKey != "" && afterKey != "" && beforeKey != afterKey}
+		if beforeKey != "" {
+			d.Before = idx.ProjectItem(before)
+		}
+
+		if afterKey != "" {
+			d.After = idx.ProjectItem(after)
+		}
+
+		// An entry that comes out the same is not written: the item changed only attributes that
+		// are neither index keys nor projected into the index.
+		if d.Before != nil && d.After != nil && !d.KeyChanged && reflect.DeepEqual(d.Before, d.After) {
+			continue
+		}
+
+		out = append(out, d)
+	}
+
+	return out
+}
+
+// indexKeyOf returns the key the item has in the index, or "" when it is not indexed there.
+func (t *Table) indexKeyOf(idx *index, item map[string]*types.Item) string {
+	if len(item) == 0 {
+		return ""
+	}
+
+	key, err := idx.keySchema.GetKey(t.AttributesDef, item)
+	if err != nil {
+		return ""
+	}
+
+	return key
+}
+
+// StoredItem returns a copy of the item stored under the primary key of keyOrItem (a key map or
+// a whole item), or nil when there is none. It is a copy because an update changes the stored
+// item in place; callers use it to measure an item before a write is applied.
+func (t *Table) StoredItem(keyOrItem map[string]*types.Item) map[string]*types.Item {
+	key, err := t.KeySchema.GetKey(t.AttributesDef, keyOrItem)
+	if err != nil {
+		return nil
+	}
+
+	item, ok := t.Data[key]
+	if !ok {
+		return nil
+	}
+
+	return deepCopyItemMap(item)
+}
+
 // SetAttributeDefinition sets the attribute definition of a table
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
 	for _, attr := range attrs {

@@ -127,6 +127,24 @@ func TestAddLocalIndexes(t *testing.T) {
 	c.Contains(err.Error(), "ValidationException: LSI list is empty/invalid")
 }
 
+func TestIndexKind(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	localIndexes := createLocalSecondaryIndex()
+	localIndexes[0].KeySchema = []*types.KeySchemaElement{
+		{AttributeName: "id", KeyType: "HASH"},
+	}
+	c.NoError(newTable.AddLocalIndexes(localIndexes))
+
+	c.Equal("GSI", newTable.IndexKind("invert"))
+	c.Equal("LSI", newTable.IndexKind("indexname"))
+	c.Equal("", newTable.IndexKind(PrimaryIndexName))
+	c.Equal("", newTable.IndexKind("does-not-exist"))
+}
+
 func TestTableIndexesDescription(t *testing.T) {
 	c := require.New(t)
 
@@ -2054,4 +2072,139 @@ func TestSearchData_wrongFunctionOperandCount(t *testing.T) {
 			c.Equal(tc.want, apiErr.Message())
 		})
 	}
+}
+
+func TestStoredItemReturnsACopyOfTheStoredItem(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
+	_, err = table.Put(&types.PutItemInput{Item: item})
+	c.NoError(err)
+
+	key := map[string]*types.Item{"id": item["id"], "name": item["name"]}
+
+	stored := table.StoredItem(key)
+	c.Equal(item, stored)
+
+	// An update changes the stored item in place; the copy keeps the item as it was.
+	name := "ivysaur"
+	stored["name"] = &types.Item{S: &name}
+
+	c.Equal("bulbasaur", *table.StoredItem(key)["name"].S)
+
+	// A whole item resolves to the same stored item as its key.
+	c.Equal(table.StoredItem(key), table.StoredItem(item))
+
+	// Missing item and invalid key both yield nil.
+	c.Nil(table.StoredItem(map[string]*types.Item{"id": {S: aws.String("absent")}, "name": item["name"]}))
+	c.Nil(table.StoredItem(map[string]*types.Item{}))
+}
+
+func TestWriteIndexDeltas(t *testing.T) {
+	c := require.New(t)
+
+	table, err := createPokemonTable()
+	c.NoError(err)
+
+	// The "invert" GSI is keyed on id (hash) and name (range) and projects ALL attributes.
+	bulbasaur := createPokemon(pokemon{ID: "001", Type: "grass", Name: "bulbasaur"})
+	renamed := createPokemon(pokemon{ID: "001", Type: "grass", Name: "ivysaur"})
+	unindexed := map[string]*types.Item{"id": bulbasaur["id"], "type": bulbasaur["type"]}
+
+	// A new item lands in the index.
+	deltas := table.WriteIndexDeltas(nil, bulbasaur)
+	c.Len(deltas, 1)
+	c.Equal("invert", deltas[0].Name)
+	c.Equal("GSI", deltas[0].Kind)
+	c.Nil(deltas[0].Before)
+	c.Equal(bulbasaur, deltas[0].After)
+	c.False(deltas[0].KeyChanged)
+
+	// A deleted item leaves it.
+	deltas = table.WriteIndexDeltas(bulbasaur, nil)
+	c.Len(deltas, 1)
+	c.Equal(bulbasaur, deltas[0].Before)
+	c.Nil(deltas[0].After)
+	c.False(deltas[0].KeyChanged)
+
+	// Changing the index key is a delete of the old entry and a put of the new one.
+	deltas = table.WriteIndexDeltas(bulbasaur, renamed)
+	c.Len(deltas, 1)
+	c.True(deltas[0].KeyChanged)
+
+	// Changing only a projected attribute rewrites the same entry.
+	renamedType := createPokemon(pokemon{ID: "001", Type: "poison", Name: "bulbasaur"})
+	deltas = table.WriteIndexDeltas(bulbasaur, renamedType)
+	c.Len(deltas, 1)
+	c.False(deltas[0].KeyChanged)
+
+	// Moving out of the index (the item lost a key attribute) only leaves it.
+	deltas = table.WriteIndexDeltas(bulbasaur, unindexed)
+	c.Len(deltas, 1)
+	c.NotNil(deltas[0].Before)
+	c.Nil(deltas[0].After)
+
+	// Nothing to report without items, without indexes, or when neither side is indexed.
+	c.Nil(table.WriteIndexDeltas(nil, nil))
+	c.Nil(NewTable(tableName).WriteIndexDeltas(bulbasaur, renamed))
+	c.Empty(table.WriteIndexDeltas(unindexed, unindexed))
+}
+
+// An index entry that does not change is not written: updating an attribute that is neither an
+// index key nor projected into the index costs the index nothing.
+func TestWriteIndexDeltasSkipsUnchangedProjections(t *testing.T) {
+	c := require.New(t)
+
+	table := NewTable("t")
+	table.BillingMode = aws.String("PAY_PER_REQUEST")
+	table.SetAttributeDefinition([]*types.AttributeDefinition{
+		{AttributeName: aws.String("id"), AttributeType: aws.String("S")},
+		{AttributeName: aws.String("type"), AttributeType: aws.String("S")},
+	})
+	c.NoError(table.CreatePrimaryIndex(&types.CreateTableInput{
+		KeySchema: []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}},
+	}))
+	c.NoError(table.AddGlobalIndexes([]*types.GlobalSecondaryIndex{
+		{
+			IndexName:  aws.String("keys-only"),
+			KeySchema:  []*types.KeySchemaElement{{AttributeName: "type", KeyType: "HASH"}},
+			Projection: &types.Projection{ProjectionType: aws.String("KEYS_ONLY")},
+		},
+		{
+			IndexName:  aws.String("include-name"),
+			KeySchema:  []*types.KeySchemaElement{{AttributeName: "type", KeyType: "HASH"}},
+			Projection: &types.Projection{ProjectionType: aws.String("INCLUDE"), NonKeyAttributes: []*string{aws.String("name")}},
+		},
+	}))
+
+	item := func(name, other string) map[string]*types.Item {
+		return map[string]*types.Item{
+			"id": {S: aws.String("1")}, "type": {S: aws.String("grass")},
+			"name": {S: aws.String(name)}, "other": {S: aws.String(other)},
+		}
+	}
+
+	names := func(deltas []IndexWriteDelta) []string {
+		var out []string
+		for _, d := range deltas {
+			out = append(out, d.Name)
+		}
+
+		return out
+	}
+
+	// Only a non-projected attribute changed: neither index is written.
+	c.Empty(table.WriteIndexDeltas(item("a", "x"), item("a", "y")))
+
+	// A projected attribute changed: only the index that projects it is written.
+	c.Equal([]string{"include-name"}, names(table.WriteIndexDeltas(item("a", "x"), item("b", "x"))))
+
+	// Rewriting the identical item leaves every entry unchanged.
+	c.Empty(table.WriteIndexDeltas(item("a", "x"), item("a", "x")))
+
+	// Entering an index always writes the entry.
+	c.Len(table.WriteIndexDeltas(nil, item("a", "x")), 2)
 }

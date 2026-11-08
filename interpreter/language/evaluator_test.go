@@ -364,21 +364,18 @@ func TestEvalUpdateError(t *testing.T) {
 		{
 			"SET #invalid = 1",
 			"#invalid",
-			newError("index operator not supported for \"N\""),
+			UNDEFINED,
 		},
 	}
 
 	env := startEvalUpdateEnv(t)
 
+	// Reading through a value that is not a map does not resolve, it is not an error.
 	for _, tt := range tests {
 		result := env.Get(tt.envField)
 
-		if !isError(result) {
-			t.Fatalf("expected error missing evaluating update %q, env=%s, %s", tt.input, env.String(), result.Inspect())
-		}
-
 		if result.Inspect() != tt.expectedError.Inspect() {
-			t.Errorf("unexpected error for %q in %q. got=%v, want=%v", tt.envField, tt.input, result.Inspect(), tt.expectedError.Inspect())
+			t.Errorf("unexpected result for %q in %q. got=%v, want=%v", tt.envField, tt.input, result.Inspect(), tt.expectedError.Inspect())
 		}
 	}
 }
@@ -467,7 +464,7 @@ func TestEvalSetUpdate(t *testing.T) {
 			false,
 		},
 		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, true},
-		{"SET :x = :val REMOVE :val", ":val", UNDEFINED, true},
+		{"SET :x = :val REMOVE :val", ":val", UNDEFINED, false},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -852,7 +849,7 @@ func TestErrorHandling(t *testing.T) {
 		},
 		{
 			":y.:str",
-			"index operator not supported for \"N\"",
+			"a condition must evaluate to a BOOL, \"(:y[:str])\" evaluates to \"NULL\"",
 		},
 		{
 			"ROLE BETWEEN :x AND :str",
@@ -1147,19 +1144,19 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 		},
 		{
 			"SET x = :val + :val",
-			"invalid operation: S + S",
+			"Invalid UpdateExpression: Incorrect operand type for operator or function; operator or function: +, operand type: S",
 		},
 		{
 			"SET x = :val - :val",
-			"invalid operation: S - S",
+			"Invalid UpdateExpression: Incorrect operand type for operator or function; operator or function: -, operand type: S",
 		},
 		{
 			"SET x = :val - :one + :one",
-			"invalid operation: S - N",
+			"Invalid UpdateExpression: Incorrect operand type for operator or function; operator or function: -, operand type: S",
 		},
 		{
 			"SET x = :one + (:one - :val)",
-			"invalid operation: N - S",
+			"Invalid UpdateExpression: Incorrect operand type for operator or function; operator or function: -, operand type: S",
 		},
 		{
 			"SET h.bar = :one",
@@ -1653,5 +1650,307 @@ func TestEvalNestedDeleteAddWithAliases(t *testing.T) {
 
 	if !strings.HasPrefix(errObj.Message, nestedPathInvalidMsg+" | ") {
 		t.Errorf("wrong message: %q", errObj.Message)
+	}
+}
+
+func startMismatchedValuesEnv(t *testing.T) *Environment {
+	t.Helper()
+
+	env := NewEnvironment()
+
+	err := env.AddAttributes(map[string]*types.Item{
+		"s":     {S: new("abc")},
+		"n":     {N: new("5")},
+		"nul":   {NULL: &boolTrue},
+		"flag":  {BOOL: &boolTrue},
+		"l":     {L: []*types.Item{{S: new("a")}, {N: new("1")}}},
+		"m":     {M: map[string]*types.Item{"k": {S: new("abc")}, "nul": {NULL: &boolTrue}}},
+		"ss":    {SS: []*string{new("a")}},
+		":s":    {S: new("a")},
+		":s2":   {S: new("z")},
+		":n":    {N: new("1")},
+		":n2":   {N: new("9")},
+		":b":    {B: []byte("a")},
+		":t":    {S: new("S")},
+		":flag": {BOOL: &boolTrue},
+		":map":  {M: map[string]*types.Item{"a": {S: new("z")}}},
+		":lst":  {L: []*types.Item{{S: new("z")}}},
+		":nulv": {NULL: &boolTrue},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return env
+}
+
+// DynamoDB only rejects an expression for what it can see without reading the item. A stored
+// value of an unexpected type, or a absent one, makes the condition false (#143).
+func TestEvalMismatchedValuesDoNotFailTheExpression(t *testing.T) {
+	env := startMismatchedValuesEnv(t)
+
+	tests := map[string]Object{
+		// functions on a value of another type or a absent one
+		"contains(nul, :s)":             FALSE,
+		"contains(absent, :s)":          FALSE,
+		"contains(flag, :s)":            FALSE,
+		"contains(m, :s)":               FALSE,
+		"contains(s, :n)":               FALSE,
+		"contains(s, :b)":               FALSE,
+		"contains(ss, :n)":              FALSE,
+		"contains(l, :s)":               TRUE,
+		"NOT contains(nul, :s)":         TRUE,
+		"begins_with(nul, :s)":          FALSE,
+		"begins_with(absent, :s)":       FALSE,
+		"begins_with(n, :s)":            FALSE,
+		"begins_with(s, :b)":            FALSE,
+		"begins_with(s, :s)":            TRUE,
+		"begins_with(s, :s) OR s = :s2": TRUE,
+		"NOT (begins_with(absent, :s))": TRUE,
+		"attribute_exists(absent) AND begins_with(absent, :s)": FALSE,
+		"size(nul) > :n":               FALSE,
+		"size(absent) > :n":            FALSE,
+		"size(flag) = :n":              FALSE,
+		"size(l) = :n2":                FALSE,
+		"size(s) > :n":                 TRUE,
+		"attribute_type(absent.x, :t)": FALSE,
+		// document paths through a value that is not a map or a list
+		"nul.x = :s":                  FALSE,
+		"nul.x <> :s":                 TRUE,
+		"nul[0] = :s":                 FALSE,
+		"s[0] = :s":                   FALSE,
+		"s.x = :s":                    FALSE,
+		"l.k = :s":                    FALSE,
+		"m[0] = :s":                   FALSE,
+		"m.k.x = :s":                  FALSE,
+		"m.nul.x = :s":                FALSE,
+		"l[5] = :s":                   FALSE,
+		"absent.x[0] = :s":            FALSE,
+		"attribute_exists(nul.x)":     FALSE,
+		"attribute_not_exists(nul.x)": TRUE,
+		"attribute_not_exists(s[0])":  TRUE,
+		"attribute_type(nul.x, :t)":   FALSE,
+		"begins_with(nul.x, :s)":      FALSE,
+		"contains(s.x, :s)":           FALSE,
+		"size(nul.x) > :n":            FALSE,
+		"l[0] = :s":                   TRUE,
+		"l[0] <> :s":                  FALSE,
+		"m.k = :s2":                   FALSE,
+		// comparisons between different types
+		"n = :s":    FALSE,
+		"n <> :s":   TRUE,
+		"n < :s":    FALSE,
+		"n >= :s":   FALSE,
+		"s < :n":    FALSE,
+		"s > :n":    FALSE,
+		"nul < :s":  FALSE,
+		"nul = :s":  FALSE,
+		"nul <> :s": TRUE,
+		"l < :s":    FALSE,
+		"l >= :n":   FALSE,
+		"m < :n":    FALSE,
+		"flag > :n": FALSE,
+		"ss < :s":   FALSE,
+		"n < :n2":   TRUE,
+		// BETWEEN and IN on paths, mismatched or not
+		"n BETWEEN :s AND :s2":      FALSE,
+		"nul BETWEEN :n AND :n2":    FALSE,
+		"l BETWEEN :n AND :n2":      FALSE,
+		"flag BETWEEN :s AND :s2":   FALSE,
+		"absent BETWEEN :n AND :n2": FALSE,
+		"nul.x BETWEEN :n AND :n2":  FALSE,
+		"l[0] BETWEEN :n AND :n2":   FALSE,
+		"l[1] BETWEEN :n AND :n2":   TRUE,
+		"m.k BETWEEN :s AND :s2":    TRUE,
+		"s BETWEEN :s AND :s2":      TRUE,
+		"nul IN (:s, :n)":           FALSE,
+		"nul.x IN (:s, :n)":         FALSE,
+		"l[0] IN (:s, :n)":          TRUE,
+		"l[1] IN (:s, :n)":          TRUE,
+		"m.k IN (:s, :s2)":          FALSE,
+		"s IN (:n, :s2)":            FALSE,
+	}
+
+	for input, expected := range tests {
+		got := testEval(t, input, env)
+		if got != expected {
+			t.Errorf("%q: expected=%s got=%s", input, expected.Inspect(), got.Inspect())
+		}
+	}
+}
+
+const (
+	updMissingMsg = "The provided expression refers to an attribute that does not exist in the item"
+	updTypeMsg    = "An operand in the update expression has an incorrect data type"
+	updPathMsg    = "The document path provided in the update expression is invalid for update"
+	updOperandFmt = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
+		"operator or function: %s, operand type: %s"
+)
+
+func startUpdateMismatchEnv(t *testing.T) *Environment {
+	t.Helper()
+
+	env := NewEnvironment()
+
+	err := env.AddAttributes(map[string]*types.Item{
+		"n":     {N: new("5")},
+		"s":     {S: new("abc")},
+		"nul":   {NULL: &boolTrue},
+		"l":     {L: []*types.Item{{S: new("a")}}},
+		"m":     {M: map[string]*types.Item{"k": {S: new("v")}}},
+		":one":  {N: new("1")},
+		":val":  {S: new("text")},
+		":list": {L: []*types.Item{{S: new("z")}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return env
+}
+
+// A missing operand and an operand of the wrong type have their own errors in update
+// expressions; operands are checked left to right (#143).
+func TestEvalUpdateOperandErrors(t *testing.T) {
+	tests := map[string]string{
+		"SET x = absent":                       updMissingMsg + " | operand: absent",
+		"SET x = absent + :one":                updMissingMsg + " | operator: +; operand: absent",
+		"SET x = :one - absent":                updMissingMsg + " | operator: -; operand: absent",
+		"SET x = n + absent":                   updMissingMsg + " | operator: +; operand: absent",
+		"SET x = nul + :one":                   updTypeMsg + " | operator: +; operand: nul; operand type: NULL",
+		"SET x = :one + s":                     updTypeMsg + " | operator: +; operand: s; operand type: S",
+		"SET x = nul + absent":                 updTypeMsg + " | operator: +; operand: nul; operand type: NULL",
+		"SET x = absent + nul":                 updMissingMsg + " | operator: +; operand: absent",
+		"SET x = list_append(absent, :list)":   updMissingMsg + " | function: list_append; operand: 1",
+		"SET x = list_append(:list, absent)":   updMissingMsg + " | function: list_append; operand: 2",
+		"SET x = list_append(nul, :list)":      updTypeMsg + " | function: list_append; operand: 1; operand type: NULL",
+		"SET x = list_append(s, absent)":       updTypeMsg + " | function: list_append; operand: 1; operand type: S",
+		"SET x = list_append(absent, nul)":     updMissingMsg + " | function: list_append; operand: 1",
+		"SET x = if_not_exists(n, absent)":     updMissingMsg + " | function: if_not_exists; operand: 2",
+		"SET x = if_not_exists(absent, nul.y)": updMissingMsg + " | function: if_not_exists; operand: 2",
+		"SET x = nul.y":                        updMissingMsg + " | operand: nul.y",
+		"SET x = s.x":                          updMissingMsg + " | operand: s.x",
+		"SET x = l[3]":                         updMissingMsg + " | operand: l[3]",
+		"SET x = m.zz":                         updMissingMsg + " | operand: m.zz",
+		"SET x = nul[0]":                       updMissingMsg + " | operand: nul[0]",
+		"SET x = :val + :one":                  fmt.Sprintf(updOperandFmt, "+", "S"),
+		"SET x = :one - :val":                  fmt.Sprintf(updOperandFmt, "-", "S"),
+		"SET x = :one + :list":                 fmt.Sprintf(updOperandFmt, "+", "L"),
+		"SET x = list_append(:list, :one)":     fmt.Sprintf(updOperandFmt, "list_append", "N"),
+		"SET x = list_append(:val, :list)":     fmt.Sprintf(updOperandFmt, "list_append", "S"),
+		"SET x = if_not_exists(m.k, m.k)": "Invalid UpdateExpression: The first operand must be distinct " +
+			"from the remaining operands for this operator or function; operator: if_not_exists, first operand: [m, k]",
+		"SET x = if_not_exists(l[0], l[0])": "Invalid UpdateExpression: The first operand must be distinct " +
+			"from the remaining operands for this operator or function; operator: if_not_exists, first operand: [l, [0]]",
+		"SET x = if_not_exists(n, n)": "Invalid UpdateExpression: The first operand must be distinct " +
+			"from the remaining operands for this operator or function; operator: if_not_exists, first operand: [n]",
+	}
+
+	for input, message := range tests {
+		got := testEvalUpdate(t, input, startUpdateMismatchEnv(t))
+
+		errObj, ok := got.(*Error)
+		if !ok {
+			t.Errorf("%q: expected an error, got=%s", input, got.Inspect())
+
+			continue
+		}
+
+		if errObj.Message != message {
+			t.Errorf("%q: expected=%q got=%q", input, message, errObj.Message)
+		}
+	}
+}
+
+func TestEvalUpdateOnUnresolvedPaths(t *testing.T) {
+	invalid := []string{"REMOVE nul.x", "REMOVE nul[0]", "REMOVE s.x", "REMOVE absent.y", "REMOVE absent[0]", "REMOVE l.k"}
+
+	for _, input := range invalid {
+		errObj, ok := testEvalUpdate(t, input, startUpdateMismatchEnv(t)).(*Error)
+		if !ok || !strings.HasPrefix(errObj.Message, updPathMsg) {
+			t.Errorf("%q: expected the invalid document path error, got=%v", input, errObj)
+		}
+	}
+
+	valid := []string{
+		"REMOVE m.zz", "REMOVE l[9]", "REMOVE absent",
+		"SET x = if_not_exists(absent, :one)", "SET x = if_not_exists(nul.y, :one)",
+		"SET x = if_not_exists(s[0], :one)", "SET x = if_not_exists(n, :one) + :one",
+	}
+
+	for _, input := range valid {
+		if got := testEvalUpdate(t, input, startUpdateMismatchEnv(t)); isError(got) {
+			t.Errorf("%q: unexpected error %s", input, got.Inspect())
+		}
+	}
+}
+
+// The types of the values in the expression are known up front, so a wrong one still fails
+// the request instead of evaluating to false.
+func TestEvalStaticOperandTypeErrors(t *testing.T) {
+	env := startMismatchedValuesEnv(t)
+
+	tests := map[string]string{
+		"begins_with(s, :n)":        "invalid substr type N",
+		"begins_with(absent, :n)":   "invalid substr type N",
+		"begins_with(:n, s)":        "invalid type N",
+		"attribute_type(s, :n)":     "invalid type N",
+		"s BETWEEN :s AND :n":       "mismatch type: BETWEEN operands must have the same type",
+		"absent BETWEEN :s AND :n":  "mismatch type: BETWEEN operands must have the same type",
+		"s BETWEEN :flag AND :flag": "unexpected type: \":flag\" should be a comparable type(N,S,B) got \"BOOL\"",
+		"s < :flag":                 "type mismatch: S < BOOL",
+		"n >= :flag":                "type mismatch: N >= BOOL",
+		// a missing path does not hide a value of a type that cannot be ordered
+		"absent < :flag":  "type mismatch: NULL < BOOL",
+		"absent <= :map":  "type mismatch: NULL <= M",
+		"absent > :lst":   "type mismatch: NULL > L",
+		"absent >= :nulv": "unknown operator: NULL >= NULL",
+		":flag < absent":  "type mismatch: BOOL < NULL",
+	}
+
+	for input, message := range tests {
+		got := testEval(t, input, env)
+
+		errObj, ok := got.(*Error)
+		if !ok {
+			t.Errorf("%q: expected an error, got=%s", input, got.Inspect())
+
+			continue
+		}
+
+		if errObj.Message != message {
+			t.Errorf("%q: expected=%q got=%q", input, message, errObj.Message)
+		}
+	}
+}
+
+func TestOperandText(t *testing.T) {
+	env := NewEnvironment()
+	env.Aliases = map[string]string{"#tags": "tags"}
+
+	path := &IndexExpression{
+		Left: &IndexExpression{
+			Left:  &Identifier{Value: "profile"},
+			Index: &Identifier{Value: "#tags"},
+			Type:  ObjectTypeMap,
+		},
+		Index: &Identifier{Token: Token{Literal: "2"}, Value: "2"},
+		Type:  ObjectTypeList,
+	}
+	call := &CallExpression{Function: &Identifier{Value: "size"}, Arguments: []Expression{&Identifier{Value: "a"}}}
+
+	tests := []struct {
+		expr Expression
+		want string
+	}{
+		{path, "profile.tags[2]"},
+		{&Identifier{Value: ":val"}, ":val"},
+		{call, call.String()},
+	}
+
+	for _, tt := range tests {
+		if got := operandText(tt.expr, env); got != tt.want {
+			t.Errorf("operandText(%s)=%q, want %q", tt.expr.String(), got, tt.want)
+		}
 	}
 }

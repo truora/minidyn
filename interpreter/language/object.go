@@ -83,6 +83,13 @@ type ContainerObject interface {
 	CanContain(objType ObjectType) bool
 }
 
+// PrefixObject is the abstraction of objects that support the begins_with() function.
+type PrefixObject interface {
+	Object
+	// HasPrefix reports whether prefix is an object of the same type that starts the object.
+	HasPrefix(prefix Object) bool
+}
+
 // SizableObject is the abstraction of objects that support the size() function.
 type SizableObject interface {
 	Object
@@ -202,6 +209,13 @@ func (b *Binary) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeBinary
 }
 
+// HasPrefix whether or not the binary starts with the prefix binary
+func (b *Binary) HasPrefix(prefix Object) bool {
+	bin, ok := prefix.(*Binary)
+
+	return ok && bytes.HasPrefix(b.Value, bin.Value)
+}
+
 // Size returns the number of bytes in the binary (DynamoDB size for B).
 func (b *Binary) Size() int64 {
 	return int64(len(b.Value))
@@ -274,6 +288,13 @@ func (s *String) ToDynamoDB() types.Item {
 // CanContain whether or not the string can contain the objType
 func (s *String) CanContain(objType ObjectType) bool {
 	return objType == ObjectTypeString
+}
+
+// HasPrefix whether or not the string starts with the prefix string
+func (s *String) HasPrefix(prefix Object) bool {
+	str, ok := prefix.(*String)
+
+	return ok && strings.HasPrefix(s.Value, str.Value)
 }
 
 // Size returns the length of the string in UTF-8 bytes (DynamoDB size for S).

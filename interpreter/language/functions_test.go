@@ -125,20 +125,26 @@ func TestBeginsWithFailure(t *testing.T) {
 	}
 }
 
-func TestBeginsWithError(t *testing.T) {
+// A path of another type, a missing one or an operand of another type makes begins_with false.
+func TestBeginsWithMismatchedTypesIsFalse(t *testing.T) {
 	str := &String{Value: "Beto Gomez"}
-	expectedBinary := &Binary{Value: []byte{'j', 'o'}}
+	bin := &Binary{Value: []byte{'j', 'o'}}
 
-	begins := beginsWith(str, expectedBinary)
-	if begins.Type() != ObjectTypeError || begins.Inspect() != "ERROR: invalid substr type B" {
-		t.Fatalf("expect invalid type error, got=%s %s", begins.Type(), begins.Inspect())
+	cases := map[string][]Object{
+		"string_path_binary_operand": {str, bin},
+		"binary_path_string_operand": {bin, str},
+		"number_path":                {&Number{Value: 5}, str},
+		"null_path":                  {&Null{}, str},
+		"missing_path":               {UNDEFINED, str},
+		"list_path":                  {&List{}, str},
+		"number_operand":             {str, &Number{Value: 5}},
+		"missing_operand":            {str, UNDEFINED},
 	}
 
-	num := &Number{Value: 5}
-	begins = beginsWith(num, expectedBinary)
-
-	if begins.Type() != ObjectTypeError || begins.Inspect() != "ERROR: invalid type N" {
-		t.Fatalf("expect invalid type error, got=%s %s", begins.Type(), begins.Inspect())
+	for name, args := range cases {
+		if got := beginsWith(args...); got != FALSE {
+			t.Errorf("%s: expected false, got=%s", name, got.Inspect())
+		}
 	}
 }
 
@@ -178,20 +184,25 @@ func TestContainsWithFailure(t *testing.T) {
 	}
 }
 
-func TestContainsWithError(t *testing.T) {
+// A path that cannot contain the operand, or is missing, makes contains false.
+func TestContainsMismatchedTypesIsFalse(t *testing.T) {
 	str := &String{Value: "Beto Gomez"}
-	expectedBinary := &Binary{Value: []byte{'j', 'o'}}
 
-	contained := contains(str, expectedBinary)
-	if contained.Type() != ObjectTypeError || contained.Inspect() != "ERROR: contains is not supported for path=S operand=B" {
-		t.Fatalf("expect invalid type error, got=%s %q", contained.Type(), contained.Inspect())
+	cases := map[string][]Object{
+		"string_path_binary_operand": {str, &Binary{Value: []byte{'j'}}},
+		"string_path_number_operand": {str, &Number{Value: 1}},
+		"number_path":                {&Number{Value: 5}, str},
+		"null_path":                  {&Null{}, str},
+		"missing_path":               {UNDEFINED, str},
+		"map_path":                   {&Map{Value: map[string]Object{}}, str},
+		"bool_path":                  {TRUE, str},
+		"set_path_wrong_operand":     {&StringSet{Value: map[string]bool{"a": true}}, &Number{Value: 1}},
 	}
 
-	num := &Number{Value: 5}
-	contained = contains(num, expectedBinary)
-
-	if contained.Type() != ObjectTypeError || contained.Inspect() != "ERROR: contains is not supported for path=N" {
-		t.Fatalf("expect invalid type error, got=%s %q", contained.Type(), contained.Inspect())
+	for name, args := range cases {
+		if got := contains(args...); got != FALSE {
+			t.Errorf("%s: expected false, got=%s", name, got.Inspect())
+		}
 	}
 }
 
@@ -241,9 +252,11 @@ func TestObjectSize(t *testing.T) {
 		t.Fatalf("binary set size expected=2, actual=%s", size.Inspect())
 	}
 
-	size = objectSize(TRUE)
-	if !isError(size) {
-		t.Fatalf("error expected: %s", size.Inspect())
+	// A value without size, or a missing one, has no size: comparing it is false.
+	for _, obj := range []Object{TRUE, &Null{}, UNDEFINED, &Number{Value: 1}} {
+		if size := objectSize(obj); !isUndefined(size) {
+			t.Fatalf("no size expected for %s, got=%s", obj.Inspect(), size.Inspect())
+		}
 	}
 }
 
@@ -255,10 +268,18 @@ func TestIfNotExists(t *testing.T) {
 		t.Fatalf("expected=%s, actual=%s", str, val.Inspect())
 	}
 
-	val = ifNotExists(&str, UNDEFINED)
+	val = ifNotExists(&str, &String{Value: "other"})
 
 	if str.Inspect() != val.Inspect() {
 		t.Fatalf("expected=%s, actual=%s", str, val.Inspect())
+	}
+
+	// DynamoDB needs the default to exist even when the first operand does.
+	for _, args := range [][]Object{{&str, UNDEFINED}, {UNDEFINED, UNDEFINED}} {
+		got := ifNotExists(args...)
+		if got.Inspect() != "ERROR: "+missingOperandMessage+" | function: if_not_exists; operand: 2" {
+			t.Fatalf("expected the missing operand error, got=%s", got.Inspect())
+		}
 	}
 }
 
@@ -276,12 +297,32 @@ func TestListAppend(t *testing.T) {
 		`arg1_no_list`: {
 			arg1:   &String{Value: "a"},
 			arg2:   &List{Value: []Object{&String{Value: "b"}}},
-			result: &Error{Message: "list_append is not supported for list1=S"},
+			result: &Error{Message: operandTypeMessage + " | function: list_append; operand: 1; operand type: S"},
 		},
 		`arg2_no_list`: {
 			arg1:   &List{Value: []Object{&String{Value: "a"}}},
 			arg2:   &String{Value: "b"},
-			result: &Error{Message: "list_append is not supported for list2=S"},
+			result: &Error{Message: operandTypeMessage + " | function: list_append; operand: 2; operand type: S"},
+		},
+		`arg1_null`: {
+			arg1:   &Null{},
+			arg2:   &List{Value: []Object{&String{Value: "b"}}},
+			result: &Error{Message: operandTypeMessage + " | function: list_append; operand: 1; operand type: NULL"},
+		},
+		`arg1_missing`: {
+			arg1:   UNDEFINED,
+			arg2:   &String{Value: "b"},
+			result: &Error{Message: missingOperandMessage + " | function: list_append; operand: 1"},
+		},
+		`arg2_missing`: {
+			arg1:   &Null{},
+			arg2:   UNDEFINED,
+			result: &Error{Message: operandTypeMessage + " | function: list_append; operand: 1; operand type: NULL"},
+		},
+		`arg2_missing_with_list`: {
+			arg1:   &List{},
+			arg2:   UNDEFINED,
+			result: &Error{Message: missingOperandMessage + " | function: list_append; operand: 2"},
 		},
 	}
 

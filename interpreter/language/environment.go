@@ -107,7 +107,7 @@ func (e *Environment) getFromIndexes(names []string, size int) Object {
 func getFromMap(obj Object, key string) Object {
 	m, ok := obj.(*Map)
 	if !ok {
-		return newError("index operator not supported for %q", obj.Type())
+		return UNDEFINED
 	}
 
 	return m.Get(key)

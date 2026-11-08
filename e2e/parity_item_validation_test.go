@@ -457,8 +457,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "ScanFilterFunctions",
-			knownIssue: "#143",
+			name: "ScanFilterFunctions",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -555,8 +554,7 @@ func TestE2E_ItemValidation(t *testing.T) {
 			},
 		},
 		{
-			name:       "ScanProjectionExpressionNested",
-			knownIssue: "#143",
+			name: "ScanProjectionExpressionNested",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

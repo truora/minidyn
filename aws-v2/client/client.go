@@ -383,6 +383,10 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(aws.String(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -427,6 +431,10 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(aws.String(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -435,30 +443,6 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
-	}
-
-	// core.Table.Delete validates this too, but the conditional pre-check below runs first:
-	// DynamoDB rejects an invalid ReturnValues before evaluating the condition.
-	if verr := core.ValidateNoneOrAllOldReturnValues(aws.String(string(input.ReturnValues))); verr != nil {
-		return nil, mapKnownError(verr)
-	}
-
-	// support conditional writes
-	if input.ConditionExpression != nil {
-		res, serr := table.SearchData(core.QueryInput{
-			Index:                     core.PrimaryIndexName,
-			ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
-			Aliases:                   input.ExpressionAttributeNames,
-			Limit:                     aws.ToInt64(aws.Int64(1)),
-			ConditionExpression:       input.ConditionExpression,
-		})
-		if serr != nil {
-			return nil, mapKnownError(serr)
-		}
-
-		if len(res.Items) == 0 {
-			return &dynamodb.DeleteItemOutput{}, &types.ConditionalCheckFailedException{Message: aws.String(core.ErrConditionalRequestFailed.Error())}
-		}
 	}
 
 	deleteInput := mapDynamoToTypesDeleteItemInput(input)
@@ -500,6 +484,10 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 
 	if ferr := fd.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
+	}
+
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(aws.String(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
 	}
 
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.UpdateExpression), aws.ToString(input.ConditionExpression))
@@ -1046,6 +1034,10 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 		return nil, fd.forceFailureErr
 	}
 
+	if err := validateTransactReturnValuesOnConditionCheckFailure(input.TransactItems); err != nil {
+		return nil, err
+	}
+
 	snapshots, err := fd.prepareTransact(input.TransactItems)
 	if err != nil {
 		return nil, err
@@ -1294,6 +1286,36 @@ func (fd *Client) runTransactUpdate(i, n int, update *types.Update) error {
 	return nil
 }
 
+// validateTransactReturnValuesOnConditionCheckFailure rejects the whole transaction, before any
+// write, when an item has a ReturnValuesOnConditionCheckFailure outside ALL_OLD and NONE.
+// DynamoDB Local accepts the value; minidyn follows the API reference (see e2e/README.md).
+func validateTransactReturnValuesOnConditionCheckFailure(items []types.TransactWriteItem) error {
+	for i, item := range items {
+		var shape string
+
+		var rv types.ReturnValuesOnConditionCheckFailure
+
+		switch {
+		case item.Put != nil:
+			shape, rv = "put", item.Put.ReturnValuesOnConditionCheckFailure
+		case item.Update != nil:
+			shape, rv = "update", item.Update.ReturnValuesOnConditionCheckFailure
+		case item.Delete != nil:
+			shape, rv = "delete", item.Delete.ReturnValuesOnConditionCheckFailure
+		case item.ConditionCheck != nil:
+			shape, rv = "conditionCheck", item.ConditionCheck.ReturnValuesOnConditionCheckFailure
+		default:
+			continue
+		}
+
+		if err := core.ValidateTransactItemReturnValuesOnConditionCheckFailure(i, shape, aws.String(string(rv))); err != nil {
+			return mapKnownError(err)
+		}
+	}
+
+	return nil
+}
+
 func (fd *Client) runTransactDelete(i, n int, del *types.Delete) error {
 	if vErr := validateExpressionAttributes(del.ExpressionAttributeNames, del.ExpressionAttributeValues, aws.ToString(del.ConditionExpression)); vErr != nil {
 		return vErr
@@ -1353,13 +1375,9 @@ func (fd *Client) runTransactConditionCheck(i, n int, check *types.ConditionChec
 	}
 
 	if !matched {
-		checkErr := &mtypes.ConditionalCheckFailedException{
-			MessageText: core.ErrConditionalRequestFailed.Error(),
-		}
+		mode := string(check.ReturnValuesOnConditionCheckFailure)
 
-		if check.ReturnValuesOnConditionCheckFailure == types.ReturnValuesOnConditionCheckFailureAllOld {
-			checkErr.Item = stored
-		}
+		checkErr := core.ConditionalCheckFailed(&mode, stored)
 
 		return newTransactionCancelledError(i, n, checkErr)
 	}

@@ -209,15 +209,16 @@ func mapDynamoToTypesPutItemInput(input *dynamodb.PutItemInput) *types.PutItemIn
 	}
 
 	return &types.PutItemInput{
-		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         toString(string(input.ConditionalOperator)),
-		ExpressionAttributeNames:    input.ExpressionAttributeNames,
-		ExpressionAttributeValues:   mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
-		Item:                        mapDynamoToTypesMapItem(input.Item),
-		ReturnConsumedCapacity:      toString(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: toString(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                toString(string(input.ReturnValues)),
-		TableName:                   input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ConditionalOperator:                 toString(string(input.ConditionalOperator)),
+		ExpressionAttributeNames:            input.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Item:                                mapDynamoToTypesMapItem(input.Item),
+		ReturnConsumedCapacity:              toString(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics:         toString(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                        toString(string(input.ReturnValues)),
+		TableName:                           input.TableName,
+		ReturnValuesOnConditionCheckFailure: toString(string(input.ReturnValuesOnConditionCheckFailure)),
 	}
 }
 
@@ -322,16 +323,17 @@ func mapDynamoToTypesDeleteItemInput(input *dynamodb.DeleteItemInput) *types.Del
 	}
 
 	return &types.DeleteItemInput{
-		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         toString(string(input.ConditionalOperator)),
-		Expected:                    mapDynamoToTypesExpectedAttributeValueMap(input.Expected),
-		ExpressionAttributeNames:    mapDynamoToTypesStringMap(input.ExpressionAttributeNames),
-		ExpressionAttributeValues:   mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
-		Key:                         mapDynamoToTypesMapItem(input.Key),
-		ReturnConsumedCapacity:      toString(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: toString(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                toString(string(input.ReturnValues)),
-		TableName:                   input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ConditionalOperator:                 toString(string(input.ConditionalOperator)),
+		Expected:                            mapDynamoToTypesExpectedAttributeValueMap(input.Expected),
+		ExpressionAttributeNames:            mapDynamoToTypesStringMap(input.ExpressionAttributeNames),
+		ExpressionAttributeValues:           mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Key:                                 mapDynamoToTypesMapItem(input.Key),
+		ReturnConsumedCapacity:              toString(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics:         toString(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                        toString(string(input.ReturnValues)),
+		TableName:                           input.TableName,
+		ReturnValuesOnConditionCheckFailure: toString(string(input.ReturnValuesOnConditionCheckFailure)),
 	}
 }
 
@@ -341,11 +343,12 @@ func mapDynamoToTypesTransactPut(input *dynamodbtypes.Put) *types.PutItemInput {
 	}
 
 	return &types.PutItemInput{
-		ConditionExpression:       input.ConditionExpression,
-		ExpressionAttributeNames:  input.ExpressionAttributeNames,
-		ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
-		Item:                      mapDynamoToTypesMapItem(input.Item),
-		TableName:                 input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ExpressionAttributeNames:            input.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Item:                                mapDynamoToTypesMapItem(input.Item),
+		TableName:                           input.TableName,
+		ReturnValuesOnConditionCheckFailure: toString(string(input.ReturnValuesOnConditionCheckFailure)),
 	}
 }
 
@@ -371,11 +374,12 @@ func mapDynamoToTypesTransactDelete(input *dynamodbtypes.Delete) *types.DeleteIt
 	}
 
 	return &types.DeleteItemInput{
-		ConditionExpression:       input.ConditionExpression,
-		ExpressionAttributeNames:  mapDynamoToTypesStringMap(input.ExpressionAttributeNames),
-		ExpressionAttributeValues: mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
-		Key:                       mapDynamoToTypesMapItem(input.Key),
-		TableName:                 input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ExpressionAttributeNames:            mapDynamoToTypesStringMap(input.ExpressionAttributeNames),
+		ExpressionAttributeValues:           mapDynamoToTypesMapItem(input.ExpressionAttributeValues),
+		Key:                                 mapDynamoToTypesMapItem(input.Key),
+		TableName:                           input.TableName,
+		ReturnValuesOnConditionCheckFailure: toString(string(input.ReturnValuesOnConditionCheckFailure)),
 	}
 }
 

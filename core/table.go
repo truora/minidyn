@@ -1034,6 +1034,10 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return nil, err
 	}
 
+	if err := ValidateReturnValuesOnConditionCheckFailure(input.ReturnValuesOnConditionCheckFailure); err != nil {
+		return nil, err
+	}
+
 	if err := types.ValidateItemMap(input.Item); err != nil {
 		return nil, types.NewError("ValidationException", err.Error(), nil)
 	}
@@ -1067,7 +1071,7 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 
 		if !matched {
-			return nil, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
+			return nil, ConditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, t.getItem(key))
 		}
 	}
 
@@ -1100,6 +1104,14 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 // ValidateNoneOrAllOldReturnValues accepts the ReturnValues modes that PutItem
 // and DeleteItem support: empty, NONE and ALL_OLD.
 func ValidateNoneOrAllOldReturnValues(rv *string) error {
+	return validateNoneOrAllOld(rv, func(value string) string {
+		return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
+	})
+}
+
+// validateNoneOrAllOld accepts empty, NONE and ALL_OLD, and builds the
+// ValidationException message of any other value with invalid.
+func validateNoneOrAllOld(rv *string, invalid func(value string) string) error {
 	if rv == nil {
 		return nil
 	}
@@ -1108,7 +1120,7 @@ func ValidateNoneOrAllOldReturnValues(rv *string) error {
 	case "", "NONE", "ALL_OLD":
 		return nil
 	default:
-		return types.NewError("ValidationException", "Return values set to invalid value", nil)
+		return types.NewError("ValidationException", invalid(*rv), nil)
 	}
 }
 
@@ -1225,6 +1237,10 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
+	if err := ValidateReturnValuesOnConditionCheckFailure(input.ReturnValuesOnConditionCheckFailure); err != nil {
+		return nil, err
+	}
+
 	// DynamoDB reports the update expression before the condition.
 	if err := validateWriteExpressions(input.ExpressionAttributeNames, input.ExpressionAttributeValues,
 		interpreter.LabeledExpression{Label: "UpdateExpression", Expression: input.UpdateExpression},
@@ -1276,13 +1292,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		}
 
 		if !matched {
-			checkErr := &types.ConditionalCheckFailedException{
-				MessageText: ErrConditionalRequestFailed.Error(),
-			}
-
-			handleConditionalCheckError(input, checkErr, item)
-
-			return nil, checkErr
+			return nil, ConditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, item)
 		}
 	}
 
@@ -1322,6 +1332,10 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 // Delete deletes an item in the table based on the input
 func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, error) { //nolint:gocognit,gocyclo // conditional delete, key resolution, index cleanup
 	if err := ValidateNoneOrAllOldReturnValues(input.ReturnValues); err != nil {
+		return nil, err
+	}
+
+	if err := ValidateReturnValuesOnConditionCheckFailure(input.ReturnValuesOnConditionCheckFailure); err != nil {
 		return nil, err
 	}
 
@@ -1374,7 +1388,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		}
 
 		if !matched {
-			return nil, &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
+			return nil, ConditionalCheckFailed(input.ReturnValuesOnConditionCheckFailure, item)
 		}
 	}
 
@@ -1592,8 +1606,42 @@ func (t *Table) markIndexCreating(g *types.GlobalSecondaryIndexDescription) {
 	}
 }
 
-func handleConditionalCheckError(input *types.UpdateItemInput, checkErr *types.ConditionalCheckFailedException, item map[string]*types.Item) {
-	if input.ReturnValuesOnConditionCheckFailure != nil && *input.ReturnValuesOnConditionCheckFailure == "ALL_OLD" {
-		checkErr.Item = item
+// ValidateReturnValuesOnConditionCheckFailure accepts the modes DynamoDB defines
+// for ReturnValuesOnConditionCheckFailure: empty, ALL_OLD and NONE.
+//
+// The front ends call it before their own expression pre-check and the table lookup, to keep
+// DynamoDB's order; Put, Update and Delete call it again, so core never runs with a bad mode.
+func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
+	return validateNoneOrAllOld(rv, func(value string) string {
+		return returnValuesOnConditionCheckFailureMessage(value, "returnValuesOnConditionCheckFailure")
+	})
+}
+
+// ValidateTransactItemReturnValuesOnConditionCheckFailure validates the mode of the Put, Update,
+// Delete or ConditionCheck (shape: "put", "update", "delete" or "conditionCheck") at position
+// index of TransactWriteItems. DynamoDB Local accepts any value here; minidyn follows the API
+// reference ("Valid Values: ALL_OLD | NONE") and rejects the whole request.
+func ValidateTransactItemReturnValuesOnConditionCheckFailure(index int, shape string, rv *string) error {
+	return validateNoneOrAllOld(rv, func(value string) string {
+		path := fmt.Sprintf("transactItems.%d.member.%s.returnValuesOnConditionCheckFailure", index+1, shape)
+
+		// DynamoDB's text already names the field and the 1-based item, so no detail is added.
+		return returnValuesOnConditionCheckFailureMessage(value, path)
+	})
+}
+
+func returnValuesOnConditionCheckFailureMessage(value, path string) string {
+	return fmt.Sprintf("1 validation error detected: Value '%s' at '%s' failed to satisfy constraint: Member must satisfy enum value set: [ALL_OLD, NONE]", value, path)
+}
+
+// ConditionalCheckFailed builds the error of a failed condition. With
+// ReturnValuesOnConditionCheckFailure=ALL_OLD it carries the existing item, if there is one.
+func ConditionalCheckFailed(mode *string, item map[string]*types.Item) *types.ConditionalCheckFailedException {
+	checkErr := &types.ConditionalCheckFailedException{MessageText: ErrConditionalRequestFailed.Error()}
+
+	if mode != nil && *mode == "ALL_OLD" && len(item) > 0 {
+		checkErr.Item = deepCopyItemMap(item)
 	}
+
+	return checkErr
 }

@@ -332,6 +332,10 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(toStringPtr(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	if err := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
@@ -353,15 +357,16 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	}
 
 	item, err := table.Put(&types.PutItemInput{
-		TableName:                   input.TableName,
-		ConditionExpression:         input.ConditionExpression,
-		ConditionalOperator:         toStringPtr(string(input.ConditionalOperator)),
-		ExpressionAttributeNames:    input.ExpressionAttributeNames,
-		ExpressionAttributeValues:   mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Item:                        putItem,
-		ReturnConsumedCapacity:      toStringPtr(string(input.ReturnConsumedCapacity)),
-		ReturnItemCollectionMetrics: toStringPtr(string(input.ReturnItemCollectionMetrics)),
-		ReturnValues:                toStringPtr(string(input.ReturnValues)),
+		TableName:                           input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ConditionalOperator:                 toStringPtr(string(input.ConditionalOperator)),
+		ExpressionAttributeNames:            input.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
+		Item:                                putItem,
+		ReturnConsumedCapacity:              toStringPtr(string(input.ReturnConsumedCapacity)),
+		ReturnItemCollectionMetrics:         toStringPtr(string(input.ReturnItemCollectionMetrics)),
+		ReturnValues:                        toStringPtr(string(input.ReturnValues)),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(input.ReturnValuesOnConditionCheckFailure)),
 	})
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -389,6 +394,10 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 		return nil, ferr
 	}
 
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(toStringPtr(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	if err := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
@@ -411,13 +420,14 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	}
 
 	item, err := table.Delete(&types.DeleteItemInput{
-		TableName:                 input.TableName,
-		ConditionExpression:       input.ConditionExpression,
-		ConditionalOperator:       toStringPtr(string(input.ConditionalOperator)),
-		ExpressionAttributeNames:  toStringPtrMap(input.ExpressionAttributeNames),
-		ExpressionAttributeValues: mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
-		Key:                       deleteKey,
-		ReturnValues:              toStringPtr(string(input.ReturnValues)),
+		TableName:                           input.TableName,
+		ConditionExpression:                 input.ConditionExpression,
+		ConditionalOperator:                 toStringPtr(string(input.ConditionalOperator)),
+		ExpressionAttributeNames:            toStringPtrMap(input.ExpressionAttributeNames),
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(input.ExpressionAttributeValues),
+		Key:                                 deleteKey,
+		ReturnValues:                        toStringPtr(string(input.ReturnValues)),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(input.ReturnValuesOnConditionCheckFailure)),
 	})
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -446,6 +456,10 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 
 	if ferr := c.failureErrFor(aws.ToString(input.TableName), ""); ferr != nil {
 		return nil, ferr
+	}
+
+	if err := core.ValidateReturnValuesOnConditionCheckFailure(toStringPtr(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
+		return nil, mapKnownError(err)
 	}
 
 	if err := validateExpressionAttributes(
@@ -1047,6 +1061,10 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 		return nil, c.forceFailureErr
 	}
 
+	if err := validateTransactReturnValuesOnConditionCheckFailure(input.TransactItems); err != nil {
+		return nil, err
+	}
+
 	snapshots, err := c.prepareTransact(input.TransactItems)
 	if err != nil {
 		return nil, err
@@ -1092,6 +1110,36 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	return &TransactWriteItemsOutput{
 		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
 	}, nil
+}
+
+// validateTransactReturnValuesOnConditionCheckFailure rejects the whole transaction, before any
+// write, when an item has a ReturnValuesOnConditionCheckFailure outside ALL_OLD and NONE.
+// DynamoDB Local accepts the value; minidyn follows the API reference (see e2e/README.md).
+func validateTransactReturnValuesOnConditionCheckFailure(items []TransactWriteItem) error {
+	for i, item := range items {
+		var shape string
+
+		var rv ddbtypes.ReturnValuesOnConditionCheckFailure
+
+		switch {
+		case item.Put != nil:
+			shape, rv = "put", item.Put.ReturnValuesOnConditionCheckFailure
+		case item.Update != nil:
+			shape, rv = "update", item.Update.ReturnValuesOnConditionCheckFailure
+		case item.Delete != nil:
+			shape, rv = "delete", item.Delete.ReturnValuesOnConditionCheckFailure
+		case item.ConditionCheck != nil:
+			shape, rv = "conditionCheck", item.ConditionCheck.ReturnValuesOnConditionCheckFailure
+		default:
+			continue
+		}
+
+		if err := core.ValidateTransactItemReturnValuesOnConditionCheckFailure(i, shape, toStringPtr(string(rv))); err != nil {
+			return mapKnownError(err)
+		}
+	}
+
+	return nil
 }
 
 // transactWriteTargets describes every write of the transaction for billing. A ConditionCheck is
@@ -1263,11 +1311,12 @@ func (c *Client) runTransactPut(i, n int, put *Put) error {
 	}
 
 	if _, opErr := table.Put(&types.PutItemInput{
-		TableName:                 put.TableName,
-		ConditionExpression:       put.ConditionExpression,
-		ExpressionAttributeNames:  put.ExpressionAttributeNames,
-		ExpressionAttributeValues: mapAttributeValueMapToTypes(put.ExpressionAttributeValues),
-		Item:                      mapAttributeValueMapToTypes(put.Item),
+		TableName:                           put.TableName,
+		ConditionExpression:                 put.ConditionExpression,
+		ExpressionAttributeNames:            put.ExpressionAttributeNames,
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(put.ExpressionAttributeValues),
+		Item:                                mapAttributeValueMapToTypes(put.Item),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(put.ReturnValuesOnConditionCheckFailure)),
 	}); opErr != nil {
 		return newServerTransactionCancelledError(i, n, opErr)
 	}
@@ -1316,11 +1365,12 @@ func (c *Client) runTransactDelete(i, n int, del *Delete) error {
 	}
 
 	if _, opErr := table.Delete(&types.DeleteItemInput{
-		TableName:                 del.TableName,
-		ConditionExpression:       del.ConditionExpression,
-		ExpressionAttributeNames:  toStringPtrMap(del.ExpressionAttributeNames),
-		ExpressionAttributeValues: mapAttributeValueMapToTypes(del.ExpressionAttributeValues),
-		Key:                       mapAttributeValueMapToTypes(del.Key),
+		TableName:                           del.TableName,
+		ConditionExpression:                 del.ConditionExpression,
+		ExpressionAttributeNames:            toStringPtrMap(del.ExpressionAttributeNames),
+		ExpressionAttributeValues:           mapAttributeValueMapToTypes(del.ExpressionAttributeValues),
+		Key:                                 mapAttributeValueMapToTypes(del.Key),
+		ReturnValuesOnConditionCheckFailure: toStringPtr(string(del.ReturnValuesOnConditionCheckFailure)),
 	}); opErr != nil {
 		return newServerTransactionCancelledError(i, n, opErr)
 	}
@@ -1370,13 +1420,9 @@ func (c *Client) runTransactConditionCheck(i, n int, check *ConditionCheck) erro
 	}
 
 	if !matched {
-		checkErr := &types.ConditionalCheckFailedException{
-			MessageText: core.ErrConditionalRequestFailed.Error(),
-		}
+		mode := string(check.ReturnValuesOnConditionCheckFailure)
 
-		if check.ReturnValuesOnConditionCheckFailure == ddbtypes.ReturnValuesOnConditionCheckFailureAllOld {
-			checkErr.Item = stored
-		}
+		checkErr := core.ConditionalCheckFailed(&mode, stored)
 
 		return newServerTransactionCancelledError(i, n, checkErr)
 	}

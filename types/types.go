@@ -253,16 +253,17 @@ func (s *ConditionalCheckFailedException) RequestID() string {
 
 // PutItemInput represents the input of a PutItem operation.
 type PutItemInput struct {
-	_                           struct{}          `type:"structure"`
-	ConditionExpression         *string           `type:"string"`
-	ConditionalOperator         *string           `type:"string" enum:"ConditionalOperator"`
-	ExpressionAttributeNames    map[string]string `type:"map"`
-	ExpressionAttributeValues   map[string]*Item  `type:"map"`
-	Item                        map[string]*Item  `type:"map" required:"true"`
-	ReturnConsumedCapacity      *string           `type:"string" enum:"ReturnConsumedCapacity"`
-	ReturnItemCollectionMetrics *string           `type:"string" enum:"ReturnItemCollectionMetrics"`
-	ReturnValues                *string           `type:"string" enum:"ReturnValue"`
-	TableName                   *string           `min:"3" type:"string" required:"true"`
+	_                                   struct{}          `type:"structure"`
+	ConditionExpression                 *string           `type:"string"`
+	ConditionalOperator                 *string           `type:"string" enum:"ConditionalOperator"`
+	ExpressionAttributeNames            map[string]string `type:"map"`
+	ExpressionAttributeValues           map[string]*Item  `type:"map"`
+	Item                                map[string]*Item  `type:"map" required:"true"`
+	ReturnConsumedCapacity              *string           `type:"string" enum:"ReturnConsumedCapacity"`
+	ReturnItemCollectionMetrics         *string           `type:"string" enum:"ReturnItemCollectionMetrics"`
+	ReturnValues                        *string           `type:"string" enum:"ReturnValue"`
+	TableName                           *string           `min:"3" type:"string" required:"true"`
+	ReturnValuesOnConditionCheckFailure *string           `type:"string" enum:"ReturnValuesOnConditionCheckFailure"`
 }
 
 // UpdateItemInput represents the input of an UpdateItem operation.
@@ -285,17 +286,18 @@ type UpdateItemInput struct {
 
 // DeleteItemInput represents the input of a DeleteItem operation.
 type DeleteItemInput struct {
-	_                           struct{}                           `type:"structure"`
-	ConditionExpression         *string                            `type:"string"`
-	ConditionalOperator         *string                            `type:"string" enum:"ConditionalOperator"`
-	Expected                    map[string]*ExpectedAttributeValue `type:"map"`
-	ExpressionAttributeNames    map[string]*string                 `type:"map"`
-	ExpressionAttributeValues   map[string]*Item                   `type:"map"`
-	Key                         map[string]*Item                   `type:"map" required:"true"`
-	ReturnConsumedCapacity      *string                            `type:"string" enum:"ReturnConsumedCapacity"`
-	ReturnItemCollectionMetrics *string                            `type:"string" enum:"ReturnItemCollectionMetrics"`
-	ReturnValues                *string                            `type:"string" enum:"ReturnValue"`
-	TableName                   *string                            `min:"3" type:"string" required:"true"`
+	_                                   struct{}                           `type:"structure"`
+	ConditionExpression                 *string                            `type:"string"`
+	ConditionalOperator                 *string                            `type:"string" enum:"ConditionalOperator"`
+	Expected                            map[string]*ExpectedAttributeValue `type:"map"`
+	ExpressionAttributeNames            map[string]*string                 `type:"map"`
+	ExpressionAttributeValues           map[string]*Item                   `type:"map"`
+	Key                                 map[string]*Item                   `type:"map" required:"true"`
+	ReturnConsumedCapacity              *string                            `type:"string" enum:"ReturnConsumedCapacity"`
+	ReturnItemCollectionMetrics         *string                            `type:"string" enum:"ReturnItemCollectionMetrics"`
+	ReturnValues                        *string                            `type:"string" enum:"ReturnValue"`
+	TableName                           *string                            `min:"3" type:"string" required:"true"`
+	ReturnValuesOnConditionCheckFailure *string                            `type:"string" enum:"ReturnValuesOnConditionCheckFailure"`
 }
 
 // ExpectedAttributeValue represents a condition to be compared with an attribute value

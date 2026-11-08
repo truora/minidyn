@@ -131,8 +131,7 @@ func TestE2E_IgnoredParams(t *testing.T) {
 			},
 		},
 		{
-			name:       "ReturnValuesOnConditionCheckFailure",
-			knownIssue: "#157",
+			name: "ReturnValuesOnConditionCheckFailure",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

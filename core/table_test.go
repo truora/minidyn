@@ -479,7 +479,7 @@ func TestGetKey(t *testing.T) {
 
 	k, err := newTable.KeySchema.GetKey(map[string]string{"HASH": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
 	c.NoError(err)
-	c.Equal("range.HASH", k)
+	c.Equal(encS("range")+encS("HASH"), k)
 
 	_, err = newTable.KeySchema.GetKey(map[string]string{"incorrect": "S", "range": "S"}, map[string]*types.Item{"range": {S: new("range")}, "HASH": {S: new("HASH")}})
 	c.EqualError(err, `Invalid attribute value type | field: HASH`)
@@ -1867,7 +1867,7 @@ func TestFetchQueryData(t *testing.T) {
 	})
 
 	c.NotEmpty(sortedKeys)
-	c.Equal(index.sortedRefs[0][0], "006.Bellsprout")
+	c.Equal(encS("006")+encS("Bellsprout"), index.sortedRefs[0][0])
 }
 
 func TestSearchDataWithProjectionExpression(t *testing.T) {
@@ -2033,8 +2033,8 @@ func TestRestore(t *testing.T) {
 	table.Restore(snap)
 
 	c.Len(table.Data, 1)
-	c.Contains(table.Data, "001.Bulbasaur")
-	c.NotContains(table.Data, "004.Charmander")
+	c.Contains(table.Data, encS("001")+encS("Bulbasaur"))
+	c.NotContains(table.Data, encS("004")+encS("Charmander"))
 }
 
 func TestSearchData_wrongFunctionOperandCount(t *testing.T) {

@@ -189,13 +189,11 @@ func parityRangeOrderBasics(ctx context.Context, t *testing.T, client *dynamodb.
 
 func TestE2E_RangeKeyOrder(t *testing.T) {
 	tests := []struct {
-		name       string
-		knownIssue string
-		fn         func(t *testing.T, client *dynamodb.Client) any
+		name string
+		fn   func(t *testing.T, client *dynamodb.Client) any
 	}{
 		{
-			name:       "NumberOrder",
-			knownIssue: "#147",
+			name: "NumberOrder",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -206,8 +204,7 @@ func TestE2E_RangeKeyOrder(t *testing.T) {
 			},
 		},
 		{
-			name:       "NumberConditionsOrder",
-			knownIssue: "#147",
+			name: "NumberConditionsOrder",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -260,8 +257,7 @@ func TestE2E_RangeKeyOrder(t *testing.T) {
 			},
 		},
 		{
-			name:       "BinaryOrder",
-			knownIssue: "#148",
+			name: "BinaryOrder",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -272,8 +268,7 @@ func TestE2E_RangeKeyOrder(t *testing.T) {
 			},
 		},
 		{
-			name:       "BinaryConditionsOrder",
-			knownIssue: "#148",
+			name: "BinaryConditionsOrder",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -293,8 +288,7 @@ func TestE2E_RangeKeyOrder(t *testing.T) {
 			},
 		},
 		{
-			name:       "KeysContainingSeparator",
-			knownIssue: "#149",
+			name: "KeysContainingSeparator",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -346,7 +340,7 @@ func TestE2E_RangeKeyOrder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			RunE2EKnown(t, tt.knownIssue, tt.fn)
+			RunE2E(t, tt.fn)
 		})
 	}
 }

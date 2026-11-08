@@ -66,7 +66,11 @@ func TestConditionalCheckFailedItemIsACopy(t *testing.T) {
 			ccf.Item["name"].S = new("Mutated")
 			ccf.Item["extra"] = &types.Item{S: new("x")}
 
-			stored := table.Data["025"]
+			// Stored keys are opaque: derive the key through the key schema.
+			storedKey, err := table.KeySchema.GetKey(table.AttributesDef, map[string]*types.Item{"id": {S: new("025")}})
+			require.NoError(t, err)
+
+			stored := table.Data[storedKey]
 			require.Len(t, stored, 2)
 			require.Equal(t, "Pikachu", *stored["name"].S)
 		})

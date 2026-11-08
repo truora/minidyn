@@ -555,13 +555,21 @@ func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
 	return nil
 }
 
-func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]*types.Item) string {
-	startKey := ""
-	if len(startkeyAttr) != 0 {
-		startKey, _ = schema.GetKey(t.AttributesDef, startkeyAttr)
+// parseStartKey encodes the ExclusiveStartKey. A number DynamoDB rejects is a ValidationException,
+// as it is anywhere else in a request: left unreported, the empty key would restart the walk from
+// the first item, and a client paging until LastEvaluatedKey is empty would never finish. Other
+// problems with the start key keep the leniency described at checkSeek.
+func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]*types.Item) (string, error) {
+	if len(startkeyAttr) == 0 {
+		return "", nil
 	}
 
-	return startKey
+	startKey, err := schema.GetKey(t.AttributesDef, startkeyAttr)
+	if errors.Is(err, ErrInvalidNumber) || errors.Is(err, ErrNumberOverflow) || errors.Is(err, ErrNumberUnderflow) {
+		return "", types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return startKey, nil
 }
 
 func getPrimaryKey(index *index, k string) (string, bool) {
@@ -651,19 +659,13 @@ func (t *Table) firstSearchItem(idx *index) (map[string]*types.Item, bool) {
 	return item, ok
 }
 
-// partitionPrefix returns the prefix shared by the stored keys of the partition a Query's key
-// condition selects ("<hash>" or "<hash>." with a range key), if it selects exactly one.
-// Keys of other partitions may share the prefix (e.g. hash "a.b" for "a."): callers only use
-// it to skip keys that can't match.
+// partitionPrefix returns the encoded hash key (see key_encoding.go) of the partition a
+// Query's key condition selects, if it selects exactly one. It is a prefix of the stored
+// key of every item in that partition and of no other: the encoding is self-delimiting, so
+// it can't start another hash value, and every spelling of a number encodes the same.
+// Callers use it to skip keys that can't match.
 func (t *Table) partitionPrefix(input QueryInput, schema keySchema) (string, bool) {
 	if input.Scan || input.KeyConditionExpression == "" {
-		return "", false
-	}
-
-	// Stored numbers keep the text they were written with ("7" vs "7.0"), so no prefix finds
-	// every spelling of a number: numeric partition keys keep the full walk. Canonical number
-	// keys would remove this limit (#147).
-	if t.AttributesDef[schema.HashKey] == "N" {
 		return "", false
 	}
 
@@ -680,10 +682,6 @@ func (t *Table) partitionPrefix(input QueryInput, schema keySchema) (string, boo
 	hash, err := keySchema{HashKey: schema.HashKey}.getKeyValue(t.AttributesDef, map[string]*types.Item{schema.HashKey: val})
 	if err != nil {
 		return "", false
-	}
-
-	if schema.RangeKey != "" {
-		hash += "."
 	}
 
 	return hash, true
@@ -820,7 +818,11 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		}
 	}
 
-	startKey := t.parseStartKey(t.KeySchema, exclusiveStartKey)
+	startKey, err := t.parseStartKey(t.KeySchema, exclusiveStartKey)
+	if err != nil {
+		return SearchResult{}, err
+	}
+
 	input.started = startKey == ""
 	last := map[string]*types.Item{}
 	sortedKeysSize := int64(len(sortedKeys))

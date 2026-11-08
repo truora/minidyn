@@ -28,11 +28,11 @@ func TestPartitionPrefix(t *testing.T) {
 		want   string
 		ok     bool
 	}{
-		{"composite key", QueryInput{KeyConditionExpression: "pk = :p AND sk > :p", ExpressionAttributeValues: values}, composite, "alice.", true},
-		{"hash-only key", QueryInput{KeyConditionExpression: "pk = :p", ExpressionAttributeValues: values}, hashOnly, "alice", true},
-		// Stored numbers keep the text they were written with ("7" vs "7.0"), so a prefix
-		// can't find every spelling of a number: numeric partition keys keep the full walk.
-		{"numeric hash key", QueryInput{KeyConditionExpression: "n = :n", ExpressionAttributeValues: values}, numeric, "", false},
+		{"composite key", QueryInput{KeyConditionExpression: "pk = :p AND sk > :p", ExpressionAttributeValues: values}, composite, encS("alice"), true},
+		{"hash-only key", QueryInput{KeyConditionExpression: "pk = :p", ExpressionAttributeValues: values}, hashOnly, encS("alice"), true},
+		// Numbers encode by value, so every spelling of a number has the same prefix.
+		{"numeric hash key", QueryInput{KeyConditionExpression: "n = :n", ExpressionAttributeValues: values}, numeric, "\xc0\x80\x01\x08\x00", true},
+		{"numeric hash key other spelling", QueryInput{KeyConditionExpression: "n = :n", ExpressionAttributeValues: map[string]*types.Item{":n": {N: aws.String("7.00")}}}, numeric, "\xc0\x80\x01\x08\x00", true},
 		{"scan", QueryInput{Scan: true, KeyConditionExpression: "pk = :p", ExpressionAttributeValues: values}, composite, "", false},
 		{"no key condition", QueryInput{ExpressionAttributeValues: values}, composite, "", false},
 		{"no hash equality", QueryInput{KeyConditionExpression: "sk = :p", ExpressionAttributeValues: values}, composite, "", false},
@@ -51,12 +51,14 @@ func TestPartitionPrefix(t *testing.T) {
 }
 
 func TestKeysWithPrefix(t *testing.T) {
-	keys := []string{"a", "a.1", "a.2", "a.b.1", "ab.1", "b.1"}
+	keys := []string{
+		encS("a") + encS("1"), encS("a") + encS("2"), encS("a.b") + encS("1"), encS("ab") + encS("1"), encS("b") + encS("1"),
+	}
 
-	require.Equal(t, []string{"a.1", "a.2", "a.b.1"}, keysWithPrefix(keys, "a."))
-	require.Equal(t, []string{"b.1"}, keysWithPrefix(keys, "b."))
-	require.Empty(t, keysWithPrefix(keys, "c."))
-	require.Empty(t, keysWithPrefix(nil, "a."))
+	require.Equal(t, keys[0:2], keysWithPrefix(keys, encS("a")))
+	require.Equal(t, keys[4:], keysWithPrefix(keys, encS("b")))
+	require.Empty(t, keysWithPrefix(keys, encS("c")))
+	require.Empty(t, keysWithPrefix(nil, encS("a")))
 }
 
 // seekTestTable returns a table with keys (pk, sk) or just pk, holding the given items.

@@ -2117,10 +2117,10 @@ func TestWriteIndexDeltasSkipsUnchangedProjections(t *testing.T) {
 
 	table := NewTable("t")
 	table.BillingMode = aws.String("PAY_PER_REQUEST")
-	table.SetAttributeDefinition([]*types.AttributeDefinition{
+	c.NoError(table.SetAttributeDefinition([]*types.AttributeDefinition{
 		{AttributeName: aws.String("id"), AttributeType: aws.String("S")},
 		{AttributeName: aws.String("type"), AttributeType: aws.String("S")},
-	})
+	}))
 	c.NoError(table.CreatePrimaryIndex(&types.CreateTableInput{
 		KeySchema: []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}},
 	}))

@@ -21,7 +21,7 @@ func TestSearchData_keyConditionValueTypes(t *testing.T) {
 		{"missing placeholder", "id = :a", map[string]*types.Item{}, false},
 		{"hash number", "id = :a", map[string]*types.Item{":a": {N: new("1")}}, true},
 		{"range number", "id = :a AND #n > :b", map[string]*types.Item{":a": {S: new("a")}, ":b": {N: new("1")}}, true},
-		{"between number", "id = :a AND #n BETWEEN :b AND :c", map[string]*types.Item{":a": {S: new("a")}, ":b": {S: new("b")}, ":c": {N: new("1")}}, true},
+		{"between number", "id = :a AND #n BETWEEN :b AND :c", map[string]*types.Item{":a": {S: new("a")}, ":b": {N: new("1")}, ":c": {N: new("2")}}, true},
 		{"begins_with binary", "id = :a AND begins_with(#n, :b)", map[string]*types.Item{":a": {S: new("a")}, ":b": {B: []byte("b")}}, true},
 	}
 

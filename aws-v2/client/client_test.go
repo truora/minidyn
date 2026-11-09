@@ -771,9 +771,10 @@ func TestPutWithGSI(t *testing.T) {
 	_ = AddIndex(context.Background(), client, tableName, "sort-by-second-type", "id", "second_type")
 
 	item, err = attributevalue.MarshalMapWithOptions(pokemon{
-		ID:   "002",
-		Name: "Ivysaur",
-		Type: "grass",
+		ID:         "002",
+		Name:       "Ivysaur",
+		Type:       "grass",
+		SecondType: "poison", // an index key attribute cannot be empty
 	}, func(eo *attributevalue.EncoderOptions) {
 		eo.TagKey = "json"
 	})
@@ -3991,4 +3992,92 @@ func TestDeleteItemInvalidReturnValues(t *testing.T) {
 	})
 	c.NoError(err)
 	c.NotEmpty(out.Item)
+}
+
+func TestDeleteItemEmptyKeyWithCondition(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+
+	c.NoError(ensurePokemonTable(client))
+
+	_, err := client.DeleteItem(context.Background(), &dynamodb.DeleteItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]dynamodbtypes.AttributeValue{
+			"id": &dynamodbtypes.AttributeValueMemberS{Value: ""},
+		},
+		ConditionExpression: aws.String("attribute_exists(id)"),
+	})
+	c.Error(err)
+	c.Contains(err.Error(), "ValidationException")
+	c.Contains(err.Error(), "The AttributeValue for a key attribute cannot contain an empty string value. Key: id")
+	c.NotContains(err.Error(), "ConditionalCheckFailed")
+}
+
+// DynamoDB reports the Key problems of UpdateItem and DeleteItem before the placeholders of
+// the expressions and the ReturnValuesOnConditionCheckFailure.
+func TestWriteItemKeyBeforeExpressions(t *testing.T) {
+	const emptyKeyMsg = "The AttributeValue for a key attribute cannot contain an empty string value. Key: id"
+
+	emptyKey := map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: ""}}
+	str := func(v string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberS{Value: v} }
+
+	client := setupClient(tableName)
+	require.NoError(t, ensurePokemonTable(client))
+
+	update := func(in *dynamodb.UpdateItemInput) error {
+		in.TableName, in.Key = aws.String(tableName), emptyKey
+		_, err := client.UpdateItem(context.Background(), in)
+
+		return err
+	}
+	del := func(in *dynamodb.DeleteItemInput) error {
+		in.TableName, in.Key = aws.String(tableName), emptyKey
+		_, err := client.DeleteItem(context.Background(), in)
+
+		return err
+	}
+
+	cases := map[string]error{
+		"update undefined value": update(&dynamodb.UpdateItemInput{UpdateExpression: aws.String("SET n = :v")}),
+		"update undeclared name": update(&dynamodb.UpdateItemInput{
+			UpdateExpression: aws.String("SET #n = :v"), ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": str("x")},
+		}),
+		"update unused value": update(&dynamodb.UpdateItemInput{
+			UpdateExpression:          aws.String("SET n = :v"),
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": str("x"), ":unused": str("y")},
+		}),
+		"update invalid RVOCCF": update(&dynamodb.UpdateItemInput{
+			UpdateExpression:                    aws.String("SET n = :v"),
+			ExpressionAttributeValues:           map[string]dynamodbtypes.AttributeValue{":v": str("x")},
+			ReturnValuesOnConditionCheckFailure: "BOGUS",
+		}),
+		"delete undefined value": del(&dynamodb.DeleteItemInput{ConditionExpression: aws.String("n = :x")}),
+		"delete undeclared name": del(&dynamodb.DeleteItemInput{ConditionExpression: aws.String("attribute_exists(#n)")}),
+	}
+
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			require.ErrorContains(t, err, emptyKeyMsg)
+		})
+	}
+
+	// DeleteItem is different: DynamoDB reports unused values and an invalid
+	// ReturnValuesOnConditionCheckFailure before the key.
+	t.Run("delete unused value comes first", func(t *testing.T) {
+		err := del(&dynamodb.DeleteItemInput{ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":unused": str("y")}})
+		require.ErrorContains(t, err, "ExpressionAttributeValues can only be specified when using expressions")
+	})
+
+	t.Run("delete invalid RVOCCF comes first", func(t *testing.T) {
+		err := del(&dynamodb.DeleteItemInput{ReturnValuesOnConditionCheckFailure: "BOGUS"})
+		require.ErrorContains(t, err, "returnValuesOnConditionCheckFailure")
+	})
+
+	t.Run("a missing table is still reported", func(t *testing.T) {
+		_, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+			TableName: aws.String("nope"), Key: emptyKey, UpdateExpression: aws.String("SET n = :v"),
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": str("x")},
+		})
+		require.ErrorContains(t, err, "ResourceNotFoundException")
+	})
 }

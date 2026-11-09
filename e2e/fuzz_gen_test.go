@@ -478,10 +478,7 @@ func (g *fuzzGen) skCondition(e *fuzzExpr) string {
 	case 2:
 		return " AND " + sk + " BETWEEN " + e.val(fzS("1")) + " AND " + e.val(g.sk())
 	default:
-		prefix := pick(g, "1", "x")
-		if g.known && g.chance(0.3) {
-			prefix = "" // #163: empty key values are not rejected
-		}
+		prefix := pick(g, "1", "x", "")
 
 		return " AND begins_with(" + sk + ", " + e.val(fzS(prefix)) + ")"
 	}

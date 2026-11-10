@@ -391,8 +391,7 @@ func (g *fuzzGen) updateItem() fuzzOp {
 		in.ReturnValues = dynamodbtypes.ReturnValueAllOld
 	}
 
-	if g.known && g.chance(0.4) {
-		// #165: UPDATED_* omit attributes whose value did not change.
+	if g.chance(0.4) {
 		in.ReturnValues = pick(g, dynamodbtypes.ReturnValueUpdatedNew, dynamodbtypes.ReturnValueUpdatedOld)
 	}
 

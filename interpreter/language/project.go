@@ -112,6 +112,36 @@ func extractPathListIndex(idxExpr Expression, env *Environment) (int64, error) {
 	return int64(number.Value), nil
 }
 
+// LookupProjectedPath returns the value path resolves to in source, the read counterpart of
+// SetProjectedPath. The first segment must be a map key.
+func LookupProjectedPath(source map[string]*types.Item, path []PathElement) (*types.Item, bool) {
+	if len(path) == 0 || path[0].Kind != PathKindMapKey {
+		return nil, false
+	}
+
+	cur := source[path[0].Key]
+	if cur == nil {
+		return nil, false
+	}
+
+	for _, el := range path[1:] {
+		switch {
+		case el.Kind == PathKindMapKey && cur.M != nil:
+			cur = cur.M[el.Key]
+		case el.Kind == PathKindListIndex && el.Index >= 0 && el.Index < int64(len(cur.L)):
+			cur = cur.L[el.Index]
+		default:
+			return nil, false
+		}
+
+		if cur == nil {
+			return nil, false
+		}
+	}
+
+	return cur, true
+}
+
 // SetProjectedPath writes val into target following path, creating nested M and L containers as needed.
 // The first segment must be a map key (DynamoDB top-level attributes are maps).
 func SetProjectedPath(target map[string]*types.Item, path []PathElement, val types.Item) {

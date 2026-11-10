@@ -165,31 +165,42 @@ func buildAliases(input UpdateInput) map[string]string {
 	return aliases
 }
 
+// UpdateTargetPaths returns the document path of every attribute an update expression writes,
+// from the cached parse of expression. A blank or invalid expression has no paths: Update
+// reports the error.
+func UpdateTargetPaths(expression string, aliases map[string]string, values map[string]*types.Item) [][]language.PathElement {
+	pu := parseUpdate(expression)
+	if len(pu.errs) != 0 {
+		return nil
+	}
+
+	return language.UpdateTargetPaths(pu.stmt, aliases, values)
+}
+
 // Update change the item with given expression and attributes
 func (li *Language) Update(input UpdateInput) error {
-	l := language.NewLexer(input.Expression)
-	p := language.NewUpdateParser(l)
-	update := p.ParseUpdateExpression()
+	pu := parseUpdate(input.Expression)
+	update := pu.stmt
 
 	aliases := buildAliases(input)
 	env := language.NewEnvironment()
 	env.Aliases = aliases
 
-	if len(p.Errors()) != 0 {
+	if len(pu.errs) != 0 {
 		errType := ErrSyntaxError
-		if p.IsUnsupportedExpression() {
+		if pu.unsupported {
 			errType = ErrUnsupportedFeature
 		}
 
-		return fmt.Errorf("%w: %s", errType, strings.Join(p.Errors(), "\n"))
+		return fmt.Errorf("%w: %s", errType, strings.Join(pu.errs, "\n"))
 	}
 
 	if err := ValidateExpressionAttributeNamesDeclared(aliases, LabeledExpression{"UpdateExpression", input.Expression}); err != nil {
 		return err
 	}
 
-	if opErr := language.FindOperandCountError(update); opErr != nil {
-		return &operandCountError{expressionType: "UpdateExpression", cause: opErr}
+	if pu.operandErr != nil {
+		return &operandCountError{expressionType: "UpdateExpression", cause: pu.operandErr}
 	}
 
 	item := map[string]*types.Item{}

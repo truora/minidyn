@@ -1333,46 +1333,26 @@ func ValidateUpdateItemReturnValues(rv *string) error {
 	}
 }
 
-func dynamoItemEqual(a, b *types.Item) bool {
-	return reflect.DeepEqual(a, b)
+// writtenAttributes returns, for the top-level attributes of the written paths, the ones whose
+// path resolves in item. Like DynamoDB it keeps the whole top-level attribute for nested paths.
+func writtenAttributes(item map[string]*types.Item, paths [][]language.PathElement) map[string]*types.Item {
+	out := map[string]*types.Item{}
+
+	for _, path := range paths {
+		if _, ok := language.LookupProjectedPath(item, path); ok {
+			out[path[0].Key] = deepCopyTypesItem(item[path[0].Key])
+		}
+	}
+
+	return out
 }
 
-func changedUpdateAttributeKeys(oldItem, newItem map[string]*types.Item) []string {
-	keys := make(map[string]struct{})
-
-	for k := range oldItem {
-		keys[k] = struct{}{}
-	}
-
-	for k := range newItem {
-		keys[k] = struct{}{}
-	}
-
-	changed := make([]string, 0, len(keys))
-
-	for k := range keys {
-		ov, okO := oldItem[k]
-		nv, okN := newItem[k]
-
-		if !okO {
-			ov = nil
-		}
-
-		if !okN {
-			nv = nil
-		}
-
-		if !dynamoItemEqual(ov, nv) {
-			changed = append(changed, k)
-		}
-	}
-
-	sort.Strings(changed)
-
-	return changed
-}
-
-func buildUpdateItemReturnAttributes(rv *string, oldItem, newItem map[string]*types.Item) map[string]*types.Item {
+// buildUpdateItemReturnAttributes builds the UpdateItem Attributes response. UPDATED_OLD and
+// UPDATED_NEW return the attributes the update expression writes (paths), whether or not their
+// value changed, as they were in oldItem or are in newItem.
+func buildUpdateItemReturnAttributes(rv *string, paths [][]language.PathElement,
+	oldItem, newItem map[string]*types.Item,
+) map[string]*types.Item {
 	mode := ""
 
 	if rv != nil {
@@ -1380,42 +1360,14 @@ func buildUpdateItemReturnAttributes(rv *string, oldItem, newItem map[string]*ty
 	}
 
 	switch mode {
-	case "", "NONE":
-		return nil
 	case "ALL_NEW":
 		return copyItem(newItem)
 	case "ALL_OLD":
 		return copyItem(oldItem)
 	case "UPDATED_OLD":
-		ck := changedUpdateAttributeKeys(oldItem, newItem)
-		if len(ck) == 0 {
-			return map[string]*types.Item{}
-		}
-
-		out := make(map[string]*types.Item, len(ck))
-
-		for _, k := range ck {
-			if v, ok := oldItem[k]; ok {
-				out[k] = deepCopyTypesItem(v)
-			}
-		}
-
-		return out
+		return writtenAttributes(oldItem, paths)
 	case "UPDATED_NEW":
-		ck := changedUpdateAttributeKeys(oldItem, newItem)
-		if len(ck) == 0 {
-			return map[string]*types.Item{}
-		}
-
-		out := make(map[string]*types.Item, len(ck))
-
-		for _, k := range ck {
-			if v, ok := newItem[k]; ok {
-				out[k] = deepCopyTypesItem(v)
-			}
-		}
-
-		return out
+		return writtenAttributes(newItem, paths)
 	default:
 		return nil
 	}
@@ -1448,10 +1400,13 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
+	// A parse error leaves no paths: the interpreter reports it later.
+	writtenPaths := interpreter.UpdateTargetPaths(input.UpdateExpression,
+		input.ExpressionAttributeNames, input.ExpressionAttributeValues)
+
 	if !t.KeySchema.Secondary {
-		if err := language.ValidateUpdateExpressionDoesNotTargetPrimaryKey(
-			input.UpdateExpression,
-			input.ExpressionAttributeNames,
+		if err := language.ValidatePathsDoNotTargetPrimaryKey(
+			writtenPaths,
 			t.KeySchema.HashKey,
 			t.KeySchema.RangeKey,
 		); err != nil {
@@ -1530,7 +1485,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 	newItem := copyItem(item)
 
-	return buildUpdateItemReturnAttributes(input.ReturnValues, oldItem, newItem), nil
+	return buildUpdateItemReturnAttributes(input.ReturnValues, writtenPaths, oldItem, newItem), nil
 }
 
 // Delete deletes an item in the table based on the input

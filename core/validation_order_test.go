@@ -1,6 +1,7 @@
 package core
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -202,9 +203,7 @@ func TestSearchData_betweenBoundsByType(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			vals := map[string]*types.Item{":p": p, "lo": tc.lo, "hi": tc.hi}
-			for k, v := range tc.extra {
-				vals[k] = v
-			}
+			maps.Copy(vals, tc.extra)
 
 			err := queryBetween(betweenTable(tc.attr), vals)
 			if tc.want == "" {

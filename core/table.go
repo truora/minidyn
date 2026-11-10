@@ -1076,10 +1076,6 @@ type SearchResult struct {
 
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
-	if err := t.validateSelect(input); err != nil {
-		return SearchResult{}, err
-	}
-
 	if err := validateSearchInputMaps(input); err != nil {
 		return SearchResult{}, err
 	}
@@ -1093,6 +1089,11 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 	}
 
 	if err := t.validateKeyCondition(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	// DynamoDB reports Select after the key condition.
+	if err := t.validateSelect(input); err != nil {
 		return SearchResult{}, err
 	}
 

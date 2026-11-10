@@ -72,6 +72,49 @@ func TestServerQueryAndScanSelectValidation(t *testing.T) {
 	}
 }
 
+// A key condition error comes before an invalid Select, as in DynamoDB.
+func TestServerQueryKeyConditionErrorBeforeInvalidSelect(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	ctx := context.Background()
+
+	_, err := cli.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:            aws.String("orders"),
+		KeySchema:            []ddbtypes.KeySchemaElement{{AttributeName: aws.String("customer"), KeyType: ddbtypes.KeyTypeHash}},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{AttributeName: aws.String("customer"), AttributeType: ddbtypes.ScalarAttributeTypeS}},
+		BillingMode:          ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	str := func(s string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueMemberS{Value: s} }
+	num := func(s string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueMemberN{Value: s} }
+
+	tests := []struct {
+		name    string
+		value   ddbtypes.AttributeValue
+		wantErr string
+	}{
+		{name: "EmptyHash", value: str(""), wantErr: "empty string value"},
+		{name: "TypeMismatch", value: num("1"), wantErr: "Condition parameter type does not match schema type"},
+		{name: "ValidKeyReportsSelect", value: str("ana"), wantErr: "ALL_PROJECTED_ATTRIBUTES can be used only when Querying using an IndexName"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := cli.Query(ctx, &dynamodb.QueryInput{
+				TableName:                 aws.String("orders"),
+				Select:                    "ALL_PROJECTED_ATTRIBUTES",
+				KeyConditionExpression:    aws.String("customer = :c"),
+				ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":c": tt.value},
+			})
+
+			assertServerSelectResult(t, err, tt.wantErr)
+		})
+	}
+}
+
 func assertServerSelectResult(t *testing.T, err error, wantErr string) {
 	t.Helper()
 

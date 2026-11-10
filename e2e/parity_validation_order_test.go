@@ -161,6 +161,77 @@ func TestE2E_ValidationOrder_Writes(t *testing.T) {
 	}
 }
 
+// A Query with an invalid Select and a problem in its key condition: DynamoDB reports the
+// key condition first (empty value, type mismatch, reversed BETWEEN bounds, a structurally
+// wrong condition), and the placeholders before both. (A syntax error in the key condition
+// is not covered: minidyn reports it only while evaluating items.)
+func TestE2E_ValidationOrder_QuerySelect(t *testing.T) {
+	type queryFn = func(ctx context.Context, c *dynamodb.Client) string
+
+	query := func(index, cond string, vals ekItem, mod func(*dynamodb.QueryInput)) queryFn {
+		return func(ctx context.Context, c *dynamodb.Client) string {
+			in := &dynamodb.QueryInput{
+				TableName: aws.String(emptyKeyTable), KeyConditionExpression: aws.String(cond), ExpressionAttributeValues: vals,
+			}
+			if index != "" {
+				in.IndexName = aws.String(index)
+			}
+
+			mod(in)
+
+			out, err := c.Query(ctx, in)
+			if err != nil {
+				return fuzzErrString(err)
+			}
+
+			return fmt.Sprintf("ok items=%d", len(out.Items))
+		}
+	}
+	sel := func(s dynamodbtypes.Select) func(*dynamodb.QueryInput) {
+		return func(in *dynamodb.QueryInput) { in.Select = s }
+	}
+	between := "pk = :p AND sk BETWEEN :a AND :b"
+	// Select values DynamoDB rejects for a Query of the table, one per kind of error.
+	selects := []struct {
+		name string
+		mod  func(*dynamodb.QueryInput)
+	}{
+		{"AllProjectedOnTable", sel(dynamodbtypes.SelectAllProjectedAttributes)},
+		{"SpecificWithoutProjection", sel(dynamodbtypes.SelectSpecificAttributes)},
+		{"CountWithProjection", func(in *dynamodb.QueryInput) {
+			in.Select = dynamodbtypes.SelectCount
+			in.ProjectionExpression = aws.String("pk")
+		}},
+		{"Unknown", sel(dynamodbtypes.Select("BOGUS"))},
+	}
+	keyProblems := []struct {
+		name  string
+		index string
+		cond  string
+		vals  ekItem
+	}{
+		{"ValidKey", "", "pk = :p", ekItem{":p": ekS("a")}},
+		{"EmptyHash", "", "pk = :p", ekItem{":p": ekS("")}},
+		{"EmptyRange", "", "pk = :p AND sk = :s", ekItem{":p": ekS("a"), ":s": ekS("")}},
+		{"HashTypeMismatch", "", "pk = :p", ekItem{":p": voN("1")}},
+		{"RangeTypeMismatch", "", "pk = :p AND sk = :s", ekItem{":p": ekS("a"), ":s": voN("1")}},
+		{"BetweenReversed", "", between, ekItem{":p": ekS("a"), ":a": ekS("z"), ":b": ekS("a")}},
+		{"BetweenMixedTypes", "", between, ekItem{":p": ekS("a"), ":a": ekS("z"), ":b": voN("1")}},
+		{"NotTheKeyAttribute", "", "g = :p", ekItem{":p": ekS("a")}},
+		{"IndexEmptyHash", "by-g", "g = :p", ekItem{":p": ekS("")}},
+		{"UndefinedValue", "", "pk = :p", nil},
+		{"UndeclaredName", "", "#n = :p", ekItem{":p": ekS("a")}},
+	}
+
+	for _, s := range selects {
+		for _, k := range keyProblems {
+			fn := query(k.index, k.cond, k.vals, s.mod)
+
+			t.Run(k.name+"_"+s.name, func(t *testing.T) { RunE2E(t, voRun(fn)) })
+		}
+	}
+}
+
 func TestE2E_ValidationOrder_BetweenBounds(t *testing.T) {
 	e := ekS("")
 

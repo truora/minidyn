@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,11 +189,179 @@ func (t *Table) StoredItem(keyOrItem map[string]*types.Item) map[string]*types.I
 	return deepCopyItemMap(item)
 }
 
-// SetAttributeDefinition sets the attribute definition of a table
-func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
+// SetAttributeDefinition sets the attribute definitions of a table. It checks all of them first,
+// so a malformed entry leaves the table's definitions unchanged.
+func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) error {
+	for _, attr := range attrs {
+		if attr == nil || attr.AttributeName == nil {
+			return validationError(msgNoKeyAttribute, "table", t.Name)
+		}
+
+		if *attr.AttributeName == "" {
+			return validationError(msgEmptyAttributeName, "table", t.Name)
+		}
+
+		if types.StringValue(attr.AttributeType) == "" {
+			return validationError(msgNoAttributeType, "attribute", *attr.AttributeName, "table", t.Name)
+		}
+	}
+
 	for _, attr := range attrs {
 		t.AttributesDef[*attr.AttributeName] = *attr.AttributeType
 	}
+
+	return nil
+}
+
+// validationError builds a ValidationException from DynamoDB's text and, optionally, minidyn-only
+// detail as alternating keys and values (see types.WithDetail).
+func validationError(message string, detail ...string) types.Error {
+	return types.NewError("ValidationException", types.WithDetail(message, detail...), nil)
+}
+
+// UpdateTable applies the attribute definitions and global secondary index changes of an
+// UpdateTable request, or none of them: when any part is rejected the table is left as it was.
+// The description of the table is returned either way.
+//
+// The request is checked in the order DynamoDB Local reports it: the structure of every index
+// change, then the attribute definitions, then what depends on them (the key attributes of an
+// index to create must be defined, by the table or by this request).
+func (t *Table) UpdateTable(name string, attrs []*types.AttributeDefinition, changes []*types.GlobalSecondaryIndexUpdate) (*types.TableDescription, error) {
+	if err := t.validateIndexChanges(changes); err != nil {
+		return t.Description(name), err
+	}
+
+	previous := maps.Clone(t.AttributesDef)
+
+	if err := t.SetAttributeDefinition(attrs); err != nil {
+		return t.Description(name), err
+	}
+
+	created, err := t.buildCreatedIndexes(changes)
+	if err != nil {
+		t.AttributesDef = previous
+
+		return t.Description(name), err
+	}
+
+	return t.applyIndexChanges(name, changes, created), nil
+}
+
+// validateIndexChanges checks the structure of every entry of an UpdateTable request before any
+// of them is applied, as DynamoDB does: a request with one bad entry changes nothing.
+//
+// DynamoDB allows one index to be created or deleted per request and counts that first, so the
+// limit is reported ahead of any problem with an entry. The entries are then checked in order.
+func (t *Table) validateIndexChanges(changes []*types.GlobalSecondaryIndexUpdate) error {
+	onlineChanges := 0
+
+	for _, change := range changes {
+		if change == nil {
+			continue
+		}
+
+		if change.Create != nil {
+			onlineChanges++
+		}
+
+		if change.Delete != nil {
+			onlineChanges++
+		}
+	}
+
+	if onlineChanges > 1 {
+		return types.NewError("LimitExceededException", types.WithDetail(msgIndexLimit, "table", t.Name, "changes", strconv.Itoa(onlineChanges)), nil)
+	}
+
+	touched := map[string]struct{}{}
+
+	for _, change := range changes {
+		if err := t.validateIndexChange(change, touched); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, touched map[string]struct{}) error {
+	if change == nil || (change.Create == nil && change.Delete == nil && change.Update == nil) {
+		return validationError(msgNullGSIAction)
+	}
+
+	var name *string
+
+	switch {
+	case change.Create != nil:
+		name = change.Create.IndexName
+	case change.Delete != nil:
+		name = change.Delete.IndexName
+	default:
+		name = change.Update.IndexName
+	}
+
+	indexName := types.StringValue(name)
+
+	// Local accepts or fails with a 500 on these combinations, the message is minidyn's pick
+	if (change.Create != nil && change.Update != nil) || (change.Delete != nil && change.Update != nil) {
+		return validationError(msgOneUpdatePerName,
+			"reason", "create or delete combined with update in one entry", "index", indexName)
+	}
+
+	if indexName == "" {
+		return validationError(msgInvalidGSIName)
+	}
+
+	if _, ok := touched[indexName]; ok {
+		return validationError(msgOneUpdatePerName, "index", indexName)
+	}
+
+	touched[indexName] = struct{}{}
+
+	_, exists := t.Indexes[indexName]
+
+	switch {
+	case change.Create != nil:
+		if err := validateIndexShape(indexName, change.Create.Projection, change.Create.KeySchema); err != nil {
+			return err
+		}
+
+		if exists {
+			return validationError(msgIndexExists, "index", indexName, "table", t.Name)
+		}
+	case change.Delete != nil && !exists:
+		return types.NewError("ResourceNotFoundException", types.WithDetail("Requested resource not found", "index", indexName, "table", t.Name), nil)
+	case change.Update != nil && !exists:
+		return validationError(msgInvalidGSIName, "index", indexName, "table", t.Name)
+	}
+
+	return nil
+}
+
+// buildCreatedIndexes builds, without registering them, the indexes the changes create, so every
+// error applying them could give surfaces before the table is touched.
+func (t *Table) buildCreatedIndexes(changes []*types.GlobalSecondaryIndexUpdate) (map[string]*index, error) {
+	created := map[string]*index{}
+
+	for _, change := range changes {
+		if change.Create == nil {
+			continue
+		}
+
+		i, err := buildGSI(t, &types.GlobalSecondaryIndex{
+			IndexName:             change.Create.IndexName,
+			KeySchema:             change.Create.KeySchema,
+			Projection:            change.Create.Projection,
+			ProvisionedThroughput: change.Create.ProvisionedThroughput,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		created[*change.Create.IndexName] = i
+	}
+
+	return created, nil
 }
 
 func parseKeySchema(schema []*types.KeySchemaElement) (keySchema, error) {
@@ -304,69 +473,99 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 	return i, nil
 }
 
-// ApplyIndexChange applies the index change
+// ApplyIndexChange applies the index change after checking it as UpdateTable does.
 func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error {
-	switch {
-	case change.Create != nil:
-		{
-			gsi := &types.GlobalSecondaryIndex{
-				IndexName:             change.Create.IndexName,
-				KeySchema:             change.Create.KeySchema,
-				Projection:            change.Create.Projection,
-				ProvisionedThroughput: change.Create.ProvisionedThroughput,
-			}
+	_, err := t.ApplyIndexChanges(t.Name, []*types.GlobalSecondaryIndexUpdate{change})
 
-			return t.addGlobalIndex(gsi)
-		}
-	case change.Delete != nil:
-		return t.deleteIndex(*change.Delete.IndexName)
-	case change.Update != nil:
-		return t.updateIndex(*change.Update.IndexName, change.Update.ProvisionedThroughput)
-	}
-
-	return nil
+	return err
 }
 
 // AddGlobalIndexes adds global indexes to a table
 func (t *Table) AddGlobalIndexes(input []*types.GlobalSecondaryIndex) error {
-	if input != nil && len(input) == 0 {
+	return t.AddIndexes(input, nil)
+}
+
+// AddLocalIndexes adds local indexes to a table
+func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
+	return t.AddIndexes(nil, input)
+}
+
+// AddIndexes adds the indexes of a CreateTable request, or none of them. DynamoDB Local checks
+// the local indexes (name, definition and key attributes) before the global ones, so a problem
+// with a local index is reported ahead of any with a global one.
+func (t *Table) AddIndexes(gsis []*types.GlobalSecondaryIndex, lsis []*types.LocalSecondaryIndex) error {
+	if gsis != nil && len(gsis) == 0 {
 		return types.NewError("ValidationException", "GSI list is empty/invalid", nil)
 	}
 
-	for _, gsiInput := range input {
-		if err := t.addGlobalIndex(gsiInput); err != nil {
+	if lsis != nil && len(lsis) == 0 {
+		return types.NewError("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
+	}
+
+	built := map[string]*index{}
+
+	for _, lsi := range lsis {
+		name, i, err := t.buildCreateTableLSI(lsi)
+		if err != nil {
 			return err
 		}
+
+		built[name] = i
 	}
+
+	for _, gsi := range gsis {
+		name, i, err := t.buildCreateTableGSI(gsi)
+		if err != nil {
+			return err
+		}
+
+		built[name] = i
+	}
+
+	maps.Copy(t.Indexes, built)
 
 	return nil
 }
 
-func (t *Table) addGlobalIndex(gsiInput *types.GlobalSecondaryIndex) error {
-	i, err := buildGSI(t, gsiInput)
-	if err != nil {
-		return err
+// buildCreateTableLSI and buildCreateTableGSI check and build an index of a CreateTable request. A
+// nil entry is an empty index, which has no name.
+func (t *Table) buildCreateTableLSI(lsi *types.LocalSecondaryIndex) (string, *index, error) {
+	if lsi == nil {
+		lsi = &types.LocalSecondaryIndex{}
 	}
 
-	i.createdAt = time.Now()
-	t.Indexes[*gsiInput.IndexName] = i
-
-	return nil
-}
-
-func (t *Table) deleteIndex(indexName string) error {
-	if _, ok := t.Indexes[indexName]; !ok {
-		return types.NewError("ResourceNotFoundException", "Requested resource not found", nil)
+	if err := validateIndexName(lsi.IndexName); err != nil {
+		return "", nil, err
 	}
 
-	delete(t.Indexes, indexName)
+	if err := validateIndexShape(*lsi.IndexName, lsi.Projection, lsi.KeySchema); err != nil {
+		return "", nil, err
+	}
 
-	return nil
+	i, err := buildLSI(t, lsi)
+
+	return *lsi.IndexName, i, err
 }
 
-func (t *Table) updateIndex(indexName string, provisionedThroughput *types.ProvisionedThroughput) error {
-	// we do not have support for provisionedThroughput values in the index
-	return nil
+func (t *Table) buildCreateTableGSI(gsi *types.GlobalSecondaryIndex) (string, *index, error) {
+	if gsi == nil {
+		gsi = &types.GlobalSecondaryIndex{}
+	}
+
+	if err := validateIndexName(gsi.IndexName); err != nil {
+		return "", nil, err
+	}
+
+	if err := validateIndexShape(*gsi.IndexName, gsi.Projection, gsi.KeySchema); err != nil {
+		return "", nil, err
+	}
+
+	i, err := buildGSI(t, gsi)
+	if err == nil {
+		i.createdAt = time.Now()
+	}
+
+	return *gsi.IndexName, i, err
 }
 
 func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
@@ -384,24 +583,6 @@ func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 	i.projection = lsiInput.Projection
 
 	return i, nil
-}
-
-// AddLocalIndexes adds local indexes to a table
-func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
-	if input != nil && len(input) == 0 {
-		return types.NewError("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
-	}
-
-	for _, lsi := range input {
-		i, err := buildLSI(t, lsi)
-		if err != nil {
-			return err
-		}
-
-		t.Indexes[*lsi.IndexName] = i
-	}
-
-	return nil
 }
 
 func validateSearchInputMaps(input QueryInput) error {
@@ -1711,33 +1892,33 @@ func (t *Table) globalIndexDescription(indexName string, index *index) types.Glo
 // carry their creation markers and deleted ones are still listed, as DELETING. On error the
 // description of the table is still returned.
 func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryIndexUpdate) (*types.TableDescription, error) {
+	return t.UpdateTable(name, nil, changes)
+}
+
+// applyIndexChanges applies changes that validateIndexChanges accepted, registering the indexes
+// buildCreatedIndexes built for them.
+func (t *Table) applyIndexChanges(name string, changes []*types.GlobalSecondaryIndexUpdate, built map[string]*index) *types.TableDescription {
 	var (
 		created []string
 		dropped []types.GlobalSecondaryIndexDescription
-		err     error
 	)
 
 	for _, change := range changes {
-		var droppedDesc *types.GlobalSecondaryIndexDescription
+		switch {
+		case change.Create != nil:
+			indexName := *change.Create.IndexName
 
-		if change.Delete != nil {
-			if idx, ok := t.Indexes[*change.Delete.IndexName]; ok {
-				d := t.globalIndexDescription(*change.Delete.IndexName, idx)
-				d.IndexStatus = new("DELETING")
-				droppedDesc = &d
-			}
-		}
+			built[indexName].createdAt = time.Now()
+			t.Indexes[indexName] = built[indexName]
+			created = append(created, indexName)
+		case change.Delete != nil:
+			indexName := *change.Delete.IndexName
 
-		if err = t.ApplyIndexChange(change); err != nil {
-			break
-		}
+			d := t.globalIndexDescription(indexName, t.Indexes[indexName])
+			d.IndexStatus = new("DELETING")
+			dropped = append(dropped, d)
 
-		if change.Create != nil {
-			created = append(created, *change.Create.IndexName)
-		}
-
-		if droppedDesc != nil {
-			dropped = append(dropped, *droppedDesc)
+			delete(t.Indexes, indexName)
 		}
 	}
 
@@ -1750,7 +1931,7 @@ func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryI
 
 	desc.GlobalSecondaryIndexes = append(desc.GlobalSecondaryIndexes, dropped...)
 
-	return desc, err
+	return desc
 }
 
 // markIndexCreating sets the fields DynamoDB reports for an index created by UpdateTable.

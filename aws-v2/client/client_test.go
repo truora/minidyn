@@ -531,7 +531,7 @@ func TestUpdateTable(t *testing.T) {
 	c.NoError(err)
 
 	_, err = client.UpdateTable(context.Background(), input)
-	c.Equal("ResourceNotFoundException: Requested resource not found", err.Error())
+	c.Equal("ResourceNotFoundException: Requested resource not found | index: newIndex; table: pokemons", err.Error())
 }
 
 func createTestGlobalSecondaryIndex(t *testing.T, client FakeClient, indexName string) {

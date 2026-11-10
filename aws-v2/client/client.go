@@ -271,7 +271,10 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 	}
 
 	newTable := core.NewTable(tableName)
-	newTable.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions))
+	if err := newTable.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	newTable.BillingMode = aws.String(string(input.BillingMode))
 	newTable.NativeInterpreter = *fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
@@ -282,11 +285,10 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 		return nil, mapKnownError(err)
 	}
 
-	if err := newTable.AddGlobalIndexes(mapDynamoToTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes)); err != nil {
-		return nil, mapKnownError(err)
-	}
-
-	if err := newTable.AddLocalIndexes(mapDynamoToTypesLocalSecondaryIndexes(input.LocalSecondaryIndexes)); err != nil {
+	if err := newTable.AddIndexes(
+		mapDynamoToTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes),
+		mapDynamoToTypesLocalSecondaryIndexes(input.LocalSecondaryIndexes),
+	); err != nil {
 		return nil, mapKnownError(err)
 	}
 
@@ -324,16 +326,12 @@ func (fd *Client) UpdateTable(ctx context.Context, input *dynamodb.UpdateTableIn
 		return nil, &types.ResourceNotFoundException{Message: aws.String("Cannot do operations on a non-existent table")}
 	}
 
-	if input.AttributeDefinitions != nil {
-		table.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions))
-	}
-
 	changes := make([]*mtypes.GlobalSecondaryIndexUpdate, 0, len(input.GlobalSecondaryIndexUpdates))
 	for _, change := range input.GlobalSecondaryIndexUpdates {
 		changes = append(changes, mapDynamoTotypesGlobalSecondaryIndexUpdate(change))
 	}
 
-	desc, err := table.ApplyIndexChanges(tableName, changes)
+	desc, err := table.UpdateTable(tableName, mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions), changes)
 
 	return &dynamodb.UpdateTableOutput{
 		TableDescription: mapTypesToDynamoTableDescription(desc),

@@ -1632,7 +1632,11 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		item = copyItem(input.Key)
 	}
 
-	oldItem := deepCopyItemMap(item)
+	// An item the update creates has no old item to return.
+	oldItem := map[string]*types.Item{}
+	if ok {
+		oldItem = deepCopyItemMap(item)
+	}
 
 	err = t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.Name,

@@ -307,4 +307,19 @@ func TestTable_indexRejectionWritesNothing(t *testing.T) {
 		require.Len(t, table.Data, 1)
 		require.Len(t, table.SortedKeys, 1)
 	})
+
+	t.Run("update of a new item", func(t *testing.T) {
+		table, key := newTable(t)
+
+		_, err := table.Update(&types.UpdateItemInput{
+			Key:                       map[string]*types.Item{"id": {S: new("b")}, "name": {S: new("n")}},
+			UpdateExpression:          "SET #t = :n",
+			ExpressionAttributeNames:  map[string]string{"#t": "type"},
+			ExpressionAttributeValues: map[string]*types.Item{":n": nItem("5")},
+		})
+		require.Error(t, err)
+		require.Len(t, table.Data, 1)
+		require.Len(t, table.SortedKeys, 1)
+		requireOld(t, table, key)
+	})
 }

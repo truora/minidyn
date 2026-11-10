@@ -1725,9 +1725,13 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 // ValidateNoneOrAllOldReturnValues accepts the ReturnValues modes that PutItem
 // and DeleteItem support: empty, NONE and ALL_OLD.
 func ValidateNoneOrAllOldReturnValues(rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
-	})
+	return validateNoneOrAllOld(rv, invalidReturnValuesMessage)
+}
+
+// invalidReturnValuesMessage is DynamoDB's text for a ReturnValues outside the modes the
+// operation supports, the same for PutItem, UpdateItem and DeleteItem.
+func invalidReturnValuesMessage(value string) string {
+	return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
 }
 
 // validateNoneOrAllOld accepts empty, NONE and ALL_OLD, and builds the
@@ -1755,9 +1759,7 @@ func ValidateUpdateItemReturnValues(rv *string) error {
 	case "NONE", "ALL_OLD", "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
 		return nil
 	default:
-		return types.NewError("ValidationException",
-			fmt.Sprintf("1 validation error detected: Value '%s' at 'returnValues' failed to satisfy constraint: Member must satisfy enum value set: [NONE, ALL_OLD, UPDATED_OLD, UPDATED_NEW, ALL_NEW]", *rv),
-			nil)
+		return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
 	}
 }
 
@@ -1807,7 +1809,9 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
-	// DynamoDB reports ReturnValues, then the Key, then the rest of the request.
+	// minidyn reports ReturnValues, then the Key, then RVOCCF, then the placeholders. DynamoDB
+	// Local reports ReturnValues and the Key first too, but puts RVOCCF after the unused names
+	// and values and the undefined placeholders; see #243.
 	if err := ValidateUpdateItemReturnValues(input.ReturnValues); err != nil {
 		return nil, err
 	}

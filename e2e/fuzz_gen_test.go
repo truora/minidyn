@@ -385,14 +385,8 @@ func (g *fuzzGen) updateItem() fuzzOp {
 		ReturnValues:     pick(g, dynamodbtypes.ReturnValueNone, dynamodbtypes.ReturnValueAllNew),
 	}
 
-	if g.known && g.chance(0.4) {
-		// #214: updating a missing item with ALL_OLD returns its key in minidyn, nothing in
-		// DynamoDB.
-		in.ReturnValues = dynamodbtypes.ReturnValueAllOld
-	}
-
 	if g.chance(0.4) {
-		in.ReturnValues = pick(g, dynamodbtypes.ReturnValueUpdatedNew, dynamodbtypes.ReturnValueUpdatedOld)
+		in.ReturnValues = pick(g, dynamodbtypes.ReturnValueAllOld, dynamodbtypes.ReturnValueUpdatedNew, dynamodbtypes.ReturnValueUpdatedOld)
 	}
 
 	var conds []string

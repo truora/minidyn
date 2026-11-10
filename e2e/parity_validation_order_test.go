@@ -132,7 +132,7 @@ func TestE2E_ValidationOrder_Writes(t *testing.T) {
 		{"DeleteEmptyKeyInvalidRVOCCF", del(emptySK, func(d *dynamodb.DeleteItemInput) { d.ReturnValuesOnConditionCheckFailure = rvoccf })},
 		{"DeleteEmptyKeyInvalidReturnValues", del(emptySK, func(d *dynamodb.DeleteItemInput) { d.ReturnValues = dynamodbtypes.ReturnValue("ALL_NEW") })},
 		{"DeleteMissingRangeKeyUndefinedValue", del(noSK, func(d *dynamodb.DeleteItemInput) { d.ConditionExpression = aws.String("n = :x") })},
-		// PutItem: the placeholders, then the key
+		// PutItem: the key values, then the placeholders
 		{"PutEmptyKeyUndefinedValue", put(emptyKeyTable, emptySK, func(p *dynamodb.PutItemInput) { p.ConditionExpression = aws.String("n = :x") })},
 		{"PutEmptyKeyUndeclaredName", put(emptyKeyTable, emptySK, func(p *dynamodb.PutItemInput) { p.ConditionExpression = aws.String("attribute_not_exists(#n)") })},
 		{"PutEmptyGSIKeyUndefinedValue", put(emptyKeyTable, ekItem{"pk": ekS("a"), "sk": ekS("2"), "g": e}, func(p *dynamodb.PutItemInput) { p.ConditionExpression = aws.String("n = :x") })},

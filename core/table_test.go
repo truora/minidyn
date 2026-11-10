@@ -970,6 +970,96 @@ func TestUpdateReturnValuesSemantics(t *testing.T) {
 	newTable.Clear()
 }
 
+// An update that creates the item has no old item, so ALL_OLD returns nothing, as DynamoDB
+// does (#214).
+func TestUpdateAllOldOnMissingItem(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "all-old-missing", Type: "grass", Name: "Bulbasaur"})
+
+	out, err := newTable.Update(&types.UpdateItemInput{
+		TableName:                 &newTable.Name,
+		Key:                       primaryKeyFromPokemonItem(item),
+		ReturnValues:              aws.String("ALL_OLD"),
+		UpdateExpression:          "SET second_type = :st",
+		ExpressionAttributeValues: map[string]*types.Item{":st": {S: new("poison")}},
+	})
+	c.NoError(err)
+	c.Empty(out)
+
+	// the item was created
+	c.Len(newTable.Data, 1)
+
+	// now it exists: ALL_OLD returns it as it was before the update
+	out, err = newTable.Update(&types.UpdateItemInput{
+		TableName:                 &newTable.Name,
+		Key:                       primaryKeyFromPokemonItem(item),
+		ReturnValues:              aws.String("ALL_OLD"),
+		UpdateExpression:          "SET second_type = :st",
+		ExpressionAttributeValues: map[string]*types.Item{":st": {S: new("fire")}},
+	})
+	c.NoError(err)
+	c.Equal("poison", types.StringValue(out["second_type"].S))
+	c.Equal("all-old-missing", types.StringValue(out["id"].S))
+}
+
+// What an update that creates the item returns for each ReturnValues, with and without a
+// condition that passes on the missing item (#214).
+func TestUpdateReturnValuesOnMissingItem(t *testing.T) {
+	cases := []struct {
+		name         string
+		returnValues string
+		condition    *string
+		want         map[string]string
+	}{
+		{name: "ALL_OLD", returnValues: "ALL_OLD"},
+		{name: "ALL_OLD with a passing condition", returnValues: "ALL_OLD", condition: aws.String("attribute_not_exists(second_type)")},
+		{name: "UPDATED_OLD", returnValues: "UPDATED_OLD"},
+		{name: "UPDATED_NEW", returnValues: "UPDATED_NEW", want: map[string]string{"second_type": "poison"}},
+		{
+			name: "ALL_NEW", returnValues: "ALL_NEW",
+			want: map[string]string{"id": "missing", "name": "Bulbasaur", "second_type": "poison"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := require.New(t)
+
+			table, err := createPokemonTable()
+			c.NoError(err)
+
+			item := createPokemon(pokemon{ID: "missing", Type: "grass", Name: "Bulbasaur"})
+
+			out, err := table.Update(&types.UpdateItemInput{
+				TableName:                 &table.Name,
+				Key:                       primaryKeyFromPokemonItem(item),
+				ReturnValues:              aws.String(tc.returnValues),
+				ConditionExpression:       tc.condition,
+				UpdateExpression:          "SET second_type = :st",
+				ExpressionAttributeValues: map[string]*types.Item{":st": {S: new("poison")}},
+			})
+			c.NoError(err)
+			c.Len(table.Data, 1)
+
+			got := map[string]string{}
+			for k, v := range out {
+				got[k] = types.StringValue(v.S)
+			}
+
+			if len(tc.want) == 0 {
+				c.Empty(got)
+				return
+			}
+
+			c.Equal(tc.want, got)
+		})
+	}
+}
+
 func TestUpdateInvalidReturnValues(t *testing.T) {
 	c := require.New(t)
 

@@ -146,3 +146,54 @@ func TestE2E_UpdatedValues(t *testing.T) {
 		}))
 	})
 }
+
+// TestE2E_UpdateAllOldMissingItem pins ALL_OLD on an UpdateItem that creates the item (#214):
+// there was no old item, so DynamoDB returns no Attributes. An existing item returns all of
+// its attributes as they were before the update.
+func TestE2E_UpdateAllOldMissingItem(t *testing.T) {
+	run := func(withItem bool, condition string) func(t *testing.T, client *dynamodb.Client) any {
+		return func(t *testing.T, client *dynamodb.Client) any {
+			t.Helper()
+			ctx := context.Background()
+
+			fuzzSetup(ctx, t, client)
+
+			if withItem {
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(fuzzTable), Item: updatedValuesItem()})
+				require.NoError(t, err)
+			}
+
+			var out []string
+
+			for _, rv := range []dynamodbtypes.ReturnValue{
+				dynamodbtypes.ReturnValueAllOld,
+				dynamodbtypes.ReturnValueAllNew,
+			} {
+				in := fuzzNestedDeleteAddInput("SET #s = :str")
+				in.ReturnValues = rv
+
+				if condition != "" {
+					in.ConditionExpression = aws.String(condition)
+				}
+
+				res, err := client.UpdateItem(ctx, in)
+				if err != nil {
+					out = append(out, fmt.Sprintf("[%s] => %s", rv, fuzzErrString(err)))
+
+					continue
+				}
+
+				out = append(out, fmt.Sprintf("[%s] => %s", rv,
+					fuzzAttrJSON(&dynamodbtypes.AttributeValueMemberM{Value: parityNormalizeItemSets(res.Attributes)})))
+			}
+
+			return out
+		}
+	}
+
+	t.Run("MissingItem", func(t *testing.T) { RunE2E(t, run(false, "")) })
+	t.Run("MissingItemWithCondition", func(t *testing.T) {
+		RunE2E(t, run(false, "attribute_not_exists(#s)"))
+	})
+	t.Run("ExistingItem", func(t *testing.T) { RunE2E(t, run(true, "")) })
+}

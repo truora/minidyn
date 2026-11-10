@@ -561,32 +561,20 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 	}
 
 	keyMap := mapDynamoToTypesMapItem(input.Key)
-	if vErr := mtypes.ValidateItemMap(keyMap); vErr != nil {
-		return nil, mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
-	}
 
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, err := table.GetItem(keyMap, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
 	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+		return nil, mapKnownError(err)
 	}
 
-	stored := table.Data[key]
-
-	item, err := getItemAttributesForOutput(table, stored, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
-	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
-	}
+	item := mapTypesToDynamoMapItem(read.Projected)
 
 	output := &dynamodb.GetItemOutput{
 		Item: copyItem(item),
 	}
 
 	if mode != capacity.ModeNone {
-		sizeSource := stored
+		sizeSource := read.Stored
 		if len(sizeSource) == 0 {
 			sizeSource = keyMap
 		}
@@ -906,6 +894,11 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 
 		consistent := aws.ToBool(reqs.ConsistentRead)
 
+		read, err := fd.batchGetTable(tableName, reqs)
+		if err != nil {
+			return nil, err
+		}
+
 		for i, req := range reqs.Keys {
 			if emulation.unprocessed(tableName, i, req) {
 				unprocessedKeys = append(unprocessedKeys, req)
@@ -913,26 +906,14 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 				continue
 			}
 
-			getInput := &dynamodb.GetItemInput{
-				TableName:                aws.String(tableName),
-				Key:                      req,
-				ConsistentRead:           reqs.ConsistentRead,
-				AttributesToGet:          reqs.AttributesToGet,
-				ExpressionAttributeNames: reqs.ExpressionAttributeNames,
-				ProjectionExpression:     reqs.ProjectionExpression,
-			}
-
-			out, err := fd.GetItem(ctx, getInput)
-			if err != nil {
-				return nil, err
-			}
+			item := mapTypesToDynamoMapItem(read[i].Projected)
 
 			if mode != capacity.ModeNone {
-				unitsByTable[tableName] += capacity.ReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)), consistent)
+				unitsByTable[tableName] += capacity.ReadUnits(capacity.Size(read[i].Projected), consistent)
 			}
 
-			if len(out.Item) > 0 {
-				responses[tableName] = append(responses[tableName], out.Item)
+			if len(item) > 0 {
+				responses[tableName] = append(responses[tableName], copyItem(item))
 			}
 		}
 
@@ -951,6 +932,34 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 		UnprocessedKeys:  unprocessed,
 		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable),
 	}, nil
+}
+
+// batchGetTable reads every key of one table of a BatchGetItem under one lock, checking all the
+// keys, then the projection once. Keys the unprocessed emulation skips are checked too.
+func (fd *Client) batchGetTable(tableName string, reqs types.KeysAndAttributes) ([]core.ReadItem, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
+	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	keys := make([]map[string]*mtypes.Item, len(reqs.Keys))
+	for i, req := range reqs.Keys {
+		keys[i] = mapDynamoToTypesMapItem(req)
+	}
+
+	read, err := table.BatchGetItem(keys, aws.ToString(reqs.ProjectionExpression), reqs.ExpressionAttributeNames)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	return read, nil
 }
 
 func validateWriteRequest(req types.WriteRequest) error {
@@ -1457,23 +1466,6 @@ func (fd *Client) getTable(tableName string) (*core.Table, error) {
 	}
 
 	return table, nil
-}
-
-func getItemAttributesForOutput(table *core.Table, stored map[string]*mtypes.Item, projectionExpr string, aliases map[string]string) (map[string]types.AttributeValue, error) {
-	if projectionExpr == "" {
-		return mapTypesToDynamoMapItem(stored), nil
-	}
-
-	projected, err := table.LangInterpreter.Project(interpreter.ProjectInput{
-		Expression: projectionExpr,
-		Item:       stored,
-		Aliases:    aliases,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return mapTypesToDynamoMapItem(projected), nil
 }
 
 func validateExpressionAttributes(exprNames map[string]string, exprValues map[string]types.AttributeValue, genericExpressions ...string) error {

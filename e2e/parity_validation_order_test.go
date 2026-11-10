@@ -281,3 +281,86 @@ func TestE2E_ValidationOrder_BetweenBounds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) { RunE2E(t, voRun(tt.fn)) })
 	}
 }
+
+// A GetItem checks its ProjectionExpression (the syntax, then the names it uses) before the
+// key, and after the table exists.
+func TestE2E_ValidationOrder_GetItemProjection(t *testing.T) {
+	e := ekS("")
+	okKey := ekItem{"pk": ekS("a"), "sk": ekS("1")}
+	missingKey := ekItem{"pk": ekS("zz"), "sk": ekS("1")}
+	emptySK := ekItem{"pk": ekS("a"), "sk": e}
+	noSK := ekItem{"pk": ekS("a")}
+	wrongType := ekItem{"pk": ekS("a"), "sk": voN("1")}
+	extraAttr := ekItem{"pk": ekS("a"), "sk": ekS("1"), "x": ekS("y")}
+	names := map[string]string{"#n": "g"}
+
+	get := func(table string, key ekItem, projection string, names map[string]string) func(ctx context.Context, c *dynamodb.Client) string {
+		return func(ctx context.Context, c *dynamodb.Client) string {
+			in := &dynamodb.GetItemInput{TableName: aws.String(table), Key: key, ExpressionAttributeNames: names}
+			if projection != "" {
+				in.ProjectionExpression = aws.String(projection)
+			}
+
+			out, err := c.GetItem(ctx, in)
+			if err != nil {
+				return fuzzErrString(err)
+			}
+
+			return fmt.Sprintf("ok item=%s", nmItemString(out.Item))
+		}
+	}
+
+	// BatchGetItem is the opposite of GetItem: DynamoDB reports a key problem before the
+	// ProjectionExpression.
+	batchGet := func(projection string, keys ...ekItem) func(ctx context.Context, c *dynamodb.Client) string {
+		return func(ctx context.Context, c *dynamodb.Client) string {
+			out, err := c.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]dynamodbtypes.KeysAndAttributes{
+				emptyKeyTable: {Keys: keys, ProjectionExpression: aws.String(projection)},
+			}})
+			if err != nil {
+				return fuzzErrString(err)
+			}
+
+			return fmt.Sprintf("ok items=%d", len(out.Responses[emptyKeyTable]))
+		}
+	}
+
+	tests := []struct {
+		name string
+		fn   func(ctx context.Context, c *dynamodb.Client) string
+	}{
+		{"BatchGetEmptyKeyUndeclaredName", batchGet("#x", emptySK)},
+		{"BatchGetEmptyKeySyntaxError", batchGet("g,,", emptySK)},
+		{"BatchGetMissingRangeKeyUndeclaredName", batchGet("#x", noSK)},
+		// DynamoDB validates every key of the table before the projection.
+		{"BatchGetOkThenEmptyKeyUndeclaredName", batchGet("#x", okKey, emptySK)},
+		{"BatchGetOkThenEmptyKeySyntaxError", batchGet("g,,", okKey, emptySK)},
+		{"BatchGetOkThenMissingRangeKey", batchGet("#x", okKey, noSK)},
+		{"EmptyKeyUndeclaredName", get(emptyKeyTable, emptySK, "#x", nil)},
+		{"EmptyKeySyntaxError", get(emptyKeyTable, emptySK, "g,,", nil)},
+		{"EmptyKeyUndeclaredNameInPath", get(emptyKeyTable, emptySK, "g.#x", nil)},
+		{"EmptyKeyDeclaredName", get(emptyKeyTable, emptySK, "#n", names)},
+		{"EmptyKeyValidProjection", get(emptyKeyTable, emptySK, "g", nil)},
+		{"MissingRangeKeyUndeclaredName", get(emptyKeyTable, noSK, "#x", nil)},
+		{"MissingRangeKeySyntaxError", get(emptyKeyTable, noSK, "g,,", nil)},
+		{"MissingRangeKeyValidProjection", get(emptyKeyTable, noSK, "g", nil)},
+		{"WrongTypeKeyUndeclaredName", get(emptyKeyTable, wrongType, "#x", nil)},
+		{"WrongTypeKeySyntaxError", get(emptyKeyTable, wrongType, "g,,", nil)},
+		{"ExtraKeyAttributeUndeclaredName", get(emptyKeyTable, extraAttr, "#x", nil)},
+		{"EmptyBinaryKeyUndeclaredName", get(emptyKeyBinTable, ekItem{"pk": ekB(), "sk": ekB(1)}, "#x", nil)},
+		{"InvalidNumberKeyUndeclaredName", get("ekn", ekItem{"pk": ekS("a"), "sk": voN("abc")}, "#x", nil)},
+		{"InvalidNumberKeyValidProjection", get("ekn", ekItem{"pk": ekS("a"), "sk": voN("abc")}, "g", nil)},
+		{"ValidKeyUndeclaredName", get(emptyKeyTable, okKey, "#x", nil)},
+		{"ValidKeySyntaxError", get(emptyKeyTable, okKey, "g,,", nil)},
+		{"MissingItemUndeclaredName", get(emptyKeyTable, missingKey, "#x", nil)},
+		{"MissingItemSyntaxError", get(emptyKeyTable, missingKey, "g,,", nil)},
+		{"ValidKeyValidProjection", get(emptyKeyTable, okKey, "gs, #n", names)},
+		{"UnknownTableUndeclaredName", get("no-such-table", okKey, "#x", nil)},
+		{"UnknownTableEmptyKey", get("no-such-table", emptySK, "g", nil)},
+		{"UnusedNameEmptyKey", get(emptyKeyTable, emptySK, "g", names)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { RunE2E(t, voRun(tt.fn)) })
+	}
+}

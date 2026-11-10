@@ -8,9 +8,7 @@ import (
 	"strings"
 
 	"github.com/aws/smithy-go"
-	"github.com/truora/minidyn/core"
 	"github.com/truora/minidyn/interpreter"
-	"github.com/truora/minidyn/types"
 )
 
 const (
@@ -123,23 +121,6 @@ func getMissingSubstrs(s string, substrs []string) []string {
 	}
 
 	return missingSubstrs
-}
-
-func getItemAttributesForOutput(table *core.Table, stored map[string]*types.Item, projectionExpr string, aliases map[string]string) (map[string]*AttributeValue, error) {
-	if projectionExpr == "" {
-		return mapTypesMapToAttributeValue(stored), nil
-	}
-
-	projected, err := table.LangInterpreter.Project(interpreter.ProjectInput{
-		Expression: projectionExpr,
-		Item:       stored,
-		Aliases:    aliases,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return mapTypesMapToAttributeValue(projected), nil
 }
 
 // hasUndefinedValue reports whether the expressions use a value placeholder that is not among

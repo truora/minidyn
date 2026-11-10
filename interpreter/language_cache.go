@@ -180,3 +180,45 @@ func validateDeclaredValues(expressionType string, placeholders []string, values
 
 	return nil
 }
+
+// parsedProjection is a projection expression parsed once, like parsedCondition.
+type parsedProjection struct {
+	exprs []language.Expression
+	errs  []string
+}
+
+// projectionCache maps projection expression text to its parsed form, bounded by
+// maxParsedExpressions.
+var projectionCache = struct {
+	mu sync.Mutex
+	m  map[string]*parsedProjection
+}{m: map[string]*parsedProjection{}}
+
+// parseProjection returns the parsed form of a projection expression, parsing it on first use.
+func parseProjection(expr string) *parsedProjection {
+	projectionCache.mu.Lock()
+	defer projectionCache.mu.Unlock()
+
+	if pp, ok := projectionCache.m[expr]; ok {
+		return pp
+	}
+
+	p := language.NewParser(language.NewLexer(expr))
+	pp := &parsedProjection{exprs: p.ParseProjectionExpression(), errs: p.Errors()}
+
+	if len(projectionCache.m) >= maxParsedExpressions {
+		clear(projectionCache.m)
+	}
+
+	projectionCache.m[expr] = pp
+
+	return pp
+}
+
+// cachedProjections reports how many projection expressions are cached (for tests).
+func cachedProjections() int {
+	projectionCache.mu.Lock()
+	defer projectionCache.mu.Unlock()
+
+	return len(projectionCache.m)
+}

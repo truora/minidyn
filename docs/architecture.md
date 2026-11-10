@@ -161,10 +161,11 @@ never goes through it.
   - `core` returns `types.NewError(code, message, nil)`. It also wraps
     interpreter errors from conditions, updates and `SearchData` into
     `ValidationException`.
-  - The `errors.Is(err, interpreter.ErrSyntaxError)` checks left in aws-v2
-    `UpdateItem` and in `TransactWriteItems` (both front ends) never match:
-    `types.Error` does not unwrap, so the error has already been converted in
-    `core`. Do not copy them. **Lands with #233:** they are removed.
+  - Front ends must not check `errors.Is(err, interpreter.ErrSyntaxError)`
+    on errors from `core`: `types.Error` does not unwrap, so such a check
+    never matches. The last ones were removed in #233, and
+    `core/update_errors_test.go` pins that `Update` errors arrive as
+    `ValidationException`.
   - The one live conversion in the front ends is `GetItem`'s projection. It
     calls `LangInterpreter.Project` directly (`getItemAttributesForOutput` in
     both front ends) and maps the error itself. A new read path should go

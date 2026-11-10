@@ -1347,10 +1347,6 @@ func (c *Client) runTransactUpdate(i, n int, update *Update) error {
 		ReturnValuesOnConditionCheckFailure: toStringPtr(string(update.ReturnValuesOnConditionCheckFailure)),
 	})
 	if opErr != nil {
-		if errors.Is(opErr, interpreter.ErrSyntaxError) {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: opErr.Error()}
-		}
-
 		return newServerTransactionCancelledError(i, n, opErr)
 	}
 

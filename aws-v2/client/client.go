@@ -515,10 +515,6 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 
 	item, err := table.Update(updateInput)
 	if err != nil {
-		if errors.Is(err, interpreter.ErrSyntaxError) {
-			return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
-		}
-
 		return nil, mapKnownError(err)
 	}
 
@@ -1282,10 +1278,6 @@ func (fd *Client) runTransactUpdate(i, n int, update *types.Update) error {
 
 	_, opErr := table.Update(mapDynamoToTypesTransactUpdate(update))
 	if opErr != nil {
-		if errors.Is(opErr, interpreter.ErrSyntaxError) {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: opErr.Error()}
-		}
-
 		return newTransactionCancelledError(i, n, opErr)
 	}
 

@@ -793,6 +793,10 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 		return nil, emulation.failErr
 	}
 
+	if err := c.validateBatchWriteRequests(input.RequestItems); err != nil {
+		return nil, err
+	}
+
 	unprocessed := map[string][]WriteRequest{}
 	acc := capacity.NewWriteAccumulator()
 
@@ -814,6 +818,44 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 		UnprocessedItems: unprocessed,
 		ConsumedCapacity: wireConsumedList(acc.Consumed(mode)),
 	}, nil
+}
+
+// validateBatchWriteRequests rejects the whole batch when any request is invalid, so no request
+// is applied before one fails (D8). The checks and their order live in core.ValidateBatchWrite.
+func (c *Client) validateBatchWriteRequests(requestItems map[string][]WriteRequest) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	requests := make(map[string][]core.WriteRequest, len(requestItems))
+
+	for name, reqs := range requestItems {
+		requests[name] = nil
+
+		for _, req := range reqs {
+			var r core.WriteRequest
+
+			switch {
+			case req.PutRequest != nil:
+				r.Put = mapAttributeValueMapToTypes(req.PutRequest.Item)
+			case req.DeleteRequest != nil:
+				r.Delete = mapAttributeValueMapToTypes(req.DeleteRequest.Key)
+			}
+
+			requests[name] = append(requests[name], r)
+		}
+	}
+
+	lookup := func(name string) (*core.Table, bool) {
+		table, ok := c.tables[name]
+
+		return table, ok
+	}
+
+	if err := core.ValidateBatchWrite(lookup, requests); err != nil {
+		return mapKnownError(err)
+	}
+
+	return nil
 }
 
 // applyBatchWriteRequest runs one put or delete sub-request and, when consumed capacity is

@@ -2255,3 +2255,157 @@ func TestWriteIndexDeltasSkipsUnchangedProjections(t *testing.T) {
 	// Entering an index always writes the entry.
 	c.Len(table.WriteIndexDeltas(nil, item("a", "x")), 2)
 }
+
+// ValidatePutItem and ValidateDeleteKey run the checks Put and Delete make without a condition,
+// so a batch can reject an invalid request before it applies any (#216). They never write.
+func TestValidatePutItemAndDeleteKey(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+	n := "1"
+
+	c.NoError(newTable.ValidatePutItem(map[string]*types.Item{"id": s("1"), "name": s("a")}))
+	c.NoError(newTable.ValidateDeleteKey(map[string]*types.Item{"id": s("1"), "name": s("a")}))
+
+	puts := map[string]map[string]*types.Item{
+		"The AttributeValue for a key attribute cannot contain an empty string value. Key: id": {"id": s(""), "name": s("a")},
+		"One or more parameter values were invalid: Type mismatch for key":                     {"id": {N: &n}, "name": s("a")},
+		"One of the required keys was not given a value":                                       {"id": s("1")},
+	}
+
+	for msg, item := range puts {
+		err = newTable.ValidatePutItem(item)
+		c.Error(err, msg)
+		c.Contains(err.Error(), msg)
+	}
+
+	dels := map[string]map[string]*types.Item{
+		"The AttributeValue for a key attribute cannot contain an empty string value. Key: name": {"id": s("1"), "name": s("")},
+		"One or more parameter values were invalid: Type mismatch for key":                       {"id": {N: &n}, "name": s("a")},
+		"The number of conditions on the keys is invalid":                                        {"id": s("1")},
+	}
+
+	for msg, key := range dels {
+		err = newTable.ValidateDeleteKey(key)
+		c.Error(err, msg)
+		c.Contains(err.Error(), msg)
+	}
+
+	c.Empty(newTable.Data)
+
+	// an attribute value DynamoDB rejects
+	err = newTable.ValidatePutItem(map[string]*types.Item{"id": s("1"), "name": s("a"), "ss": {SS: []*string{&n, &n}}})
+	c.Error(err)
+	c.Contains(err.Error(), "duplicate")
+
+	err = newTable.ValidateDeleteKey(map[string]*types.Item{"id": s("1"), "name": {SS: []*string{&n, &n}}})
+	c.Error(err)
+
+	// the key of a secondary index
+	idx := NewTable(tableName)
+	idx.AttributesDef = map[string]string{"pk": "S", "g": "S"}
+	idx.KeySchema = keySchema{"pk", "", false}
+	idxName := "by-g"
+	c.NoError(idx.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
+		IndexName:             &idxName,
+		KeySchema:             []*types.KeySchemaElement{{AttributeName: "g", KeyType: "HASH"}},
+		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
+		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+	}}))
+
+	c.NoError(idx.ValidatePutItem(map[string]*types.Item{"pk": s("1"), "g": s("x")}))
+	c.Error(idx.ValidatePutItem(map[string]*types.Item{"pk": s("1"), "g": {N: &n}}))
+	c.Empty(idx.Data)
+}
+
+// ValidateBatchWrite checks every request of every existing table before it reports an unknown
+// table, and reports the first invalid existing table by name (#216).
+func TestValidateBatchWrite(t *testing.T) {
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+
+	pokemons, err := createPokemonTable()
+	require.NoError(t, err)
+
+	other, err := createPokemonTable()
+	require.NoError(t, err)
+
+	tables := map[string]*Table{"pokemons": pokemons, "other": other}
+	lookup := func(name string) (*Table, bool) {
+		table, ok := tables[name]
+
+		return table, ok
+	}
+
+	valid := WriteRequest{Put: map[string]*types.Item{"id": s("1"), "name": s("a")}}
+	validDelete := WriteRequest{Delete: map[string]*types.Item{"id": s("1"), "name": s("a")}}
+	emptyKey := WriteRequest{Put: map[string]*types.Item{"id": s(""), "name": s("a")}}
+	missingRange := WriteRequest{Put: map[string]*types.Item{"id": s("1")}}
+	deleteMissingRange := WriteRequest{Delete: map[string]*types.Item{"id": s("1")}}
+
+	const (
+		emptyMsg   = "The AttributeValue for a key attribute cannot contain an empty string value. Key: id"
+		missingMsg = "One of the required keys was not given a value"
+		deleteMsg  = "The number of conditions on the keys is invalid"
+		tableMsg   = "Cannot do operations on a non-existent table"
+	)
+
+	tests := []struct {
+		name    string
+		reqs    map[string][]WriteRequest
+		code    string
+		message string
+	}{
+		{name: "valid", reqs: map[string][]WriteRequest{"pokemons": {valid, validDelete}, "other": {valid}}},
+		{name: "empty", reqs: map[string][]WriteRequest{}},
+		{
+			name: "invalid put", reqs: map[string][]WriteRequest{"pokemons": {valid, emptyKey}},
+			code: "ValidationException", message: emptyMsg,
+		},
+		{
+			name: "invalid delete", reqs: map[string][]WriteRequest{"pokemons": {valid, deleteMissingRange}},
+			code: "ValidationException", message: deleteMsg,
+		},
+		{
+			name: "unknown table", reqs: map[string][]WriteRequest{"pokemons": {valid}, "zzz": {valid}},
+			code: "ResourceNotFoundException", message: tableMsg,
+		},
+		{
+			// the unknown table sorts first, but an invalid item of an existing table comes before it
+			name: "invalid item and an unknown table that sorts first", reqs: map[string][]WriteRequest{
+				"aaa": {valid}, "pokemons": {emptyKey},
+			},
+			code: "ValidationException", message: emptyMsg,
+		},
+		{
+			// DynamoDB Local reports the first table of the request; a map has no order, so
+			// the first by name is reported
+			name: "two invalid tables", reqs: map[string][]WriteRequest{
+				"pokemons": {emptyKey}, "other": {missingRange},
+			},
+			code: "ValidationException", message: missingMsg,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateBatchWrite(lookup, tt.reqs)
+			if tt.code == "" {
+				require.NoError(t, err)
+
+				return
+			}
+
+			var typed types.Error
+
+			require.ErrorAs(t, err, &typed)
+			require.Equal(t, tt.code, typed.Code())
+			require.Contains(t, typed.Message(), tt.message)
+		})
+	}
+
+	require.Empty(t, pokemons.Data)
+	require.Empty(t, other.Data)
+}

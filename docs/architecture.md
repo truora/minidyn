@@ -264,7 +264,10 @@ never goes through it.
     lock.
   - `BatchWriteItem`, `BatchGetItem` and `TransactGetItems` lock once per
     sub-request by calling the public item methods, so another call can
-    interleave inside a batch.
+    interleave inside a batch. `BatchWriteItem` also validates the whole batch
+    under one lock acquisition of its own (D8), and then re-locks for each
+    request it applies, so the table can change between the validation and
+    the writes.
   - `SetInterpreter` and `GetNativeInterpreter` take no lock.
 - **Why:** a single lock is simple to reason about. minidyn's goal is
   correctness, not throughput.
@@ -297,10 +300,24 @@ never goes through it.
   - This is table-level, not item-level, isolation (see `docs/operations.md`).
   - A snapshot costs time in proportion to the table size (see
     `benchmarks/README.md`), so do not add more callers.
-- **Gaps:**
-  - `BatchWriteItem` applies requests one at a time. It is not atomic in
-    DynamoDB either, but it should validate every request before applying any
-    (#216).
+- **On `main`, batches:**
+  - `BatchWriteItem` validates every request (key shape and values, index
+    keys, table existence) before it applies any, so an invalid request
+    rejects the whole batch. The orchestration is `core.ValidateBatchWrite`,
+    built on `Table.ValidatePutItem` and `Table.ValidateDeleteKey`. The front
+    ends only map shapes. minidyn reports a missing table only when every
+    request of the existing tables is valid, and between two invalid tables
+    the first by name, because the request is a map and has no order. Both
+    are minidyn's choices (D1 level 3): DynamoDB Local's order between a
+    missing table and an invalid request depends on the wire order and the
+    table schema, so the parity test compares only that the batch is
+    rejected and nothing is written.
+  - The validation runs under its own lock acquisition and the apply loop
+    re-locks for each request (the D7 gap, #217). So the guarantee holds
+    against the request itself, not against another call that changes a table
+    in between.
+  - The requests are then applied one at a time. DynamoDB does not make a
+    batch atomic either.
 - **Why:** a half-applied write leaves the base table and its indexes out of
   step. Such bugs appear later as wrong query results.
 - **Check:** can any new error path return after a mutation without restoring

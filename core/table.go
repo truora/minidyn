@@ -1398,6 +1398,143 @@ func (t *Table) Restore(s TableSnapshot) {
 	}
 }
 
+// WriteRequest is one put or delete of a batch write. Exactly one of Put (the whole item) and
+// Delete (the key) is set.
+type WriteRequest struct {
+	Put    map[string]*types.Item
+	Delete map[string]*types.Item
+}
+
+// ValidateBatchWrite rejects a whole batch write when any of its requests is invalid, so a
+// front end can apply none of them (D8). lookup finds a table by name.
+//
+// Which error wins when a batch has both a missing table and an invalid request is not stable
+// in DynamoDB Local: probes got either error depending on the order of the tables on the wire
+// and on the table's key schema. minidyn reports invalid requests first, and a missing table
+// only when every request of the existing tables is valid. When two existing tables are
+// invalid, Local reports the first one in the request; a Go map carries no order, so minidyn
+// uses table name order, and the requests of a table in order. Both are minidyn's choices (D1
+// level 3), pinned by unit tests.
+func ValidateBatchWrite(lookup func(name string) (*Table, bool), requests map[string][]WriteRequest) error {
+	var missing error
+
+	for _, name := range slices.Sorted(maps.Keys(requests)) {
+		table, ok := lookup(name)
+		if !ok {
+			if missing == nil {
+				missing = types.NewError("ResourceNotFoundException", "Cannot do operations on a non-existent table", nil)
+			}
+
+			continue
+		}
+
+		for _, req := range requests[name] {
+			var err error
+
+			switch {
+			case req.Put != nil:
+				err = table.ValidatePutItem(req.Put)
+			case req.Delete != nil:
+				err = table.ValidateDeleteKey(req.Delete)
+			}
+
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return missing
+}
+
+// ValidatePutItem runs the checks Put makes on an item that do not depend on a condition, in
+// the same order. It changes nothing, so a batch can reject an invalid request before it
+// applies any (D8).
+func (t *Table) ValidatePutItem(item map[string]*types.Item) error {
+	if err := validateItemValues(item); err != nil {
+		return err
+	}
+
+	if err := t.checkItemKeyValues(item); err != nil {
+		return err
+	}
+
+	if _, err := t.primaryKeyOf(item); err != nil {
+		return err
+	}
+
+	_, err := t.checkedIndexKeysOf(item)
+
+	return err
+}
+
+// ValidateDeleteKey runs the checks Delete makes on a key that do not depend on a condition, in
+// the same order. It changes nothing.
+func (t *Table) ValidateDeleteKey(key map[string]*types.Item) error {
+	if err := validateItemValues(key); err != nil {
+		return err
+	}
+
+	if err := t.checkPrimaryKeyShape(key); err != nil {
+		return err
+	}
+
+	_, err := t.primaryKeyOf(key)
+
+	return err
+}
+
+// The helpers below are the steps Put, Delete and the Validate* functions have in common. Each
+// returns a ValidationException, so a check added to one reaches every path that calls it.
+
+// validateItemValues rejects an attribute value DynamoDB does not accept.
+func validateItemValues(m map[string]*types.Item) error {
+	if err := types.ValidateItemMap(m); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// checkItemKeyValues rejects empty values in the primary key and index key attributes of item.
+func (t *Table) checkItemKeyValues(item map[string]*types.Item) error {
+	if err := t.validateItemKeyValues(item); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// checkPrimaryKeyShape rejects a key that does not hold exactly the primary key attributes.
+func (t *Table) checkPrimaryKeyShape(key map[string]*types.Item) error {
+	if err := t.KeySchema.validatePrimaryKeyMap(key); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// primaryKeyOf returns the storage key of an item, or a key, and rejects one that is missing a
+// key attribute or has one of the wrong type.
+func (t *Table) primaryKeyOf(item map[string]*types.Item) (string, error) {
+	key, err := t.KeySchema.GetKey(t.AttributesDef, item)
+	if err != nil {
+		return "", types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return key, nil
+}
+
+// checkedIndexKeysOf is indexKeysOf with its error as a ValidationException.
+func (t *Table) checkedIndexKeysOf(item map[string]*types.Item) (map[string]string, error) {
+	keys, err := t.indexKeysOf(item)
+	if err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return keys, nil
+}
+
 // Put puts an item into the table. It returns the item it replaced when
 // ReturnValues is ALL_OLD, and nil otherwise (or when there was none).
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) { //nolint:gocognit // conditional write, key resolution, GSI updates
@@ -1409,17 +1546,17 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.Item); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.Item); err != nil {
+		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.ExpressionAttributeValues); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB reports the key values of the item before the placeholders of the condition.
-	if err := t.validateItemKeyValues(input.Item); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := t.checkItemKeyValues(input.Item); err != nil {
+		return nil, err
 	}
 
 	if err := validateConditionExpression(input.ExpressionAttributeNames, input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
@@ -1428,9 +1565,9 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 
 	item := copyItem(input.Item)
 
-	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
+	key, err := t.primaryKeyOf(input.Item)
 	if err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+		return nil, err
 	}
 
 	// support conditional writes
@@ -1451,9 +1588,9 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 	}
 
-	indexKeys, err := t.indexKeysOf(item)
+	indexKeys, err := t.checkedIndexKeysOf(item)
 	if err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+		return nil, err
 	}
 
 	old := t.Data[key]
@@ -1683,25 +1820,25 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.Key); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.Key); err != nil {
+		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.ExpressionAttributeValues); err != nil {
+		return nil, err
 	}
 
-	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := t.checkPrimaryKeyShape(input.Key); err != nil {
+		return nil, err
 	}
 
 	if err := validateConditionExpression(deleteAliases(input.ExpressionAttributeNames), input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
 		return nil, err
 	}
 
-	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
+	key, err := t.primaryKeyOf(input.Key)
 	if err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+		return nil, err
 	}
 
 	item, ok := t.Data[key]

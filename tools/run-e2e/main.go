@@ -55,8 +55,24 @@ func parseArgs(argv []string) (pattern string, extra []string) {
 	return pattern, extra
 }
 
+// defaultTimeout bounds a run. The full parity suite takes longer than go test's default of
+// 10m, so without it a passing run is killed and reported as a failure.
+const defaultTimeout = "45m"
+
+// withDefaultTimeout prepends -timeout defaultTimeout to extra unless it already sets one.
+func withDefaultTimeout(extra []string) []string {
+	for _, arg := range extra {
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if name == "timeout" || name == "test.timeout" {
+			return extra
+		}
+	}
+
+	return append([]string{"-timeout", defaultTimeout}, extra...)
+}
+
 func startGoTest(pattern string, extra []string) (*exec.Cmd, io.ReadCloser, error) {
-	args := append([]string{"test", "./e2e/...", "-json", "-run", pattern}, extra...)
+	args := append([]string{"test", "./e2e/...", "-json", "-run", pattern}, withDefaultTimeout(extra)...)
 	cmd := exec.Command("go", args...) //nolint:gosec // variable args are required here
 	cmd.Stderr = os.Stderr
 

@@ -538,30 +538,18 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 	}
 
 	keyMap := mapAttributeValueMapToTypes(input.Key)
-	if vErr := types.ValidateItemMap(keyMap); vErr != nil {
-		return nil, mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
-	}
 
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, err := table.GetItem(keyMap, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
 	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+		return nil, mapKnownError(err)
 	}
 
-	stored := table.Data[key]
-
-	item, err := getItemAttributesForOutput(table, stored, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
-	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
-	}
+	item := mapTypesMapToAttributeValue(read.Projected)
 
 	out := &GetItemOutput{Item: item}
 
 	if mode != capacity.ModeNone {
-		sizeSource := stored
+		sizeSource := read.Stored
 		if len(sizeSource) == 0 {
 			sizeSource = keyMap
 		}
@@ -995,7 +983,8 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 }
 
 func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation, mode capacity.Mode) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
-	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
+	read, err := c.batchGetTable(tableName, reqs)
+	if err != nil {
 		return nil, nil, 0, err
 	}
 
@@ -1012,27 +1001,46 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 			continue
 		}
 
-		item, err := c.GetItem(ctx, &GetItemInput{
-			TableName:                aws.String(tableName),
-			Key:                      key,
-			ConsistentRead:           reqs.ConsistentRead,
-			ExpressionAttributeNames: reqs.ExpressionAttributeNames,
-			ProjectionExpression:     reqs.ProjectionExpression,
-		})
-		if err != nil {
-			return nil, nil, 0, err
-		}
+		item := mapTypesMapToAttributeValue(read[i].Projected)
 
 		if mode != capacity.ModeNone {
-			units += capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(item.Item)), consistent)
+			units += capacity.ReadUnits(capacity.Size(read[i].Projected), consistent)
 		}
 
-		if len(item.Item) > 0 {
-			responses = append(responses, item.Item)
+		if len(item) > 0 {
+			responses = append(responses, item)
 		}
 	}
 
 	return responses, unprocessedKeys, units, nil
+}
+
+// batchGetTable reads every key of one table of a BatchGetItem under one lock, checking all the
+// keys, then the projection once. Keys the unprocessed emulation skips are checked too.
+func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes) ([]core.ReadItem, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
+		return nil, err
+	}
+
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make([]map[string]*types.Item, len(reqs.Keys))
+	for i, key := range reqs.Keys {
+		keys[i] = mapAttributeValueMapToTypes(key)
+	}
+
+	read, err := table.BatchGetItem(keys, aws.ToString(reqs.ProjectionExpression), reqs.ExpressionAttributeNames)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	return read, nil
 }
 
 func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {

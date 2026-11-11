@@ -113,6 +113,10 @@ never goes through it.
     an UpdateExpression comes before a ConditionExpression; and, for undefined
     values, a FilterExpression comes before a KeyConditionExpression;
   - function operand counts;
+  - the `ProjectionExpression` of a `GetItem` (its syntax, then undeclared
+    `#names`), before the key (`Table.GetItem`); a `BatchGetItem` is the
+    opposite: every key of a table, then the projection, once per table
+    (`Table.BatchGetItem`);
   - the shape and types of a key condition, with BETWEEN bounds checked
     first (same type, then lower <= upper, comparing by type);
   - empty S and B values in the key attributes of the table and of every
@@ -166,10 +170,11 @@ never goes through it.
     never matches. The last ones were removed in #233, and
     `core/update_errors_test.go` pins that `Update` errors arrive as
     `ValidationException`.
-  - The one live conversion in the front ends is `GetItem`'s projection. It
-    calls `LangInterpreter.Project` directly (`getItemAttributesForOutput` in
-    both front ends) and maps the error itself. A new read path should go
-    through `core` instead.
+  - `GetItem` goes through `core` too (`Table.GetItem`): it checks the
+    projection, then the key, and returns the error as a `types.Error`.
+    `BatchGetItem` goes through `Table.BatchGetItem` once per table, which
+    checks every key, then the projection. The front ends have no conversion
+    of their own left.
   - `ResourceNotFoundException` comes from `core` only for a missing index.
     The front ends build the SDK error for a missing table themselves.
   - `ErrUnsupportedFeature` is what `Native` returns when nothing is
@@ -240,9 +245,9 @@ never goes through it.
   - `parseUpdate` caches update expressions (#165). `Language.Update`, the
     primary-key target check and the `UPDATED_*` target paths
     (`interpreter.UpdateTargetPaths`) all read the same parse.
-  - Projection expressions are still parsed on every call
-    (`Language.Project`). A change there should extend the cache rather than
-    add another lexer pass.
+  - `parseProjection` caches projection expressions. `interpreter.CheckProjection`
+    validates one and returns the parse, which `Language.ProjectChecked` uses,
+    so `Table.GetItem` and `Table.BatchGetItem` check a projection once.
 - **Why:** tests repeat the same expressions constantly, and repeated lexing
   was the largest avoidable cost in `UpdateItem`.
 - **Check:** does the diff call `language.NewLexer` or `NewParser` on a request

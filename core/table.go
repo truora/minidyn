@@ -189,6 +189,89 @@ func (t *Table) StoredItem(keyOrItem map[string]*types.Item) map[string]*types.I
 	return deepCopyItemMap(item)
 }
 
+// ReadItem is the result of reading one key. Stored is the item as stored (nil when there is
+// none), not a copy: callers copy what they hand out, and front ends measure it for capacity.
+// Projected is the attributes the ProjectionExpression selects, or Stored without one.
+type ReadItem struct {
+	Stored, Projected map[string]*types.Item
+}
+
+// GetItem reads the item stored under key. Like DynamoDB's GetItem it rejects a bad
+// ProjectionExpression (its syntax, then an undeclared #name) before it looks at the key.
+func (t *Table) GetItem(key map[string]*types.Item, projectionExpr string, aliases map[string]string) (ReadItem, error) {
+	checked, err := checkProjection(projectionExpr, aliases)
+	if err != nil {
+		return ReadItem{}, err
+	}
+
+	storageKey, err := t.checkedKeyOf(key)
+	if err != nil {
+		return ReadItem{}, err
+	}
+
+	return t.readItem(storageKey, checked)
+}
+
+// BatchGetItem reads the keys of one table of a BatchGetItem, one ReadItem per key in order. As in
+// DynamoDB it validates every key before the ProjectionExpression, which it checks once.
+func (t *Table) BatchGetItem(keys []map[string]*types.Item, projectionExpr string, aliases map[string]string) ([]ReadItem, error) {
+	storageKeys := make([]string, len(keys))
+
+	for i, key := range keys {
+		storageKey, err := t.checkedKeyOf(key)
+		if err != nil {
+			return nil, err
+		}
+
+		storageKeys[i] = storageKey
+	}
+
+	checked, err := checkProjection(projectionExpr, aliases)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]ReadItem, len(keys))
+
+	for i, storageKey := range storageKeys {
+		items[i], err = t.readItem(storageKey, checked)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return items, nil
+}
+
+// readItem reads the item under storageKey and projects it; a nil checked selects everything.
+func (t *Table) readItem(storageKey string, checked *interpreter.CheckedProjection) (ReadItem, error) {
+	stored := t.Data[storageKey]
+	if checked == nil {
+		return ReadItem{Stored: stored, Projected: stored}, nil
+	}
+
+	projected, err := t.LangInterpreter.ProjectChecked(checked, stored)
+	if err != nil {
+		return ReadItem{}, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return ReadItem{Stored: stored, Projected: projected}, nil
+}
+
+// checkProjection validates a ProjectionExpression (nil for none) and returns its parse.
+func checkProjection(expr string, aliases map[string]string) (*interpreter.CheckedProjection, error) {
+	if expr == "" {
+		return nil, nil
+	}
+
+	checked, err := interpreter.CheckProjection(expr, aliases)
+	if err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return checked, nil
+}
+
 // SetAttributeDefinition sets the attribute definitions of a table. It checks all of them first,
 // so a malformed entry leaves the table's definitions unchanged.
 func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) error {
@@ -1472,17 +1555,23 @@ func (t *Table) ValidatePutItem(item map[string]*types.Item) error {
 // ValidateDeleteKey runs the checks Delete makes on a key that do not depend on a condition, in
 // the same order. It changes nothing.
 func (t *Table) ValidateDeleteKey(key map[string]*types.Item) error {
+	_, err := t.checkedKeyOf(key)
+
+	return err
+}
+
+// checkedKeyOf runs the checks a key gets before it is read or deleted and returns its storage
+// key: its values, that it holds exactly the primary key attributes, and that none is missing.
+func (t *Table) checkedKeyOf(key map[string]*types.Item) (string, error) {
 	if err := validateItemValues(key); err != nil {
-		return err
+		return "", err
 	}
 
 	if err := t.checkPrimaryKeyShape(key); err != nil {
-		return err
+		return "", err
 	}
 
-	_, err := t.primaryKeyOf(key)
-
-	return err
+	return t.primaryKeyOf(key)
 }
 
 // The helpers below are the steps Put, Delete and the Validate* functions have in common. Each

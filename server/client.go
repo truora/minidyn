@@ -578,19 +578,25 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		return nil, ferr
 	}
 
-	if err := validateExpressionAttributes(
+	table, err := c.getTable(aws.ToString(input.TableName))
+	if err != nil {
+		return nil, err
+	}
+
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if ierr := table.ValidateSearchIndex(aws.ToString(input.IndexName)); ierr != nil {
+		return nil, mapKnownError(ierr)
+	}
+
+	if verr := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
 		aws.ToString(input.KeyConditionExpression),
 		aws.ToString(input.FilterExpression),
 		aws.ToString(input.ProjectionExpression),
-	); err != nil {
-		return nil, err
-	}
-
-	table, err := c.getTable(aws.ToString(input.TableName))
-	if err != nil {
-		return nil, err
+	); verr != nil {
+		return nil, verr
 	}
 
 	if input.ScanIndexForward == nil {
@@ -648,18 +654,24 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, ferr
 	}
 
-	if err := validateExpressionAttributes(
+	table, err := c.getTable(aws.ToString(input.TableName))
+	if err != nil {
+		return nil, err
+	}
+
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if ierr := table.ValidateSearchIndex(aws.ToString(input.IndexName)); ierr != nil {
+		return nil, mapKnownError(ierr)
+	}
+
+	if verr := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
 		aws.ToString(input.ProjectionExpression),
 		aws.ToString(input.FilterExpression),
-	); err != nil {
-		return nil, err
-	}
-
-	table, err := c.getTable(aws.ToString(input.TableName))
-	if err != nil {
-		return nil, err
+	); verr != nil {
+		return nil, verr
 	}
 
 	res, err := table.SearchData(core.QueryInput{

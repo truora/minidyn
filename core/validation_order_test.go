@@ -322,3 +322,63 @@ func TestTable_indexRejectionWritesNothing(t *testing.T) {
 		requireOld(t, table, key)
 	})
 }
+
+// DynamoDB rejects an IndexName the table does not have before anything else of a Query or
+// Scan, ahead of the placeholders, the key condition and Select, and before any item is read.
+func TestSearchData_unknownIndexComesFirst(t *testing.T) {
+	table := createSelectTable(t)
+
+	const want = "ValidationException: The table does not have the specified index: nope | table: pokemons"
+
+	cases := []struct {
+		name  string
+		input QueryInput
+	}{
+		{"query", QueryInput{
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": {S: new("001")}},
+		}},
+		{"scan", QueryInput{Scan: true}},
+		{"query empty hash value", QueryInput{
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": emptyS()},
+		}},
+		{"query key condition type mismatch", QueryInput{
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": nItem("1")},
+		}},
+		{"query undeclared name", QueryInput{
+			KeyConditionExpression:    "#n = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": {S: new("001")}},
+		}},
+		{"query undefined value", QueryInput{KeyConditionExpression: "id = :id"}},
+		{"query invalid select", QueryInput{
+			Select:                    "BOGUS",
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": {S: new("001")}},
+		}},
+		{"scan undeclared name", QueryInput{Scan: true, FilterExpression: "#n = :v", ExpressionAttributeValues: map[string]*types.Item{":v": {S: new("x")}}}},
+		{"scan undefined value", QueryInput{Scan: true, FilterExpression: "name = :v"}},
+		{"scan invalid select", QueryInput{Scan: true, Select: "BOGUS"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.input.Index = "nope"
+			tc.input.ScanIndexForward = true
+
+			_, err := table.SearchData(tc.input)
+			require.EqualError(t, err, want)
+		})
+	}
+}
+
+func TestValidateSearchIndex(t *testing.T) {
+	table := createSelectTable(t)
+
+	require.NoError(t, table.ValidateSearchIndex(PrimaryIndexName))
+	require.NoError(t, table.ValidateSearchIndex("keys"))
+
+	err := table.ValidateSearchIndex("nope")
+	require.EqualError(t, err, "ValidationException: The table does not have the specified index: nope | table: "+table.Name)
+}

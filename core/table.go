@@ -88,6 +88,22 @@ func (t *Table) IndexKind(name string) string {
 	return "GSI"
 }
 
+// ValidateSearchIndex rejects the IndexName of a Query or Scan when the table has no such
+// index, as DynamoDB does: before anything else of the request is looked at. The primary index
+// (an empty name) is always there. SearchData applies it first; the front ends call it ahead
+// of their own pre-check of the expression attributes, which DynamoDB runs after it.
+func (t *Table) ValidateSearchIndex(name string) error {
+	if name == PrimaryIndexName {
+		return nil
+	}
+
+	if _, ok := t.Indexes[name]; !ok {
+		return validationError(msgNoSuchIndex+name, "table", t.Name)
+	}
+
+	return nil
+}
+
 // IndexWriteDelta is how a write touches one secondary index, used to compute the per-index
 // write ConsumedCapacity. Before and After are the item as it sat in the index and as it lands in
 // it (honoring the index's ProjectionType); each is nil when the item is not indexed there, which
@@ -1159,6 +1175,10 @@ type SearchResult struct {
 
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+	if err := t.ValidateSearchIndex(input.Index); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := validateSearchInputMaps(input); err != nil {
 		return SearchResult{}, err
 	}

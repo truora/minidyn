@@ -603,12 +603,18 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 		return nil, ferr
 	}
 
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
+	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	table, err := fd.getTable(aws.ToString(input.TableName))
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if err = table.ValidateSearchIndex(aws.ToString(input.IndexName)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
@@ -665,12 +671,18 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		return nil, ferr
 	}
 
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
+	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	table, err := fd.getTable(aws.ToString(input.TableName))
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if err = table.ValidateSearchIndex(aws.ToString(input.IndexName)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}

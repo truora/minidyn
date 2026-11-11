@@ -220,7 +220,7 @@ func (t *Table) GetItem(key map[string]*types.Item, projectionExpr string, alias
 		return ReadItem{}, err
 	}
 
-	storageKey, err := t.checkedKeyOf(key)
+	storageKey, err := t.CheckedKeyOf(key)
 	if err != nil {
 		return ReadItem{}, err
 	}
@@ -234,7 +234,7 @@ func (t *Table) BatchGetItem(keys []map[string]*types.Item, projectionExpr strin
 	storageKeys := make([]string, len(keys))
 
 	for i, key := range keys {
-		storageKey, err := t.checkedKeyOf(key)
+		storageKey, err := t.CheckedKeyOf(key)
 		if err != nil {
 			return nil, err
 		}
@@ -1575,14 +1575,14 @@ func (t *Table) ValidatePutItem(item map[string]*types.Item) error {
 // ValidateDeleteKey runs the checks Delete makes on a key that do not depend on a condition, in
 // the same order. It changes nothing.
 func (t *Table) ValidateDeleteKey(key map[string]*types.Item) error {
-	_, err := t.checkedKeyOf(key)
+	_, err := t.CheckedKeyOf(key)
 
 	return err
 }
 
-// checkedKeyOf runs the checks a key gets before it is read or deleted and returns its storage
+// CheckedKeyOf runs the checks a key gets before it is read or deleted and returns its storage
 // key: its values, that it holds exactly the primary key attributes, and that none is missing.
-func (t *Table) checkedKeyOf(key map[string]*types.Item) (string, error) {
+func (t *Table) CheckedKeyOf(key map[string]*types.Item) (string, error) {
 	if err := validateItemValues(key); err != nil {
 		return "", err
 	}

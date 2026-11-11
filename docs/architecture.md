@@ -183,7 +183,9 @@ never goes through it.
     projection, then the key, and returns the error as a `types.Error`.
     `BatchGetItem` goes through `Table.BatchGetItem` once per table, which
     checks every key, then the projection. The front ends have no conversion
-    of their own left.
+    of their own left. A transactional `ConditionCheck` reads its item with
+    `Table.GetItem`, and the keys of a `TransactGetItems` go through
+    `Table.CheckedKeyOf`, so they use the same key check.
   - `ResourceNotFoundException` comes from `core` only for a missing index.
     The front ends build the SDK error for a missing table themselves.
   - `ErrUnsupportedFeature` is what `Native` returns when nothing is

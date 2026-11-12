@@ -484,9 +484,13 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		return nil, ferr
 	}
 
-	// DynamoDB reports the Key ahead of the rest of the request. An unknown table is reported
-	// where it always was, after the expressions.
+	// DynamoDB reports ReturnValues, then the Key, ahead of the rest of the request. An unknown
+	// table is reported where it always was, after the expressions.
 	if table, tableErr := fd.getTable(aws.ToString(input.TableName)); tableErr == nil {
+		if err := core.ValidateUpdateItemReturnValues(aws.String(string(input.ReturnValues))); err != nil {
+			return nil, mapKnownError(err)
+		}
+
 		if err := table.ValidatePrimaryKeyMap(mapDynamoToTypesMapItem(input.Key)); err != nil {
 			return nil, mapKnownError(mtypes.NewError("ValidationException", err.Error(), nil))
 		}

@@ -88,7 +88,7 @@ func TestUpdateDelete_keyBeforeExpressions(t *testing.T) {
 			Key: emptyKey, UpdateExpression: "SET n = :v", ReturnValues: new("BOGUS"),
 			ExpressionAttributeValues: map[string]*types.Item{":v": {S: new("x")}},
 		})
-		require.ErrorContains(t, err, "returnValues")
+		require.ErrorContains(t, err, "Return values set to invalid value")
 	})
 
 	t.Run("put reports the key values before the placeholders", func(t *testing.T) {

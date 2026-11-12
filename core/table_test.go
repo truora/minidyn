@@ -1087,7 +1087,7 @@ func TestUpdateInvalidReturnValues(t *testing.T) {
 		ExpressionAttributeValues: map[string]*types.Item{":new": {S: new("X")}},
 	})
 	c.Error(err)
-	c.Contains(err.Error(), "returnValues")
+	c.Contains(err.Error(), "Return values set to invalid value")
 
 	newTable.Clear()
 }

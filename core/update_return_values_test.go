@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"sort"
 	"testing"
 
@@ -59,6 +60,48 @@ func updatedValuesRun(t *testing.T, base map[string]*types.Item, expr string, na
 	require.NoError(t, err)
 
 	return out
+}
+
+// UpdateItem rejects an invalid ReturnValues with the text of PutItem and DeleteItem, and
+// before it looks at the key.
+func TestUpdateReturnValuesMessageAndOrder(t *testing.T) {
+	for _, rv := range []*string{nil, new(""), new("NONE"), new("ALL_OLD"), new("UPDATED_OLD"), new("UPDATED_NEW"), new("ALL_NEW")} {
+		require.NoError(t, ValidateUpdateItemReturnValues(rv))
+	}
+
+	for _, bad := range []string{"BOGUS", "all_new", "ALL_NEWS"} {
+		err := ValidateUpdateItemReturnValues(&bad)
+
+		var tErr types.Error
+
+		require.True(t, errors.As(err, &tErr), bad)
+		require.Equal(t, "ValidationException", tErr.Code())
+		require.Equal(t, "Return values set to invalid value"+types.Detail("value", bad, "field", "ReturnValues"), tErr.Message())
+	}
+
+	table, err := createPokemonTable()
+	require.NoError(t, err)
+
+	_, err = table.Update(&types.UpdateItemInput{
+		TableName:        &table.Name,
+		Key:              map[string]*types.Item{"id": {S: aws.String("")}, "name": {S: aws.String("b")}},
+		ReturnValues:     aws.String("BOGUS"),
+		UpdateExpression: "SET x = :v",
+	})
+	require.ErrorContains(t, err, "Return values set to invalid value")
+	require.NotContains(t, err.Error(), "validation error detected")
+
+	// It comes before the expressions too: an undeclared #name, a syntax error.
+	for name, expr := range map[string]string{"undeclared name": "SET #n = :v", "syntax error": "SET"} {
+		_, err = table.Update(&types.UpdateItemInput{
+			TableName:                 &table.Name,
+			Key:                       map[string]*types.Item{"id": {S: aws.String("a")}, "name": {S: aws.String("b")}},
+			ReturnValues:              aws.String("BOGUS"),
+			UpdateExpression:          expr,
+			ExpressionAttributeValues: map[string]*types.Item{":v": {S: aws.String("x")}},
+		})
+		require.ErrorContains(t, err, "Return values set to invalid value", name)
+	}
 }
 
 func sortedKeys(m map[string]*types.Item) []string {

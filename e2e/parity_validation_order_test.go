@@ -109,12 +109,25 @@ func TestE2E_ValidationOrder_Writes(t *testing.T) {
 	}
 	vx := ekItem{":v": ekS("x")}
 	rvoccf := dynamodbtypes.ReturnValuesOnConditionCheckFailure("BOGUS")
+	unknownTableUpdate := func(mod func(*dynamodb.UpdateItemInput)) func(ctx context.Context, c *dynamodb.Client) string {
+		return update(okKey, "SET n = :v", vx, func(u *dynamodb.UpdateItemInput) {
+			u.TableName = aws.String("no-such-table")
+			mod(u)
+		})
+	}
+	badRV := func(u *dynamodb.UpdateItemInput) { u.ReturnValues = dynamodbtypes.ReturnValue("BOGUS") }
+	badRVAndRVOCCF := func(u *dynamodb.UpdateItemInput) {
+		u.ReturnValues = dynamodbtypes.ReturnValue("BOGUS")
+		u.ReturnValuesOnConditionCheckFailure = rvoccf
+	}
 
 	tests := []struct {
 		name string
 		fn   func(ctx context.Context, c *dynamodb.Client) string
 	}{
-		// UpdateItem: ReturnValues, the key, RVOCCF, then the placeholders
+		// UpdateItem: ReturnValues, the key, RVOCCF, then the placeholders is what minidyn does.
+		// Local reports RVOCCF after the unused names and values and the undefined placeholders
+		// (#243), so no case here sends an invalid RVOCCF together with a placeholder problem.
 		{"UpdateEmptyKeyUndefinedValue", update(emptySK, "SET n = :v", nil, nil)},
 		{"UpdateEmptyKeyUndeclaredName", update(emptySK, "SET #n = :v", vx, nil)},
 		{"UpdateEmptyKeySyntaxError", update(emptySK, "SET", nil, nil)},
@@ -124,6 +137,17 @@ func TestE2E_ValidationOrder_Writes(t *testing.T) {
 		{"UpdateMissingRangeKeyInvalidRVOCCF", update(noSK, "SET n = :v", vx, func(u *dynamodb.UpdateItemInput) { u.ReturnValuesOnConditionCheckFailure = rvoccf })},
 		{"UpdateEmptyKeyTargetsKeyAndUndefinedValue", update(emptySK, "SET pk = :v", nil, nil)},
 		{"UpdateValidKeyInvalidRVOCCF", update(okKey, "SET n = :v", vx, func(u *dynamodb.UpdateItemInput) { u.ReturnValuesOnConditionCheckFailure = rvoccf })},
+		{"UpdateValidKeyInvalidReturnValues", update(okKey, "SET n = :v", vx, badRV)},
+		{"UpdateEmptyKeyInvalidReturnValues", update(emptySK, "SET n = :v", vx, badRV)},
+		{"UpdateMissingRangeKeyInvalidReturnValues", update(noSK, "SET n = :v", vx, badRV)},
+		{"UpdateInvalidReturnValuesUndefinedValue", update(okKey, "SET n = :v", nil, badRV)},
+		{"UpdateInvalidReturnValuesUndeclaredName", update(okKey, "SET #n = :v", vx, badRV)},
+		{"UpdateInvalidReturnValuesSyntaxError", update(okKey, "SET", nil, badRV)},
+		{"UpdateInvalidReturnValuesInvalidRVOCCF", update(okKey, "SET n = :v", vx, badRVAndRVOCCF)},
+		{"UpdateInvalidReturnValuesEmptyKeyInvalidRVOCCF", update(emptySK, "SET n = :v", vx, badRVAndRVOCCF)},
+		{"UpdateLowercaseReturnValues", update(okKey, "SET n = :v", vx, func(u *dynamodb.UpdateItemInput) { u.ReturnValues = dynamodbtypes.ReturnValue("all_new") })},
+		{"UpdateInvalidReturnValuesUnusedValue", update(okKey, "SET n = :v", ekItem{":v": ekS("x"), ":unused": ekS("y")}, badRV)},
+		{"UpdateInvalidReturnValuesUnknownTable", unknownTableUpdate(badRV)},
 		// DeleteItem: the key, then the placeholders
 		{"DeleteEmptyKeyUndefinedValue", del(emptySK, func(d *dynamodb.DeleteItemInput) { d.ConditionExpression = aws.String("n = :x") })},
 		{"DeleteEmptyKeyUndeclaredName", del(emptySK, func(d *dynamodb.DeleteItemInput) { d.ConditionExpression = aws.String("attribute_exists(#n)") })},

@@ -75,6 +75,9 @@ func (s *Server) EmulateFailureForTable(tableName string, condition FailureCondi
 // key map. It is sticky until cleared with EmulateUnprocessedItems(tableName, nil) or
 // ClearUnprocessedItems. Single-item operations are unaffected. A global or
 // table-scoped EmulateFailure overrides this and hard-fails the whole batch.
+//
+// The predicate runs while the client lock is held, so it must not call the client
+// (any method on it, or on the Server); doing so deadlocks.
 func (s *Server) EmulateUnprocessedItems(tableName string, match func(n int, raw map[string]*AttributeValue) bool) {
 	if s == nil || s.client == nil {
 		return

@@ -41,6 +41,9 @@ func NewClient() *Client {
 }
 
 func (c *Client) setFailureCondition(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.forceFailureErr = err
 }
 
@@ -109,7 +112,7 @@ func (c *Client) clearUnprocessedMatchers() {
 	c.unprocessedMatchers = map[string]func(int, map[string]*AttributeValue) bool{}
 }
 
-// batchEmulation is a lock-free snapshot of the failure emulation that applies to a
+// batchEmulation is a snapshot of the failure emulation that applies to a
 // batch operation: a hard failure error (global or table-scoped) that fails the whole
 // call, and the per-table partial-failure predicates.
 type batchEmulation struct {
@@ -127,11 +130,8 @@ func (e batchEmulation) unprocessed(tableName string, n int, raw map[string]*Att
 
 // batchEmulationFor snapshots the emulation state relevant to a batch touching the
 // given tables. A global failure overrides everything; otherwise any table-scoped
-// failure hard-fails the whole batch. Takes c.mu briefly so the loop can run lock-free.
-func (c *Client) batchEmulationFor(tables ...string) batchEmulation {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+// failure hard-fails the whole batch. Callers must hold c.mu.
+func (c *Client) batchEmulationLocked(tables ...string) batchEmulation {
 	snap := batchEmulation{}
 
 	if c.forceFailureErr != nil {
@@ -173,6 +173,8 @@ func (c *Client) setIndexActivationDelay(delay time.Duration) {
 }
 
 // Table helpers
+
+// getTable returns the named table. Callers must hold c.mu.
 func (c *Client) getTable(tableName string) (*core.Table, error) {
 	table, ok := c.tables[tableName]
 	if !ok {
@@ -184,6 +186,9 @@ func (c *Client) getTable(tableName string) (*core.Table, error) {
 
 // CreateTable creates a new table in the in-memory engine.
 func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*CreateTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 	if _, ok := c.tables[tableName]; ok {
 		return nil, &ddbtypes.ResourceInUseException{Message: aws.String("Cannot create preexisting table")}
@@ -218,6 +223,9 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 
 // UpdateTable applies metadata changes, including GSI updates.
 func (c *Client) UpdateTable(ctx context.Context, input *UpdateTableInput) (*UpdateTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, ok := c.tables[tableName]
@@ -232,6 +240,9 @@ func (c *Client) UpdateTable(ctx context.Context, input *UpdateTableInput) (*Upd
 
 // DeleteTable removes a table and its data.
 func (c *Client) DeleteTable(ctx context.Context, input *DeleteTableInput) (*DeleteTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, err := c.getTable(tableName)
@@ -247,6 +258,9 @@ func (c *Client) DeleteTable(ctx context.Context, input *DeleteTableInput) (*Del
 
 // DescribeTable returns table metadata.
 func (c *Client) DescribeTable(ctx context.Context, input *DescribeTableInput) (*DescribeTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, err := c.getTable(tableName)
@@ -272,13 +286,13 @@ func (c *Client) ListTables(ctx context.Context, input *ListTablesInput) (*ListT
 
 // ClearTable removes all data from a specific table, including its indexes.
 func (c *Client) ClearTable(tableName string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	table, err := c.getTable(tableName)
 	if err != nil {
 		return err
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	table.Clear()
 
@@ -318,6 +332,11 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.putItemLocked(ctx, input)
+}
+
+// putItemLocked is PutItem for callers that hold c.mu.
+func (c *Client) putItemLocked(_ context.Context, input *PutItemInput) (*PutItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -380,6 +399,11 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.deleteItemLocked(ctx, input)
+}
+
+// deleteItemLocked is DeleteItem for callers that hold c.mu.
+func (c *Client) deleteItemLocked(_ context.Context, input *DeleteItemInput) (*DeleteItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -523,6 +547,11 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.getItemLocked(ctx, input)
+}
+
+// getItemLocked is GetItem for callers that hold c.mu.
+func (c *Client) getItemLocked(_ context.Context, input *GetItemInput) (*GetItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -783,6 +812,9 @@ func batchWriteRequestKey(req WriteRequest) map[string]*AttributeValue {
 // predicate selects individual sub-requests to leave unprocessed while the rest are
 // applied.
 func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput) (*BatchWriteItemOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if err := validateBatchWriteItemInput(input); err != nil {
 		return nil, err
 	}
@@ -792,7 +824,7 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
+	emulation := c.batchEmulationLocked(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
@@ -826,10 +858,8 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 
 // validateBatchWriteRequests rejects the whole batch when any request is invalid, so no request
 // is applied before one fails (D8). The checks and their order live in core.ValidateBatchWrite.
+// Callers must hold c.mu.
 func (c *Client) validateBatchWriteRequests(requestItems map[string][]WriteRequest) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	requests := make(map[string][]core.WriteRequest, len(requestItems))
 
 	for name, reqs := range requestItems {
@@ -865,24 +895,25 @@ func (c *Client) validateBatchWriteRequests(requestItems map[string][]WriteReque
 // applyBatchWriteRequest runs one put or delete sub-request and, when consumed capacity is
 // reported, bills it into acc. Sizes are measured before the request is applied: a delete bills
 // the item it removes and a put the larger of the item it replaces and the item it writes.
+// Callers must hold c.mu.
 func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, req WriteRequest, mode capacity.Mode, acc *capacity.WriteAccumulator) error {
 	var target capacity.WriteTarget
 
 	if mode != capacity.ModeNone {
 		target = batchWriteTarget(tableName, req)
-		c.snapshotLocked(&target)
+		target.Snapshot(c.tableOrNil)
 	}
 
 	var err error
 	if req.PutRequest != nil {
-		_, err = c.PutItem(ctx, &PutItemInput{
+		_, err = c.putItemLocked(ctx, &PutItemInput{
 			TableName: aws.String(tableName),
 			Item:      req.PutRequest.Item,
 		})
 	}
 
 	if req.DeleteRequest != nil {
-		_, err = c.DeleteItem(ctx, &DeleteItemInput{
+		_, err = c.deleteItemLocked(ctx, &DeleteItemInput{
 			TableName: aws.String(tableName),
 			Key:       req.DeleteRequest.Key,
 		})
@@ -893,7 +924,7 @@ func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, r
 	}
 
 	if mode != capacity.ModeNone {
-		size, indexes := c.billLocked(&target)
+		size, indexes := target.Bill(c.tableOrNil)
 		acc.Add(tableName, size, indexes, 1)
 	}
 
@@ -957,6 +988,9 @@ func validateBatchGetItemInput(input *BatchGetItemInput) error {
 // UnprocessedKeys is produced only by EmulateUnprocessedItems, whose predicate selects
 // individual keys to leave unprocessed while the rest are fetched.
 func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*BatchGetItemOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if err := validateBatchGetItemInput(input); err != nil {
 		return nil, err
 	}
@@ -966,7 +1000,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
+	emulation := c.batchEmulationLocked(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
@@ -998,6 +1032,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	}, nil
 }
 
+// batchGetItemForTable reads one table of a BatchGetItem. Callers must hold c.mu.
 func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation, mode capacity.Mode) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
 	read, err := c.batchGetTable(tableName, reqs)
 	if err != nil {
@@ -1031,12 +1066,9 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 	return responses, unprocessedKeys, units, nil
 }
 
-// batchGetTable reads every key of one table of a BatchGetItem under one lock, checking all the
-// keys, then the projection once. Keys the unprocessed emulation skips are checked too.
+// batchGetTable reads every key of one table of a BatchGetItem, checking all the keys, then the
+// projection once. Keys the unprocessed emulation skips are checked too. Callers must hold c.mu.
 func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes) ([]core.ReadItem, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
 		return nil, err
 	}
@@ -1059,6 +1091,8 @@ func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes) ([]core
 	return read, nil
 }
 
+// prepareTransact validates a transaction and snapshots the tables it touches. Callers must
+// hold c.mu.
 func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {
 	snapshots := map[string]core.TableSnapshot{}
 	seenKeys := make(map[string]struct{}, len(items))
@@ -1240,6 +1274,7 @@ func transactWriteTargets(items []TransactWriteItem) []capacity.WriteTarget {
 	return targets
 }
 
+// validateTransactGetItemsInput checks the request shape and every key. The caller must hold c.mu.
 func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {
 	if input == nil {
 		return nil
@@ -1307,6 +1342,9 @@ func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) erro
 
 // TransactGetItems atomically retrieves multiple items from one or more tables.
 func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsInput) (*TransactGetItemsOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if err := validateTransactGetItemsInput(c, input); err != nil {
 		return nil, err
 	}
@@ -1322,7 +1360,7 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 	for _, item := range input.TransactItems {
 		get := item.Get
 
-		out, err := c.GetItem(ctx, &GetItemInput{
+		out, err := c.getItemLocked(ctx, &GetItemInput{
 			TableName:                get.TableName,
 			Key:                      get.Key,
 			ExpressionAttributeNames: get.ExpressionAttributeNames,
@@ -1345,6 +1383,8 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 	}, nil
 }
 
+// runTransactItem and the runTransact* helpers below apply one transaction item. Callers must
+// hold c.mu.
 func (c *Client) runTransactItem(i, n int, item TransactWriteItem) error {
 	switch {
 	case item.Put != nil:

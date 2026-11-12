@@ -108,6 +108,11 @@ never goes through it.
   the item.
 
   On `main` these checks are up front:
+  - the `IndexName` of a Query or Scan (#241): after the table itself and
+    before the placeholders, the key condition, `Select` and
+    `ConsistentRead`, and ahead of the front ends' pre-check of the
+    expression attributes (`Table.ValidateSearchIndex`). Local checks the
+    Query `Limit` (#242) before the index;
   - undeclared `#names`, then undefined `:values` (#190). Across all of a
     request's expressions an undeclared name comes before an undefined value;
     an UpdateExpression comes before a ConditionExpression; and, for undefined
@@ -140,6 +145,10 @@ never goes through it.
     then the attribute definitions, then builds the created index;
   - `CreateTable` (`Table.AddIndexes`) checks each LSI completely (name, shape,
     key attributes) before any GSI.
+- **Gap (#243):** the front ends call `Table.ValidateSearchIndex` before their
+  own pre-check of unused names and values, because Local reports a missing
+  table and an unknown index before them. This is a stopgap until #243 moves
+  that pre-check into `core`, where `SearchData` already orders it.
 - **Why:** with per-item checks, the same bad request passes on an empty table
   and fails on a full one, and the error depends on the data.
 - **Check:** is a new validation reachable on an empty table? Does a unit test
@@ -174,7 +183,9 @@ never goes through it.
     projection, then the key, and returns the error as a `types.Error`.
     `BatchGetItem` goes through `Table.BatchGetItem` once per table, which
     checks every key, then the projection. The front ends have no conversion
-    of their own left.
+    of their own left. A transactional `ConditionCheck` reads its item with
+    `Table.GetItem`, and the keys of a `TransactGetItems` go through
+    `Table.CheckedKeyOf`, so they use the same key check.
   - `ResourceNotFoundException` comes from `core` only for a missing index.
     The front ends build the SDK error for a missing table themselves.
   - `ErrUnsupportedFeature` is what `Native` returns when nothing is

@@ -88,6 +88,22 @@ func (t *Table) IndexKind(name string) string {
 	return "GSI"
 }
 
+// ValidateSearchIndex rejects the IndexName of a Query or Scan when the table has no such
+// index, as DynamoDB does: before anything else of the request is looked at. The primary index
+// (an empty name) is always there. SearchData applies it first; the front ends call it ahead
+// of their own pre-check of the expression attributes, which DynamoDB runs after it.
+func (t *Table) ValidateSearchIndex(name string) error {
+	if name == PrimaryIndexName {
+		return nil
+	}
+
+	if _, ok := t.Indexes[name]; !ok {
+		return validationError(msgNoSuchIndex+name, "table", t.Name)
+	}
+
+	return nil
+}
+
 // IndexWriteDelta is how a write touches one secondary index, used to compute the per-index
 // write ConsumedCapacity. Before and After are the item as it sat in the index and as it lands in
 // it (honoring the index's ProjectionType); each is nil when the item is not indexed there, which
@@ -204,7 +220,7 @@ func (t *Table) GetItem(key map[string]*types.Item, projectionExpr string, alias
 		return ReadItem{}, err
 	}
 
-	storageKey, err := t.checkedKeyOf(key)
+	storageKey, err := t.CheckedKeyOf(key)
 	if err != nil {
 		return ReadItem{}, err
 	}
@@ -218,7 +234,7 @@ func (t *Table) BatchGetItem(keys []map[string]*types.Item, projectionExpr strin
 	storageKeys := make([]string, len(keys))
 
 	for i, key := range keys {
-		storageKey, err := t.checkedKeyOf(key)
+		storageKey, err := t.CheckedKeyOf(key)
 		if err != nil {
 			return nil, err
 		}
@@ -1159,6 +1175,10 @@ type SearchResult struct {
 
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+	if err := t.ValidateSearchIndex(input.Index); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := validateSearchInputMaps(input); err != nil {
 		return SearchResult{}, err
 	}
@@ -1555,14 +1575,14 @@ func (t *Table) ValidatePutItem(item map[string]*types.Item) error {
 // ValidateDeleteKey runs the checks Delete makes on a key that do not depend on a condition, in
 // the same order. It changes nothing.
 func (t *Table) ValidateDeleteKey(key map[string]*types.Item) error {
-	_, err := t.checkedKeyOf(key)
+	_, err := t.CheckedKeyOf(key)
 
 	return err
 }
 
-// checkedKeyOf runs the checks a key gets before it is read or deleted and returns its storage
+// CheckedKeyOf runs the checks a key gets before it is read or deleted and returns its storage
 // key: its values, that it holds exactly the primary key attributes, and that none is missing.
-func (t *Table) checkedKeyOf(key map[string]*types.Item) (string, error) {
+func (t *Table) CheckedKeyOf(key map[string]*types.Item) (string, error) {
 	if err := validateItemValues(key); err != nil {
 		return "", err
 	}

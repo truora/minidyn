@@ -603,12 +603,18 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 		return nil, ferr
 	}
 
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
+	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	table, err := fd.getTable(aws.ToString(input.TableName))
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if err = table.ValidateSearchIndex(aws.ToString(input.IndexName)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
@@ -665,12 +671,18 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		return nil, ferr
 	}
 
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
+	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	table, err := fd.getTable(aws.ToString(input.TableName))
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if err = table.ValidateSearchIndex(aws.ToString(input.IndexName)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
@@ -1212,18 +1224,9 @@ func validateTransactGetItemsInput(fd *Client, input *dynamodb.TransactGetItemsI
 			return mapKnownError(err)
 		}
 
-		internalKeyMap := mapDynamoToTypesMapItem(get.Key)
-		if vErr := mtypes.ValidateItemMap(internalKeyMap); vErr != nil {
-			return mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
-		}
-
-		if keyErr := table.ValidatePrimaryKeyMap(internalKeyMap); keyErr != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-		}
-
-		key, err := table.KeySchema.GetKey(table.AttributesDef, internalKeyMap)
+		key, err := table.CheckedKeyOf(mapDynamoToTypesMapItem(get.Key))
 		if err != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+			return mapKnownError(err)
 		}
 
 		id := tableName + "|" + key
@@ -1392,24 +1395,12 @@ func (fd *Client) runTransactConditionCheck(i, n int, check *types.ConditionChec
 		return mapKnownError(tErr)
 	}
 
-	keyMap := mapDynamoToTypesMapItem(check.Key)
-	if vErr := mtypes.ValidateItemMap(keyMap); vErr != nil {
-		return mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
-	}
-
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, kErr := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, kErr := table.GetItem(mapDynamoToTypesMapItem(check.Key), "", nil)
 	if kErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: kErr.Error()}
+		return mapKnownError(kErr)
 	}
 
-	stored := table.Data[key]
-	if stored == nil {
-		stored = map[string]*mtypes.Item{}
-	}
+	stored := read.Stored
 
 	matched, mErr := table.InterpreterMatch(interpreter.MatchInput{
 		TableName:      table.Name,

@@ -578,19 +578,25 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		return nil, ferr
 	}
 
-	if err := validateExpressionAttributes(
+	table, err := c.getTable(aws.ToString(input.TableName))
+	if err != nil {
+		return nil, err
+	}
+
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if ierr := table.ValidateSearchIndex(aws.ToString(input.IndexName)); ierr != nil {
+		return nil, mapKnownError(ierr)
+	}
+
+	if verr := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
 		aws.ToString(input.KeyConditionExpression),
 		aws.ToString(input.FilterExpression),
 		aws.ToString(input.ProjectionExpression),
-	); err != nil {
-		return nil, err
-	}
-
-	table, err := c.getTable(aws.ToString(input.TableName))
-	if err != nil {
-		return nil, err
+	); verr != nil {
+		return nil, verr
 	}
 
 	if input.ScanIndexForward == nil {
@@ -648,18 +654,24 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, ferr
 	}
 
-	if err := validateExpressionAttributes(
+	table, err := c.getTable(aws.ToString(input.TableName))
+	if err != nil {
+		return nil, err
+	}
+
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if ierr := table.ValidateSearchIndex(aws.ToString(input.IndexName)); ierr != nil {
+		return nil, mapKnownError(ierr)
+	}
+
+	if verr := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
 		aws.ToString(input.ProjectionExpression),
 		aws.ToString(input.FilterExpression),
-	); err != nil {
-		return nil, err
-	}
-
-	table, err := c.getTable(aws.ToString(input.TableName))
-	if err != nil {
-		return nil, err
+	); verr != nil {
+		return nil, verr
 	}
 
 	res, err := table.SearchData(core.QueryInput{
@@ -1269,18 +1281,9 @@ func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) erro
 			return mapKnownError(err)
 		}
 
-		internalKeyMap := mapAttributeValueMapToTypes(get.Key)
-		if vErr := types.ValidateItemMap(internalKeyMap); vErr != nil {
-			return mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
-		}
-
-		if keyErr := table.ValidatePrimaryKeyMap(internalKeyMap); keyErr != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-		}
-
-		key, err := table.KeySchema.GetKey(table.AttributesDef, internalKeyMap)
+		key, err := table.CheckedKeyOf(mapAttributeValueMapToTypes(get.Key))
 		if err != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+			return mapKnownError(err)
 		}
 
 		id := tableName + "|" + key
@@ -1437,24 +1440,12 @@ func (c *Client) runTransactConditionCheck(i, n int, check *ConditionCheck) erro
 		return mapKnownError(tErr)
 	}
 
-	keyMap := mapAttributeValueMapToTypes(check.Key)
-	if vErr := types.ValidateItemMap(keyMap); vErr != nil {
-		return mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
-	}
-
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, kErr := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, kErr := table.GetItem(mapAttributeValueMapToTypes(check.Key), "", nil)
 	if kErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: kErr.Error()}
+		return mapKnownError(kErr)
 	}
 
-	stored := table.Data[key]
-	if stored == nil {
-		stored = map[string]*types.Item{}
-	}
+	stored := read.Stored
 
 	matched, mErr := table.InterpreterMatch(interpreter.MatchInput{
 		TableName:      table.Name,

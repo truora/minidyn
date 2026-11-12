@@ -364,3 +364,124 @@ func TestE2E_ValidationOrder_GetItemProjection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) { RunE2E(t, voRun(tt.fn)) })
 	}
 }
+
+// A Query or Scan naming an index the table does not have is rejected before the rest of
+// the request is looked at or any item is read. These cases pin where that error sits
+// among the other problems a request can have.
+func TestE2E_ValidationOrder_UnknownIndex(t *testing.T) {
+	type searchFn = func(ctx context.Context, c *dynamodb.Client) string
+
+	query := func(index, cond string, vals ekItem, mod func(*dynamodb.QueryInput)) searchFn {
+		return func(ctx context.Context, c *dynamodb.Client) string {
+			in := &dynamodb.QueryInput{
+				TableName: aws.String(emptyKeyTable), IndexName: aws.String(index),
+				KeyConditionExpression: aws.String(cond), ExpressionAttributeValues: vals,
+			}
+			if mod != nil {
+				mod(in)
+			}
+
+			out, err := c.Query(ctx, in)
+			if err != nil {
+				return fuzzErrString(err)
+			}
+
+			return fmt.Sprintf("ok items=%d", len(out.Items))
+		}
+	}
+	scan := func(index string, mod func(*dynamodb.ScanInput)) searchFn {
+		return func(ctx context.Context, c *dynamodb.Client) string {
+			in := &dynamodb.ScanInput{TableName: aws.String(emptyKeyTable), IndexName: aws.String(index)}
+			if mod != nil {
+				mod(in)
+			}
+
+			out, err := c.Scan(ctx, in)
+			if err != nil {
+				return fuzzErrString(err)
+			}
+
+			return fmt.Sprintf("ok items=%d", len(out.Items))
+		}
+	}
+	// The key condition is the one a query of the table would accept, as the index is unknown.
+	const cond = "pk = :p"
+
+	validVals := ekItem{":p": ekS("a")}
+	badSelect := func(in *dynamodb.QueryInput) { in.Select = dynamodbtypes.Select("BOGUS") }
+	consistent := func(in *dynamodb.QueryInput) { in.ConsistentRead = aws.Bool(true) }
+
+	tests := []struct {
+		name string
+		fn   searchFn
+	}{
+		{"QueryUnknownIndex", query("nope", cond, validVals, nil)},
+		{"ScanUnknownIndex", scan("nope", nil)},
+		{"QueryUnknownIndexEmptyHash", query("nope", cond, ekItem{":p": ekS("")}, nil)},
+		{"QueryUnknownIndexHashTypeMismatch", query("nope", cond, ekItem{":p": voN("1")}, nil)},
+		{"QueryUnknownIndexBetweenReversed", query("nope", "pk = :p AND sk BETWEEN :a AND :b",
+			ekItem{":p": ekS("a"), ":a": ekS("z"), ":b": ekS("a")}, nil)},
+		{"QueryUnknownIndexNotTheKeyAttribute", query("nope", "g = :p", validVals, nil)},
+		{"QueryUnknownIndexUndeclaredName", query("nope", "#n = :p", validVals, nil)},
+		{"QueryUnknownIndexUndefinedValue", query("nope", cond, nil, nil)},
+		{"QueryUnknownIndexInvalidSelect", query("nope", cond, validVals, badSelect)},
+		{"QueryUnknownIndexAllProjectedSelect", query("nope", cond, validVals, func(in *dynamodb.QueryInput) {
+			in.Select = dynamodbtypes.SelectAllProjectedAttributes
+		})},
+		{"QueryUnknownIndexConsistentRead", query("nope", cond, validVals, consistent)},
+		{"QueryUnknownIndexUnusedName", query("nope", cond, validVals, func(in *dynamodb.QueryInput) {
+			in.ExpressionAttributeNames = map[string]string{"#u": "g"}
+		})},
+		{"QueryUnknownIndexUnusedValue", query("nope", cond, ekItem{":p": ekS("a"), ":u": ekS("x")}, nil)},
+		{"QueryUnknownIndexInvalidNameAlias", query("nope", cond, validVals, func(in *dynamodb.QueryInput) {
+			in.ExpressionAttributeNames = map[string]string{"bad": "g"}
+		})},
+		{"QueryUnknownIndexUndeclaredFilterName", query("nope", cond, validVals, func(in *dynamodb.QueryInput) {
+			in.FilterExpression = aws.String("#f = :p")
+		})},
+		{"ScanUnknownIndexUndeclaredName", scan("nope", func(in *dynamodb.ScanInput) {
+			in.FilterExpression = aws.String("#n = :v")
+			in.ExpressionAttributeValues = ekItem{":v": ekS("x")}
+		})},
+		{"ScanUnknownIndexUndefinedValue", scan("nope", func(in *dynamodb.ScanInput) {
+			in.FilterExpression = aws.String("g = :v")
+		})},
+		{"ScanUnknownIndexInvalidSelect", scan("nope", func(in *dynamodb.ScanInput) {
+			in.Select = dynamodbtypes.Select("BOGUS")
+		})},
+		{"ScanUnknownIndexConsistentRead", scan("nope", func(in *dynamodb.ScanInput) {
+			in.ConsistentRead = aws.Bool(true)
+		})},
+		{"ScanUnknownIndexUnusedName", scan("nope", func(in *dynamodb.ScanInput) {
+			in.ExpressionAttributeNames = map[string]string{"#u": "g"}
+		})},
+		// A missing table is reported before the unknown index and the pre-check of the names.
+		{"QueryMissingTableUnknownIndex", func(ctx context.Context, c *dynamodb.Client) string {
+			_, err := c.Query(ctx, &dynamodb.QueryInput{
+				TableName: aws.String("missing"), IndexName: aws.String("nope"),
+				KeyConditionExpression: aws.String(cond), ExpressionAttributeValues: validVals,
+			})
+
+			return fuzzErrString(err)
+		}},
+		{"QueryMissingTableUnusedName", func(ctx context.Context, c *dynamodb.Client) string {
+			_, err := c.Query(ctx, &dynamodb.QueryInput{
+				TableName: aws.String("missing"), KeyConditionExpression: aws.String(cond),
+				ExpressionAttributeValues: validVals, ExpressionAttributeNames: map[string]string{"#u": "g"},
+			})
+
+			return fuzzErrString(err)
+		}},
+		{"ScanMissingTableUnusedName", func(ctx context.Context, c *dynamodb.Client) string {
+			_, err := c.Scan(ctx, &dynamodb.ScanInput{
+				TableName: aws.String("missing"), ExpressionAttributeNames: map[string]string{"#u": "g"},
+			})
+
+			return fuzzErrString(err)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { RunE2E(t, voRun(tt.fn)) })
+	}
+}

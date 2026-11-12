@@ -21,6 +21,7 @@ const (
 	msgNullGSIAction      = "Update global secondary index action is null"
 	msgOneUpdatePerName   = "Only one global secondary index update per index is allowed simultaneously."
 	msgIndexExists        = "Attempting to create an index which already exists"
+	msgNoSuchIndex        = "The table does not have the specified index: "
 	msgIndexLimit         = "Subscriber limit exceeded: Only 1 online index can be created or deleted simultaneously per table"
 )
 

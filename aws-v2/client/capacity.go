@@ -17,22 +17,6 @@ func (fd *Client) tableOrNil(name string) *core.Table {
 	return table
 }
 
-// snapshotLocked measures a write target's stored item, for callers that do not hold fd.mu.
-func (fd *Client) snapshotLocked(t *capacity.WriteTarget) {
-	fd.mu.Lock()
-	defer fd.mu.Unlock()
-
-	t.Snapshot(fd.tableOrNil)
-}
-
-// billLocked bills a write target once applied, for callers that do not hold fd.mu.
-func (fd *Client) billLocked(t *capacity.WriteTarget) (int, []capacity.IndexWrite) {
-	fd.mu.Lock()
-	defer fd.mu.Unlock()
-
-	return t.Bill(fd.tableOrNil)
-}
-
 // toSDKConsumed maps a capacity.Consumed into the AWS SDK ConsumedCapacity shape.
 // It returns nil for a nil input (ReturnConsumedCapacity=NONE/unset), so callers can
 // assign the result directly and leave the field omitted.

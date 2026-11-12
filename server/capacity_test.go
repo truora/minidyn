@@ -82,9 +82,9 @@ func TestServerWriteTargetsTolerateUnknownTables(t *testing.T) {
 		Table: "missing", Kind: capacity.WriteDelete,
 		Key: map[string]*types.Item{"id": {S: aws.String("001")}},
 	}
-	client.snapshotLocked(&target)
+	target.Snapshot(client.tableOrNil)
 
-	size, indexes := client.billLocked(&target)
+	size, indexes := target.Bill(client.tableOrNil)
 	c.Positive(size)
 	c.Nil(indexes)
 }

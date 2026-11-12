@@ -272,19 +272,27 @@ never goes through it.
     public methods.
   - `core.Table` and the interpreter do no locking. The only exception is the
     expression cache, which has its own mutex.
-- **On `main`:** `PutItem`, `GetItem`, `UpdateItem`, `DeleteItem`, `Query`,
-  `Scan`, `ListTables` and `TransactWriteItems` hold the lock for the whole
-  call.
-- **Gap (#217):**
-  - `CreateTable`, `UpdateTable`, `DeleteTable` and `DescribeTable` take no
-    lock.
-  - `BatchWriteItem`, `BatchGetItem` and `TransactGetItems` lock once per
-    sub-request by calling the public item methods, so another call can
-    interleave inside a batch. `BatchWriteItem` also validates the whole batch
-    under one lock acquisition of its own (D8), and then re-locks for each
-    request it applies, so the table can change between the validation and
-    the writes.
-  - `SetInterpreter` and `GetNativeInterpreter` take no lock.
+- **On `main`:**
+  - Every public operation of both front ends takes the lock once at the top
+    and holds it for the whole call: the table operations (`CreateTable`,
+    `UpdateTable`, `DeleteTable`, `DescribeTable`, `ListTables`), the item
+    operations, the batches (`BatchWriteItem`, `BatchGetItem`), the
+    transactions, `ClearTable`, `ClearAllTables`, `Reset` and the test knobs
+    (failure emulation, the interpreter and index-activation settings). In
+    `aws-v2` the knobs also include `SetInterpreter` and `GetNativeInterpreter`;
+    `server` has no such methods.
+  - A batch or transaction does not call another public method. It calls
+    unexported helpers that assume the lock is held: `putItemLocked`,
+    `deleteItemLocked` and `getItemLocked`, `batchEmulationLocked`,
+    `batchGetTable`, `validateBatchWriteRequests` and the `runTransact*`
+    helpers. Name such a helper with a `Locked` suffix, or say in its comment
+    that the caller must hold the lock.
+  - So a batch or transaction is not interleaved with any other call, and its
+    unprocessed-item matchers run with the lock held (a matcher must not call
+    the client). The same holds for native-interpreter matchers and updaters
+    (`AddMatcher`, `AddUpdater`) and for a custom interpreter set with
+    `SetInterpreter`: they run under the lock too, so they must not call the
+    client either.
 - **Why:** a single lock is simple to reason about. minidyn's goal is
   correctness, not throughput.
 - **Check:** does a new public method take the lock before it touches
@@ -328,10 +336,9 @@ never goes through it.
     missing table and an invalid request depends on the wire order and the
     table schema, so the parity test compares only that the batch is
     rejected and nothing is written.
-  - The validation runs under its own lock acquisition and the apply loop
-    re-locks for each request (the D7 gap, #217). So the guarantee holds
-    against the request itself, not against another call that changes a table
-    in between.
+  - The validation and the writes run under one lock acquisition (D7), so
+    the guarantee also holds against another call that changes a table while
+    the batch runs.
   - The requests are then applied one at a time. DynamoDB does not make a
     batch atomic either.
 - **Why:** a half-applied write leaves the base table and its indexes out of

@@ -207,7 +207,12 @@ func newWrappedSDKClient(t *testing.T, baseURL string, wrap func(http.RoundTripp
 	})
 }
 
-func skipIfDockerUnavailable(t *testing.T) {
+// requireDockerEnv makes a missing Docker fail the parity tests instead of skipping them.
+// tools/run-e2e sets it to 1: a parity run that skipped every comparison must not look green.
+// A plain go test run (without it) still skips, so unit runs work without Docker.
+const requireDockerEnv = "MINIDYN_E2E_REQUIRE_DOCKER"
+
+func skipIfDockerUnavailable(t testing.TB) {
 	t.Helper()
 
 	cmd := exec.Command("docker", "info")
@@ -215,6 +220,12 @@ func skipIfDockerUnavailable(t *testing.T) {
 
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
+		if os.Getenv(requireDockerEnv) == "1" {
+			t.Fatalf("docker unavailable (needed for DynamoDB Local): %v; start Docker, or set %s=0 to skip the comparisons", err, requireDockerEnv)
+
+			return
+		}
+
 		t.Skipf("docker unavailable (needed for DynamoDB Local): %v", err)
 	}
 }

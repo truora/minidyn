@@ -28,3 +28,38 @@ func TestWithDefaultTimeout(t *testing.T) {
 		})
 	}
 }
+
+// run-e2e is an explicit parity run, so it tells the e2e tests to fail rather than skip when
+// Docker is missing, unless the caller already chose a value.
+func TestGoTestEnv(t *testing.T) {
+	tests := map[string]struct {
+		environ []string
+		want    string
+	}{
+		"unset":           {environ: []string{"HOME=/h"}, want: requireDockerEnv + "=1"},
+		"caller opts out": {environ: []string{requireDockerEnv + "=0"}, want: requireDockerEnv + "=0"},
+		"caller sets 1":   {environ: []string{requireDockerEnv + "=1"}, want: requireDockerEnv + "=1"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := goTestEnv(tt.environ)
+
+			count := 0
+
+			for _, kv := range got {
+				if len(kv) > len(requireDockerEnv) && kv[:len(requireDockerEnv)+1] == requireDockerEnv+"=" {
+					count++
+
+					if kv != tt.want {
+						t.Fatalf("goTestEnv(%v) has %q, want %q", tt.environ, kv, tt.want)
+					}
+				}
+			}
+
+			if count != 1 {
+				t.Fatalf("goTestEnv(%v) sets %s %d times, want once", tt.environ, requireDockerEnv, count)
+			}
+		})
+	}
+}

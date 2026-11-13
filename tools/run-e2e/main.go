@@ -71,9 +71,26 @@ func withDefaultTimeout(extra []string) []string {
 	return append([]string{"-timeout", defaultTimeout}, extra...)
 }
 
+// requireDockerEnv is read by the e2e tests: set to 1, a missing Docker fails them instead of
+// skipping them, so a parity run that compared nothing is reported as a failure.
+const requireDockerEnv = "MINIDYN_E2E_REQUIRE_DOCKER"
+
+// goTestEnv is environ with requireDockerEnv=1 added, unless the caller already set it (0 opts
+// out, e.g. to check that the suite compiles and runs on a machine without Docker).
+func goTestEnv(environ []string) []string {
+	for _, kv := range environ {
+		if strings.HasPrefix(kv, requireDockerEnv+"=") {
+			return environ
+		}
+	}
+
+	return append(environ, requireDockerEnv+"=1")
+}
+
 func startGoTest(pattern string, extra []string) (*exec.Cmd, io.ReadCloser, error) {
 	args := append([]string{"test", "./e2e/...", "-json", "-run", pattern}, withDefaultTimeout(extra)...)
 	cmd := exec.Command("go", args...) //nolint:gosec // variable args are required here
+	cmd.Env = goTestEnv(os.Environ())
 	cmd.Stderr = os.Stderr
 
 	stdout, err := cmd.StdoutPipe()

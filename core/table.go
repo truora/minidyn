@@ -1725,7 +1725,11 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 // ValidateNoneOrAllOldReturnValues accepts the ReturnValues modes that PutItem
 // and DeleteItem support: empty, NONE and ALL_OLD.
 func ValidateNoneOrAllOldReturnValues(rv *string) error {
-	return validateNoneOrAllOld(rv, invalidReturnValuesMessage)
+	if rv == nil || isNoneOrAllOld(*rv) {
+		return nil
+	}
+
+	return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
 }
 
 // invalidReturnValuesMessage is DynamoDB's text for a ReturnValues outside the modes the
@@ -1734,33 +1738,30 @@ func invalidReturnValuesMessage(value string) string {
 	return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
 }
 
-// validateNoneOrAllOld accepts empty, NONE and ALL_OLD, and builds the
-// ValidationException message of any other value with invalid.
-func validateNoneOrAllOld(rv *string, invalid func(value string) string) error {
-	if rv == nil {
-		return nil
-	}
+// isNoneOrAllOld reports whether v is a mode of the NONE | ALL_OLD enums (ReturnValues of
+// PutItem and DeleteItem, ReturnValuesOnConditionCheckFailure). Empty means the default.
+func isNoneOrAllOld(v string) bool {
+	return v == "" || v == "NONE" || v == "ALL_OLD"
+}
 
-	switch *rv {
-	case "", "NONE", "ALL_OLD":
-		return nil
+// isUpdateReturnValue reports whether v is a ReturnValues mode of UpdateItem. Empty means the
+// default.
+func isUpdateReturnValue(v string) bool {
+	switch v {
+	case "", "NONE", "ALL_OLD", "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
+		return true
 	default:
-		return types.NewError("ValidationException", invalid(*rv), nil)
+		return false
 	}
 }
 
 // ValidateUpdateItemReturnValues accepts the ReturnValues modes UpdateItem supports.
 func ValidateUpdateItemReturnValues(rv *string) error {
-	if rv == nil || *rv == "" {
+	if rv == nil || isUpdateReturnValue(*rv) {
 		return nil
 	}
 
-	switch *rv {
-	case "NONE", "ALL_OLD", "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
-		return nil
-	default:
-		return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
-	}
+	return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
 }
 
 // writtenAttributes returns, for the top-level attributes of the written paths, the ones whose
@@ -2207,9 +2208,12 @@ func (t *Table) markIndexCreating(g *types.GlobalSecondaryIndexDescription) {
 // The front ends call it before their own expression pre-check and the table lookup, to keep
 // DynamoDB's order; Put, Update and Delete call it again, so core never runs with a bad mode.
 func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		return returnValuesOnConditionCheckFailureMessage(value, "returnValuesOnConditionCheckFailure")
-	})
+	if rv == nil || isNoneOrAllOld(*rv) {
+		return nil
+	}
+
+	return types.NewError("ValidationException",
+		returnValuesOnConditionCheckFailureMessage(*rv, "returnValuesOnConditionCheckFailure"), nil)
 }
 
 // ValidateTransactItemReturnValuesOnConditionCheckFailure validates the mode of the Put, Update,
@@ -2217,12 +2221,14 @@ func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
 // index of TransactWriteItems. DynamoDB Local accepts any value here; minidyn follows the API
 // reference ("Valid Values: ALL_OLD | NONE") and rejects the whole request.
 func ValidateTransactItemReturnValuesOnConditionCheckFailure(index int, shape string, rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		path := fmt.Sprintf("transactItems.%d.member.%s.returnValuesOnConditionCheckFailure", index+1, shape)
+	if rv == nil || isNoneOrAllOld(*rv) {
+		return nil
+	}
 
-		// DynamoDB's text already names the field and the 1-based item, so no detail is added.
-		return returnValuesOnConditionCheckFailureMessage(value, path)
-	})
+	path := fmt.Sprintf("transactItems.%d.member.%s.returnValuesOnConditionCheckFailure", index+1, shape)
+
+	// DynamoDB's text already names the field and the 1-based item, so no detail is added.
+	return types.NewError("ValidationException", returnValuesOnConditionCheckFailureMessage(*rv, path), nil)
 }
 
 func returnValuesOnConditionCheckFailureMessage(value, path string) string {

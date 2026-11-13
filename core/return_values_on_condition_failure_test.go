@@ -143,3 +143,21 @@ func TestWriteOperationsRejectInvalidReturnValuesOnConditionCheckFailure(t *test
 	})
 	require.ErrorContains(t, err, "at 'returnValuesOnConditionCheckFailure'")
 }
+
+// The ReturnValues enums: absent or empty means the default; values are case sensitive.
+func TestReturnValuesEnums(t *testing.T) {
+	for _, v := range []string{"", "NONE", "ALL_OLD"} {
+		require.True(t, isNoneOrAllOld(v), v)
+		require.True(t, isUpdateReturnValue(v), v)
+	}
+
+	for _, v := range []string{"UPDATED_OLD", "UPDATED_NEW", "ALL_NEW"} {
+		require.False(t, isNoneOrAllOld(v), v)
+		require.True(t, isUpdateReturnValue(v), v)
+	}
+
+	for _, v := range []string{"all_old", "BOGUS", " NONE"} {
+		require.False(t, isNoneOrAllOld(v), v)
+		require.False(t, isUpdateReturnValue(v), v)
+	}
+}

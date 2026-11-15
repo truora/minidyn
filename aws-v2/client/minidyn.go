@@ -80,6 +80,9 @@ func EmulateFailureForTable(client FakeClient, tableName string, condition Failu
 // key map. It is sticky until cleared with EmulateUnprocessedItems(client, tableName,
 // nil) or ClearUnprocessedItems. Single-item operations are unaffected. A global or
 // table-scoped EmulateFailure overrides this and hard-fails the whole batch.
+//
+// The predicate runs while the client lock is held, so it must not call the client
+// (any method on it, or on the Server); doing so deadlocks.
 func EmulateUnprocessedItems(client FakeClient, tableName string, match func(n int, raw map[string]types.AttributeValue) bool) {
 	fakeClient, ok := client.(*Client)
 	if !ok {
@@ -195,13 +198,13 @@ func ClearTable(client FakeClient, tableName string) error {
 		panic("ClearTable: invalid client type")
 	}
 
+	fakeClient.mu.Lock()
+	defer fakeClient.mu.Unlock()
+
 	table, err := fakeClient.getTable(tableName)
 	if err != nil {
 		return err
 	}
-
-	fakeClient.mu.Lock()
-	defer fakeClient.mu.Unlock()
 
 	table.Clear()
 

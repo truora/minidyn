@@ -38,21 +38,24 @@ type ConditionCheck struct {
 }
 
 type CreateTableInput struct {
-	AttributeDefinitions      []ddbtypes.AttributeDefinition  `json:"AttributeDefinitions,omitempty"`
-	KeySchema                 []ddbtypes.KeySchemaElement     `json:"KeySchema,omitempty"`
-	TableName                 *string                         `json:"TableName,omitempty"`
-	BillingMode               ddbtypes.BillingMode            `json:"BillingMode,omitempty"`
-	DeletionProtectionEnabled *bool                           `json:"DeletionProtectionEnabled,omitempty"`
-	GlobalSecondaryIndexes    []ddbtypes.GlobalSecondaryIndex `json:"GlobalSecondaryIndexes,omitempty"`
-	LocalSecondaryIndexes     []ddbtypes.LocalSecondaryIndex  `json:"LocalSecondaryIndexes,omitempty"`
-	OnDemandThroughput        *ddbtypes.OnDemandThroughput    `json:"OnDemandThroughput,omitempty"`
-	ProvisionedThroughput     *ddbtypes.ProvisionedThroughput `json:"ProvisionedThroughput,omitempty"`
-	ResourcePolicy            *string                         `json:"ResourcePolicy,omitempty"`
-	SSESpecification          *ddbtypes.SSESpecification      `json:"SSESpecification,omitempty"`
-	StreamSpecification       *ddbtypes.StreamSpecification   `json:"StreamSpecification,omitempty"`
-	TableClass                ddbtypes.TableClass             `json:"TableClass,omitempty"`
-	Tags                      []ddbtypes.Tag                  `json:"Tags,omitempty"`
-	WarmThroughput            *ddbtypes.WarmThroughput        `json:"WarmThroughput,omitempty"`
+	TableName                          *string                                     `json:"TableName,omitempty"`
+	AttributeDefinitions               []ddbtypes.AttributeDefinition              `json:"AttributeDefinitions,omitempty"`
+	BillingMode                        ddbtypes.BillingMode                        `json:"BillingMode,omitempty"`
+	DeletionProtectionEnabled          *bool                                       `json:"DeletionProtectionEnabled,omitempty"`
+	GlobalSecondaryIndexes             []ddbtypes.GlobalSecondaryIndex             `json:"GlobalSecondaryIndexes,omitempty"`
+	GlobalTableSettingsReplicationMode ddbtypes.GlobalTableSettingsReplicationMode `json:"GlobalTableSettingsReplicationMode,omitempty"`
+	GlobalTableSourceArn               *string                                     `json:"GlobalTableSourceArn,omitempty"`
+	KeySchema                          []ddbtypes.KeySchemaElement                 `json:"KeySchema,omitempty"`
+	LocalSecondaryIndexes              []ddbtypes.LocalSecondaryIndex              `json:"LocalSecondaryIndexes,omitempty"`
+	OnDemandThroughput                 *ddbtypes.OnDemandThroughput                `json:"OnDemandThroughput,omitempty"`
+	ProvisionedThroughput              *ddbtypes.ProvisionedThroughput             `json:"ProvisionedThroughput,omitempty"`
+	ResourcePolicy                     *string                                     `json:"ResourcePolicy,omitempty"`
+	SSESpecification                   *ddbtypes.SSESpecification                  `json:"SSESpecification,omitempty"`
+	StreamSpecification                *ddbtypes.StreamSpecification               `json:"StreamSpecification,omitempty"`
+	TableClass                         ddbtypes.TableClass                         `json:"TableClass,omitempty"`
+	Tags                               []ddbtypes.Tag                              `json:"Tags,omitempty"`
+	VectorIndexes                      []ddbtypes.VectorIndex                      `json:"VectorIndexes,omitempty"`
+	WarmThroughput                     *ddbtypes.WarmThroughput                    `json:"WarmThroughput,omitempty"`
 }
 
 type Delete struct {
@@ -243,19 +246,23 @@ type UpdateItemInput struct {
 }
 
 type UpdateTableInput struct {
-	TableName                   *string                               `json:"TableName,omitempty"`
-	AttributeDefinitions        []ddbtypes.AttributeDefinition        `json:"AttributeDefinitions,omitempty"`
-	BillingMode                 ddbtypes.BillingMode                  `json:"BillingMode,omitempty"`
-	DeletionProtectionEnabled   *bool                                 `json:"DeletionProtectionEnabled,omitempty"`
-	GlobalSecondaryIndexUpdates []ddbtypes.GlobalSecondaryIndexUpdate `json:"GlobalSecondaryIndexUpdates,omitempty"`
-	MultiRegionConsistency      ddbtypes.MultiRegionConsistency       `json:"MultiRegionConsistency,omitempty"`
-	OnDemandThroughput          *ddbtypes.OnDemandThroughput          `json:"OnDemandThroughput,omitempty"`
-	ProvisionedThroughput       *ddbtypes.ProvisionedThroughput       `json:"ProvisionedThroughput,omitempty"`
-	ReplicaUpdates              []ddbtypes.ReplicationGroupUpdate     `json:"ReplicaUpdates,omitempty"`
-	SSESpecification            *ddbtypes.SSESpecification            `json:"SSESpecification,omitempty"`
-	StreamSpecification         *ddbtypes.StreamSpecification         `json:"StreamSpecification,omitempty"`
-	TableClass                  ddbtypes.TableClass                   `json:"TableClass,omitempty"`
-	WarmThroughput              *ddbtypes.WarmThroughput              `json:"WarmThroughput,omitempty"`
+	TableName                          *string                                     `json:"TableName,omitempty"`
+	AttributeDefinitions               []ddbtypes.AttributeDefinition              `json:"AttributeDefinitions,omitempty"`
+	BillingMode                        ddbtypes.BillingMode                        `json:"BillingMode,omitempty"`
+	DeletionProtectionEnabled          *bool                                       `json:"DeletionProtectionEnabled,omitempty"`
+	DisassociationProtectionEnabled    *bool                                       `json:"DisassociationProtectionEnabled,omitempty"`
+	GlobalSecondaryIndexUpdates        []ddbtypes.GlobalSecondaryIndexUpdate       `json:"GlobalSecondaryIndexUpdates,omitempty"`
+	GlobalTableSettingsReplicationMode ddbtypes.GlobalTableSettingsReplicationMode `json:"GlobalTableSettingsReplicationMode,omitempty"`
+	GlobalTableWitnessUpdates          []ddbtypes.GlobalTableWitnessGroupUpdate    `json:"GlobalTableWitnessUpdates,omitempty"`
+	MultiRegionConsistency             ddbtypes.MultiRegionConsistency             `json:"MultiRegionConsistency,omitempty"`
+	OnDemandThroughput                 *ddbtypes.OnDemandThroughput                `json:"OnDemandThroughput,omitempty"`
+	ProvisionedThroughput              *ddbtypes.ProvisionedThroughput             `json:"ProvisionedThroughput,omitempty"`
+	ReplicaUpdates                     []ddbtypes.ReplicationGroupUpdate           `json:"ReplicaUpdates,omitempty"`
+	SSESpecification                   *ddbtypes.SSESpecification                  `json:"SSESpecification,omitempty"`
+	StreamSpecification                *ddbtypes.StreamSpecification               `json:"StreamSpecification,omitempty"`
+	TableClass                         ddbtypes.TableClass                         `json:"TableClass,omitempty"`
+	VectorIndexUpdates                 []ddbtypes.VectorIndexUpdate                `json:"VectorIndexUpdates,omitempty"`
+	WarmThroughput                     *ddbtypes.WarmThroughput                    `json:"WarmThroughput,omitempty"`
 }
 
 type WriteRequest struct {

@@ -95,7 +95,7 @@ request TransactWriteItemsInput.ClientRequestToken
 
 # out of scope: backups, global tables, streams, exports/imports, resource
 # policies, SSE, table class, replicas, warm throughput, contributor insights,
-# autoscaling
+# autoscaling, vector indexes
 operation CreateBackup
 operation CreateGlobalTable
 operation DeleteBackup
@@ -128,17 +128,24 @@ operation UpdateGlobalTable
 operation UpdateGlobalTableSettings
 operation UpdateKinesisStreamingDestination
 operation UpdateTableReplicaAutoScaling
+request CreateTableInput.GlobalTableSettingsReplicationMode
+request CreateTableInput.GlobalTableSourceArn
 request CreateTableInput.ResourcePolicy
 request CreateTableInput.SSESpecification
 request CreateTableInput.StreamSpecification
 request CreateTableInput.TableClass
 request CreateTableInput.Tags
+request CreateTableInput.VectorIndexes
 request CreateTableInput.WarmThroughput
+request UpdateTableInput.DisassociationProtectionEnabled
+request UpdateTableInput.GlobalTableSettingsReplicationMode
+request UpdateTableInput.GlobalTableWitnessUpdates
 request UpdateTableInput.MultiRegionConsistency
 request UpdateTableInput.ReplicaUpdates
 request UpdateTableInput.SSESpecification
 request UpdateTableInput.StreamSpecification
 request UpdateTableInput.TableClass
+request UpdateTableInput.VectorIndexUpdates
 request UpdateTableInput.WarmThroughput
 response GlobalSecondaryIndexDescription.WarmThroughput
 response TableDescription.ArchivalSummary

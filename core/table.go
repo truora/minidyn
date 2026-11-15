@@ -88,6 +88,22 @@ func (t *Table) IndexKind(name string) string {
 	return "GSI"
 }
 
+// ValidateSearchIndex rejects the IndexName of a Query or Scan when the table has no such
+// index, as DynamoDB does: before anything else of the request is looked at. The primary index
+// (an empty name) is always there. SearchData applies it first; the front ends call it ahead
+// of their own pre-check of the expression attributes, which DynamoDB runs after it.
+func (t *Table) ValidateSearchIndex(name string) error {
+	if name == PrimaryIndexName {
+		return nil
+	}
+
+	if _, ok := t.Indexes[name]; !ok {
+		return validationError(msgNoSuchIndex+name, "table", t.Name)
+	}
+
+	return nil
+}
+
 // IndexWriteDelta is how a write touches one secondary index, used to compute the per-index
 // write ConsumedCapacity. Before and After are the item as it sat in the index and as it lands in
 // it (honoring the index's ProjectionType); each is nil when the item is not indexed there, which
@@ -187,6 +203,89 @@ func (t *Table) StoredItem(keyOrItem map[string]*types.Item) map[string]*types.I
 	}
 
 	return deepCopyItemMap(item)
+}
+
+// ReadItem is the result of reading one key. Stored is the item as stored (nil when there is
+// none), not a copy: callers copy what they hand out, and front ends measure it for capacity.
+// Projected is the attributes the ProjectionExpression selects, or Stored without one.
+type ReadItem struct {
+	Stored, Projected map[string]*types.Item
+}
+
+// GetItem reads the item stored under key. Like DynamoDB's GetItem it rejects a bad
+// ProjectionExpression (its syntax, then an undeclared #name) before it looks at the key.
+func (t *Table) GetItem(key map[string]*types.Item, projectionExpr string, aliases map[string]string) (ReadItem, error) {
+	checked, err := checkProjection(projectionExpr, aliases)
+	if err != nil {
+		return ReadItem{}, err
+	}
+
+	storageKey, err := t.CheckedKeyOf(key)
+	if err != nil {
+		return ReadItem{}, err
+	}
+
+	return t.readItem(storageKey, checked)
+}
+
+// BatchGetItem reads the keys of one table of a BatchGetItem, one ReadItem per key in order. As in
+// DynamoDB it validates every key before the ProjectionExpression, which it checks once.
+func (t *Table) BatchGetItem(keys []map[string]*types.Item, projectionExpr string, aliases map[string]string) ([]ReadItem, error) {
+	storageKeys := make([]string, len(keys))
+
+	for i, key := range keys {
+		storageKey, err := t.CheckedKeyOf(key)
+		if err != nil {
+			return nil, err
+		}
+
+		storageKeys[i] = storageKey
+	}
+
+	checked, err := checkProjection(projectionExpr, aliases)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]ReadItem, len(keys))
+
+	for i, storageKey := range storageKeys {
+		items[i], err = t.readItem(storageKey, checked)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return items, nil
+}
+
+// readItem reads the item under storageKey and projects it; a nil checked selects everything.
+func (t *Table) readItem(storageKey string, checked *interpreter.CheckedProjection) (ReadItem, error) {
+	stored := t.Data[storageKey]
+	if checked == nil {
+		return ReadItem{Stored: stored, Projected: stored}, nil
+	}
+
+	projected, err := t.LangInterpreter.ProjectChecked(checked, stored)
+	if err != nil {
+		return ReadItem{}, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return ReadItem{Stored: stored, Projected: projected}, nil
+}
+
+// checkProjection validates a ProjectionExpression (nil for none) and returns its parse.
+func checkProjection(expr string, aliases map[string]string) (*interpreter.CheckedProjection, error) {
+	if expr == "" {
+		return nil, nil
+	}
+
+	checked, err := interpreter.CheckProjection(expr, aliases)
+	if err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return checked, nil
 }
 
 // SetAttributeDefinition sets the attribute definitions of a table. It checks all of them first,
@@ -1076,7 +1175,7 @@ type SearchResult struct {
 
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
-	if err := t.validateSelect(input); err != nil {
+	if err := t.ValidateSearchIndex(input.Index); err != nil {
 		return SearchResult{}, err
 	}
 
@@ -1093,6 +1192,11 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 	}
 
 	if err := t.validateKeyCondition(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	// DynamoDB reports Select after the key condition.
+	if err := t.validateSelect(input); err != nil {
 		return SearchResult{}, err
 	}
 
@@ -1471,17 +1575,23 @@ func (t *Table) ValidatePutItem(item map[string]*types.Item) error {
 // ValidateDeleteKey runs the checks Delete makes on a key that do not depend on a condition, in
 // the same order. It changes nothing.
 func (t *Table) ValidateDeleteKey(key map[string]*types.Item) error {
+	_, err := t.CheckedKeyOf(key)
+
+	return err
+}
+
+// CheckedKeyOf runs the checks a key gets before it is read or deleted and returns its storage
+// key: its values, that it holds exactly the primary key attributes, and that none is missing.
+func (t *Table) CheckedKeyOf(key map[string]*types.Item) (string, error) {
 	if err := validateItemValues(key); err != nil {
-		return err
+		return "", err
 	}
 
 	if err := t.checkPrimaryKeyShape(key); err != nil {
-		return err
+		return "", err
 	}
 
-	_, err := t.primaryKeyOf(key)
-
-	return err
+	return t.primaryKeyOf(key)
 }
 
 // The helpers below are the steps Put, Delete and the Validate* functions have in common. Each
@@ -1615,40 +1725,52 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 // ValidateNoneOrAllOldReturnValues accepts the ReturnValues modes that PutItem
 // and DeleteItem support: empty, NONE and ALL_OLD.
 func ValidateNoneOrAllOldReturnValues(rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
-	})
-}
-
-// validateNoneOrAllOld accepts empty, NONE and ALL_OLD, and builds the
-// ValidationException message of any other value with invalid.
-func validateNoneOrAllOld(rv *string, invalid func(value string) string) error {
-	if rv == nil {
+	if rv == nil || isNoneOrAllOld(*rv) {
 		return nil
 	}
 
-	switch *rv {
+	return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
+}
+
+// invalidReturnValuesMessage is DynamoDB's text for a ReturnValues outside the modes the
+// operation supports, the same for PutItem, UpdateItem and DeleteItem.
+func invalidReturnValuesMessage(value string) string {
+	return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
+}
+
+// isNoneOrAllOld reports whether v is a mode of the NONE | ALL_OLD enums (ReturnValues of
+// PutItem and DeleteItem, ReturnValuesOnConditionCheckFailure). Empty means the default.
+func isNoneOrAllOld(v string) bool {
+	switch v {
 	case "", "NONE", "ALL_OLD":
-		return nil
+		return true
 	default:
-		return types.NewError("ValidationException", invalid(*rv), nil)
+		return false
+	}
+}
+
+// isUpdateReturnValue reports whether v is a ReturnValues mode of UpdateItem: the NONE | ALL_OLD
+// modes plus UPDATED_OLD, UPDATED_NEW and ALL_NEW. Empty means the default.
+func isUpdateReturnValue(v string) bool {
+	if isNoneOrAllOld(v) {
+		return true
+	}
+
+	switch v {
+	case "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
+		return true
+	default:
+		return false
 	}
 }
 
 // ValidateUpdateItemReturnValues accepts the ReturnValues modes UpdateItem supports.
 func ValidateUpdateItemReturnValues(rv *string) error {
-	if rv == nil || *rv == "" {
+	if rv == nil || isUpdateReturnValue(*rv) {
 		return nil
 	}
 
-	switch *rv {
-	case "NONE", "ALL_OLD", "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
-		return nil
-	default:
-		return types.NewError("ValidationException",
-			fmt.Sprintf("1 validation error detected: Value '%s' at 'returnValues' failed to satisfy constraint: Member must satisfy enum value set: [NONE, ALL_OLD, UPDATED_OLD, UPDATED_NEW, ALL_NEW]", *rv),
-			nil)
-	}
+	return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
 }
 
 // writtenAttributes returns, for the top-level attributes of the written paths, the ones whose
@@ -1697,7 +1819,9 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
-	// DynamoDB reports ReturnValues, then the Key, then the rest of the request.
+	// minidyn reports ReturnValues, then the Key, then RVOCCF, then the placeholders. DynamoDB
+	// Local reports ReturnValues and the Key first too, but puts RVOCCF after the unused names
+	// and values and the undefined placeholders; see #243.
 	if err := ValidateUpdateItemReturnValues(input.ReturnValues); err != nil {
 		return nil, err
 	}
@@ -2093,9 +2217,13 @@ func (t *Table) markIndexCreating(g *types.GlobalSecondaryIndexDescription) {
 // The front ends call it before their own expression pre-check and the table lookup, to keep
 // DynamoDB's order; Put, Update and Delete call it again, so core never runs with a bad mode.
 func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		return returnValuesOnConditionCheckFailureMessage(value, "returnValuesOnConditionCheckFailure")
-	})
+	if rv == nil || isNoneOrAllOld(*rv) {
+		return nil
+	}
+
+	msg := returnValuesOnConditionCheckFailureMessage(*rv, "returnValuesOnConditionCheckFailure")
+
+	return types.NewError("ValidationException", msg, nil)
 }
 
 // ValidateTransactItemReturnValuesOnConditionCheckFailure validates the mode of the Put, Update,
@@ -2103,12 +2231,16 @@ func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
 // index of TransactWriteItems. DynamoDB Local accepts any value here; minidyn follows the API
 // reference ("Valid Values: ALL_OLD | NONE") and rejects the whole request.
 func ValidateTransactItemReturnValuesOnConditionCheckFailure(index int, shape string, rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		path := fmt.Sprintf("transactItems.%d.member.%s.returnValuesOnConditionCheckFailure", index+1, shape)
+	if rv == nil || isNoneOrAllOld(*rv) {
+		return nil
+	}
 
-		// DynamoDB's text already names the field and the 1-based item, so no detail is added.
-		return returnValuesOnConditionCheckFailureMessage(value, path)
-	})
+	path := fmt.Sprintf("transactItems.%d.member.%s.returnValuesOnConditionCheckFailure", index+1, shape)
+
+	// DynamoDB's text already names the field and the 1-based item, so no detail is added.
+	msg := returnValuesOnConditionCheckFailureMessage(*rv, path)
+
+	return types.NewError("ValidationException", msg, nil)
 }
 
 func returnValuesOnConditionCheckFailureMessage(value, path string) string {

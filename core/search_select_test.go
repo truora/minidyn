@@ -101,3 +101,48 @@ func TestSearchDataSelectAllProjectedReturnsProjection(t *testing.T) {
 	require.Len(t, res.Items, 1)
 	require.Len(t, res.Items[0], 2)
 }
+
+// DynamoDB reports a key condition error before an invalid Select.
+func TestSearchDataKeyConditionErrorsBeforeInvalidSelect(t *testing.T) {
+	table := createSelectTable(t)
+
+	const onlyIndex = "ALL_PROJECTED_ATTRIBUTES can be used only when Querying using an IndexName"
+
+	str := func(s string) *types.Item { return &types.Item{S: &s} }
+	num := func(s string) *types.Item { return &types.Item{N: &s} }
+
+	tests := []struct {
+		name      string
+		condition string
+		values    map[string]*types.Item
+		wantErr   string
+	}{
+		{name: "EmptyHash", condition: "id = :id", values: map[string]*types.Item{":id": str("")}, wantErr: "empty string value"},
+		{name: "TypeMismatch", condition: "id = :id", values: map[string]*types.Item{":id": num("1")}, wantErr: errKeyConditionType},
+		{
+			name: "BetweenReversed", condition: "id = :id AND #n BETWEEN :a AND :b",
+			values:  map[string]*types.Item{":id": str("001"), ":a": str("z"), ":b": str("a")},
+			wantErr: "The BETWEEN operator requires upper bound to be greater than or equal to lower bound",
+		},
+		{name: "ValidKeyReportsSelect", condition: "id = :id", values: map[string]*types.Item{":id": str("001")}, wantErr: onlyIndex},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := table.SearchData(QueryInput{
+				Select:                    "ALL_PROJECTED_ATTRIBUTES",
+				KeyConditionExpression:    tt.condition,
+				Aliases:                   map[string]string{"#n": "name"},
+				ExpressionAttributeValues: tt.values,
+				ScanIndexForward:          true,
+			})
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+
+			if tt.wantErr != onlyIndex {
+				require.NotContains(t, err.Error(), onlyIndex)
+			}
+		})
+	}
+}

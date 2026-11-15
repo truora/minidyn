@@ -16,22 +16,6 @@ func (c *Client) tableOrNil(name string) *core.Table {
 	return table
 }
 
-// snapshotLocked measures a write target's stored item, for callers that do not hold c.mu.
-func (c *Client) snapshotLocked(t *capacity.WriteTarget) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	t.Snapshot(c.tableOrNil)
-}
-
-// billLocked bills a write target once applied, for callers that do not hold c.mu.
-func (c *Client) billLocked(t *capacity.WriteTarget) (int, []capacity.IndexWrite) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	return t.Bill(c.tableOrNil)
-}
-
 // wireConsumedList maps a per-table Consumed list (e.g. a WriteAccumulator's output) into the
 // server's JSON ConsumedCapacity slice. Returns nil when nothing is reported.
 func wireConsumedList(cs []*capacity.Consumed) []ConsumedCapacity {

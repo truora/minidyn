@@ -144,7 +144,9 @@ func TestServerDeleteItemConditionMatchingOtherItemFails(t *testing.T) {
 
 // With several invalid inputs at once the mode enum message wins over an invalid
 // ReturnValues and an undeclared expression name. The mode is checked before the
-// table lookup, so it also wins on a missing table (pinned current behavior).
+// table lookup, so it also wins on a missing table (pinned current behavior). UpdateItem
+// does not send an invalid ReturnValues here: it reports that first (see
+// TestUpdateItemInvalidReturnValues).
 func TestServerReturnValuesOnConditionCheckFailureValidationOrder(t *testing.T) {
 	ctx := context.Background()
 	key := map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}}
@@ -163,10 +165,10 @@ func TestServerReturnValuesOnConditionCheckFailureValidationOrder(t *testing.T) 
 		"UpdateItem": func(cli *dynamodb.Client, table string) error {
 			_, err := cli.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 				TableName: aws.String(table), Key: key, ConditionExpression: cond,
-				UpdateExpression:          aws.String("SET #n = :v"),
-				ExpressionAttributeNames:  map[string]string{"#n": "name"},
-				ExpressionAttributeValues: vals,
-				ReturnValues:              "BOGUS", ReturnValuesOnConditionCheckFailure: "BOGUS",
+				UpdateExpression:                    aws.String("SET #n = :v"),
+				ExpressionAttributeNames:            map[string]string{"#n": "name"},
+				ExpressionAttributeValues:           vals,
+				ReturnValuesOnConditionCheckFailure: "BOGUS",
 			})
 
 			return err

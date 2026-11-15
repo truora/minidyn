@@ -107,30 +107,54 @@ func matchExpressionLabel(t ExpressionType) string {
 	}
 }
 
-// Project evaluates a projection expression and returns a new attribute map containing only the requested paths.
-func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) {
-	l := language.NewLexer(input.Expression)
-	p := language.NewParser(l)
-	exprs := p.ParseProjectionExpression()
+// CheckedProjection is a projection expression that passed CheckProjection, ready for
+// ProjectChecked. It carries the parse and the aliases it was checked against, so the checks run
+// once per request.
+type CheckedProjection struct {
+	exprs   []language.Expression
+	aliases map[string]string
+}
 
-	if len(p.Errors()) != 0 {
-		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(p.Errors(), "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+// CheckProjection returns the error DynamoDB reports for a projection expression: the syntax
+// first, then a #name missing from aliases. It needs no item, so a request can reject a bad
+// projection up front and project with the result afterwards.
+func CheckProjection(expr string, aliases map[string]string) (*CheckedProjection, error) {
+	pp := parseProjection(expr)
+
+	if len(pp.errs) != 0 {
+		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(pp.errs, "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 	}
 
-	if err := ValidateExpressionAttributeNamesDeclared(input.Aliases, LabeledExpression{"ProjectionExpression", input.Expression}); err != nil {
+	if err := ValidateExpressionAttributeNamesDeclared(aliases, LabeledExpression{"ProjectionExpression", expr}); err != nil {
 		return nil, err
 	}
 
+	return &CheckedProjection{exprs: pp.exprs, aliases: aliases}, nil
+}
+
+// Project evaluates a projection expression and returns a new attribute map containing only the requested paths.
+func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) {
+	checked, err := CheckProjection(input.Expression, input.Aliases)
+	if err != nil {
+		return nil, err
+	}
+
+	return li.ProjectChecked(checked, input.Item)
+}
+
+// ProjectChecked projects item with a projection CheckProjection already accepted.
+func (li *Language) ProjectChecked(checked *CheckedProjection, itemIn map[string]*types.Item) (map[string]*types.Item, error) {
+	exprs := checked.exprs
+
 	env := language.NewEnvironment()
 	aliases := map[string]string{}
-	maps.Copy(aliases, input.Aliases)
+	maps.Copy(aliases, checked.aliases)
 	env.Aliases = aliases
 
 	item := map[string]*types.Item{}
-	maps.Copy(item, input.Item)
+	maps.Copy(item, itemIn)
 
-	err := env.AddAttributes(item)
-	if err != nil {
+	if err := env.AddAttributes(item); err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFeature, err.Error())
 	}
 

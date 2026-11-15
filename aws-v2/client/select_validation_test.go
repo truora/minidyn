@@ -76,6 +76,41 @@ func TestQueryAndScanSelectValidation(t *testing.T) {
 	}
 }
 
+// A key condition error comes before an invalid Select, as in DynamoDB.
+func TestQueryKeyConditionErrorBeforeInvalidSelect(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+	ctx := context.Background()
+
+	c.NoError(ensurePokemonTable(client))
+
+	str := func(s string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberS{Value: s} }
+	num := func(s string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberN{Value: s} }
+
+	tests := []struct {
+		name    string
+		value   dynamodbtypes.AttributeValue
+		wantErr string
+	}{
+		{name: "EmptyHash", value: str(""), wantErr: "empty string value"},
+		{name: "TypeMismatch", value: num("1"), wantErr: "Condition parameter type does not match schema type"},
+		{name: "ValidKeyReportsSelect", value: str("001"), wantErr: "ALL_PROJECTED_ATTRIBUTES can be used only when Querying using an IndexName"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := client.Query(ctx, &dynamodb.QueryInput{
+				TableName:                 aws.String(tableName),
+				Select:                    "ALL_PROJECTED_ATTRIBUTES",
+				KeyConditionExpression:    aws.String("id = :id"),
+				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":id": tt.value},
+			})
+
+			assertSelectResult(t, err, tt.wantErr)
+		})
+	}
+}
+
 func assertSelectResult(t *testing.T, err error, wantErr string) {
 	t.Helper()
 

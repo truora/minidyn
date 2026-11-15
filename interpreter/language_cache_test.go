@@ -116,3 +116,54 @@ func TestLanguageUpdate_cacheIsBounded(t *testing.T) {
 
 	require.LessOrEqual(t, cachedUpdates(), maxParsedExpressions)
 }
+
+func TestCheckProjection(t *testing.T) {
+	aliases := map[string]string{"#n": "name"}
+
+	require.NoError(t, checkProjectionErr("", nil))
+	require.NoError(t, checkProjectionErr("a, #n, b.c[1]", aliases))
+
+	err := checkProjectionErr("a,,", aliases)
+	require.ErrorIs(t, err, ErrSyntaxError)
+	require.Contains(t, err.Error(), "Invalid ProjectionExpression")
+
+	err = checkProjectionErr("a, #x", aliases)
+	require.ErrorIs(t, err, ErrSyntaxError)
+	require.Equal(t, "Invalid ProjectionExpression: An expression attribute name used in the document path is not defined; attribute name: #x", err.Error())
+
+	// a syntax error is reported before an undeclared name, as Project does
+	err = checkProjectionErr("#x,,", nil)
+	require.Contains(t, err.Error(), "Invalid ProjectionExpression")
+	require.NotContains(t, err.Error(), "not defined")
+}
+
+func TestLanguageProject_parsesEachExpressionOnce(t *testing.T) {
+	li := &Language{}
+	expr := "projOnce1, projOnce2.k" // unique to this test
+	item := map[string]*types.Item{"projOnce1": {S: new("x")}}
+
+	first := parseProjection(expr)
+
+	for range 3 {
+		out, err := li.Project(ProjectInput{Expression: expr, Item: item})
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.NoError(t, checkProjectionErr(expr, nil))
+		require.Same(t, first, parseProjection(expr), "the same expression should be parsed once")
+	}
+}
+
+func TestLanguageProject_cacheIsBounded(t *testing.T) {
+	for i := range maxParsedExpressions + 10 {
+		parseProjection(fmt.Sprintf("bounded%d", i))
+	}
+
+	require.LessOrEqual(t, cachedProjections(), maxParsedExpressions)
+}
+
+// checkProjectionErr is the error CheckProjection reports, without the checked projection.
+func checkProjectionErr(expr string, aliases map[string]string) error {
+	_, err := CheckProjection(expr, aliases)
+
+	return err
+}

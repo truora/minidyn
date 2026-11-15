@@ -359,6 +359,38 @@ func TestLanguageProject(t *testing.T) {
 	}
 }
 
+func TestFilterRootAttributes(t *testing.T) {
+	t.Parallel()
+
+	aliases := map[string]string{"#n": "real"}
+
+	if diff := cmp.Diff([]string{"real", "b"}, FilterRootAttributes("#n = :v AND b.c > :w", aliases)); diff != "" {
+		t.Fatal(diff)
+	}
+
+	// An expression that does not parse reads no attribute: the syntax error is reported elsewhere.
+	if got := FilterRootAttributes("a = ", aliases); got != nil {
+		t.Fatalf("got %v, want none", got)
+	}
+
+	if got := FilterRootAttributes("", aliases); got != nil {
+		t.Fatalf("got %v, want none", got)
+	}
+}
+
+func TestCheckedProjectionRootAttributes(t *testing.T) {
+	t.Parallel()
+
+	checked, err := CheckProjection("#n, a.b, a[0], c", map[string]string{"#n": "real"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"real", "a", "c"}, checked.RootAttributes()); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
 func TestLanguageProject_skipsMissingPath(t *testing.T) {
 	t.Parallel()
 

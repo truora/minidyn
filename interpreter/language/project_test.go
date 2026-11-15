@@ -255,3 +255,53 @@ func TestLookupProjectedPath(t *testing.T) {
 		}
 	}
 }
+
+func TestRootAttributes(t *testing.T) {
+	t.Parallel()
+
+	aliases := map[string]string{"#n": "real", "#m": "other"}
+
+	tests := []struct {
+		name string
+		expr string
+		want []string
+	}{
+		{name: "Comparison", expr: "a = :v", want: []string{"a"}},
+		{name: "FunctionsAndValuesAreNotAttributes", expr: "attribute_exists(a) AND begins_with(b, :v)", want: []string{"a", "b"}},
+		{name: "AliasResolved", expr: "#n = :v", want: []string{"real"}},
+		{name: "NestedPathKeepsRoot", expr: "a.b.c = :v AND d[0] = :v", want: []string{"a", "d"}},
+		{name: "AliasedNestedSegmentIsNotARoot", expr: "a.#m = :v", want: []string{"a"}},
+		{name: "OnceInOrderOfAppearance", expr: "b = :v OR a = :v OR b <> :v", want: []string{"b", "a"}},
+		{name: "Not", expr: "NOT a = :v", want: []string{"a"}},
+		{name: "Between", expr: "a BETWEEN :x AND :y", want: []string{"a"}},
+		{name: "In", expr: "a IN (:x, :y)", want: []string{"a"}},
+		{name: "SizeOperand", expr: "size(a) > :v", want: []string{"a"}},
+		{name: "OperandsOfBoth", expr: "a = b", want: []string{"a", "b"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := NewParser(NewLexer(tt.expr))
+			cond := p.ParseConditionalExpression()
+			checkParserErrors(t, p)
+
+			if diff := cmp.Diff(tt.want, RootAttributes(aliases, cond.Expression)); diff != "" {
+				t.Fatal(diff)
+			}
+		})
+	}
+
+	t.Run("Projection", func(t *testing.T) {
+		t.Parallel()
+
+		p := NewParser(NewLexer("#n, a.b, c[1], a"))
+		exprs := p.ParseProjectionExpression()
+		checkParserErrors(t, p)
+
+		if diff := cmp.Diff([]string{"real", "a", "c"}, RootAttributes(aliases, exprs...)); diff != "" {
+			t.Fatal(diff)
+		}
+	})
+}

@@ -52,6 +52,12 @@ operation ExecuteTransaction
 operation DescribeTimeToLive
 operation UpdateTimeToLive
 
+# not emulated: bulk operations, added by the aws-sdk bump in #231 (#253)
+operation CancelBulkOperation
+operation DescribeBulkOperation
+operation ListBulkOperations
+operation StartBulkPutItems
+
 # not emulated: account limits
 operation DescribeLimits
 

@@ -41,6 +41,11 @@ jobs:
     - name: Test & Coverage
       run: bash scripts/check_coverage.sh
 
+    # check_coverage.sh skips tools/, so the parity-surface allowlist check (which fails when an
+    # SDK bump adds API surface) and the tools' own tests run here.
+    - name: Tools
+      run: go test ./tools/...
+
 
 
 

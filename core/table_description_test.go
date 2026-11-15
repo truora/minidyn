@@ -12,10 +12,10 @@ func newDescribedTable(t *testing.T, billingMode string, throughput *types.Provi
 	t.Helper()
 
 	table := NewTable("described")
-	table.SetAttributeDefinition([]*types.AttributeDefinition{
+	require.NoError(t, table.SetAttributeDefinition([]*types.AttributeDefinition{
 		{AttributeName: new("pk"), AttributeType: new("S")},
 		{AttributeName: new("gk"), AttributeType: new("N")},
-	})
+	}))
 	table.BillingMode = new(billingMode)
 
 	require.NoError(t, table.CreatePrimaryIndex(&types.CreateTableInput{

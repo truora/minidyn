@@ -9,6 +9,13 @@ go run ./tools/run-e2e                            # every parity test
 go run ./tools/run-e2e TestE2E_Item/PutWithGSI    # one test
 ```
 
+`run-e2e` fails when Docker isn't running, rather than skipping every comparison
+and reporting `OK`. Set `MINIDYN_E2E_REQUIRE_DOCKER=0` to skip instead, for example
+to check that the suite builds on a machine without Docker. A plain `go test ./...`
+still skips the parity tests without Docker. `run-e2e` also gives `go test` a 45m
+timeout, since the full suite takes longer than the default 10m. Pass `-timeout` to
+override it.
+
 ## Known divergences
 
 A divergence that isn't fixed yet is tracked as a

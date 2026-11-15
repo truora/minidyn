@@ -21,6 +21,8 @@ All agent configuration lives in **`.agents/`** (editor-agnostic). Editor-specif
 
 **Read `.agents/rules/workflow.mdc` first** — it defines the implementation flow, debugging rules, and when to invoke skills and sub-agents.
 
+**Then read [`docs/architecture.md`](docs/architecture.md)** before implementing a feature or fix — it describes the layers, the design decisions (parity reference, validation order, error format, interpreter object model, caching, locking, atomicity, key encoding) and a checklist to review a change against.
+
 ## Skills
 
 Discover skills progressively — only read a skill when it is directly relevant:
@@ -40,4 +42,4 @@ After implementation, invoke the **qa-engineer** sub-agent (see `.agents/agents/
 - **Never** modify `e2e/` tests to make them pass — they are parity references only
 - `server/requests.go` is generated — run `go run ./tools/generate_requests` when input shapes change
 - Every package must contain a `doc.go` file
-- Error messages start with DynamoDB's exact text, including any `;` part DynamoDB itself returns. minidyn-only debug detail goes after ` | ` as `key: value` pairs separated by `; ` (e.g. `...incorrect data type | operator: DELETE; target type: SS; operand type: NS`), built with `types.WithDetail` (or `types.Detail` to append to a wrapped error). The parity normalizer strips from the last ` | `, so the detail never affects parity.
+- Error messages start with DynamoDB's exact text; minidyn-only detail goes after ` | ` via `types.WithDetail` / `types.Detail` (see D4 in [`docs/architecture.md`](docs/architecture.md)). The parity normalizer strips from the last ` | `.

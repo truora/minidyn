@@ -41,6 +41,9 @@ func NewClient() *Client {
 }
 
 func (c *Client) setFailureCondition(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.forceFailureErr = err
 }
 
@@ -109,7 +112,7 @@ func (c *Client) clearUnprocessedMatchers() {
 	c.unprocessedMatchers = map[string]func(int, map[string]*AttributeValue) bool{}
 }
 
-// batchEmulation is a lock-free snapshot of the failure emulation that applies to a
+// batchEmulation is a snapshot of the failure emulation that applies to a
 // batch operation: a hard failure error (global or table-scoped) that fails the whole
 // call, and the per-table partial-failure predicates.
 type batchEmulation struct {
@@ -127,11 +130,8 @@ func (e batchEmulation) unprocessed(tableName string, n int, raw map[string]*Att
 
 // batchEmulationFor snapshots the emulation state relevant to a batch touching the
 // given tables. A global failure overrides everything; otherwise any table-scoped
-// failure hard-fails the whole batch. Takes c.mu briefly so the loop can run lock-free.
-func (c *Client) batchEmulationFor(tables ...string) batchEmulation {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+// failure hard-fails the whole batch. Callers must hold c.mu.
+func (c *Client) batchEmulationLocked(tables ...string) batchEmulation {
 	snap := batchEmulation{}
 
 	if c.forceFailureErr != nil {
@@ -173,6 +173,8 @@ func (c *Client) setIndexActivationDelay(delay time.Duration) {
 }
 
 // Table helpers
+
+// getTable returns the named table. Callers must hold c.mu.
 func (c *Client) getTable(tableName string) (*core.Table, error) {
 	table, ok := c.tables[tableName]
 	if !ok {
@@ -184,13 +186,19 @@ func (c *Client) getTable(tableName string) (*core.Table, error) {
 
 // CreateTable creates a new table in the in-memory engine.
 func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*CreateTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 	if _, ok := c.tables[tableName]; ok {
 		return nil, &ddbtypes.ResourceInUseException{Message: aws.String("Cannot create preexisting table")}
 	}
 
 	table := core.NewTable(tableName)
-	table.SetAttributeDefinition(mapAttributeDefinitions(input.AttributeDefinitions))
+	if err := table.SetAttributeDefinition(mapAttributeDefinitions(input.AttributeDefinitions)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	table.BillingMode = toStringPtr(string(input.BillingMode))
 	table.NativeInterpreter = *c.nativeInterpreter
 	table.UseNativeInterpreter = c.useNativeInterpreter
@@ -204,11 +212,7 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 		return nil, mapKnownError(err)
 	}
 
-	if err := table.AddGlobalIndexes(mapGSI(input.GlobalSecondaryIndexes)); err != nil {
-		return nil, mapKnownError(err)
-	}
-
-	if err := table.AddLocalIndexes(mapLSI(input.LocalSecondaryIndexes)); err != nil {
+	if err := table.AddIndexes(mapGSI(input.GlobalSecondaryIndexes), mapLSI(input.LocalSecondaryIndexes)); err != nil {
 		return nil, mapKnownError(err)
 	}
 
@@ -219,6 +223,9 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 
 // UpdateTable applies metadata changes, including GSI updates.
 func (c *Client) UpdateTable(ctx context.Context, input *UpdateTableInput) (*UpdateTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, ok := c.tables[tableName]
@@ -226,17 +233,16 @@ func (c *Client) UpdateTable(ctx context.Context, input *UpdateTableInput) (*Upd
 		return nil, &ddbtypes.ResourceNotFoundException{Message: aws.String("Cannot do operations on a non-existent table")}
 	}
 
-	if input.AttributeDefinitions != nil {
-		table.SetAttributeDefinition(mapAttributeDefinitions(input.AttributeDefinitions))
-	}
-
-	desc, err := table.ApplyIndexChanges(tableName, mapGSIUpdate(input.GlobalSecondaryIndexUpdates))
+	desc, err := table.UpdateTable(tableName, mapAttributeDefinitions(input.AttributeDefinitions), mapGSIUpdate(input.GlobalSecondaryIndexUpdates))
 
 	return &UpdateTableOutput{TableDescription: describeTableJSON(desc)}, mapKnownError(err)
 }
 
 // DeleteTable removes a table and its data.
 func (c *Client) DeleteTable(ctx context.Context, input *DeleteTableInput) (*DeleteTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, err := c.getTable(tableName)
@@ -252,6 +258,9 @@ func (c *Client) DeleteTable(ctx context.Context, input *DeleteTableInput) (*Del
 
 // DescribeTable returns table metadata.
 func (c *Client) DescribeTable(ctx context.Context, input *DescribeTableInput) (*DescribeTableOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, err := c.getTable(tableName)
@@ -277,13 +286,13 @@ func (c *Client) ListTables(ctx context.Context, input *ListTablesInput) (*ListT
 
 // ClearTable removes all data from a specific table, including its indexes.
 func (c *Client) ClearTable(tableName string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	table, err := c.getTable(tableName)
 	if err != nil {
 		return err
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	table.Clear()
 
@@ -323,6 +332,11 @@ func (c *Client) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.putItemLocked(ctx, input)
+}
+
+// putItemLocked is PutItem for callers that hold c.mu.
+func (c *Client) putItemLocked(_ context.Context, input *PutItemInput) (*PutItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -385,6 +399,11 @@ func (c *Client) DeleteItem(ctx context.Context, input *DeleteItemInput) (*Delet
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.deleteItemLocked(ctx, input)
+}
+
+// deleteItemLocked is DeleteItem for callers that hold c.mu.
+func (c *Client) deleteItemLocked(_ context.Context, input *DeleteItemInput) (*DeleteItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -458,9 +477,13 @@ func (c *Client) UpdateItem(ctx context.Context, input *UpdateItemInput) (*Updat
 		return nil, ferr
 	}
 
-	// DynamoDB reports the Key ahead of the rest of the request. An unknown table is reported
-	// where it always was, after the expressions.
+	// DynamoDB reports ReturnValues, then the Key, ahead of the rest of the request. An unknown
+	// table is reported where it always was, after the expressions.
 	if table, tableErr := c.getTable(aws.ToString(input.TableName)); tableErr == nil {
+		if err := core.ValidateUpdateItemReturnValues(toStringPtr(string(input.ReturnValues))); err != nil {
+			return nil, mapKnownError(err)
+		}
+
 		if err := table.ValidatePrimaryKeyMap(mapAttributeValueMapToTypes(input.Key)); err != nil {
 			return nil, mapKnownError(types.NewError("ValidationException", err.Error(), nil))
 		}
@@ -524,6 +547,11 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.getItemLocked(ctx, input)
+}
+
+// getItemLocked is GetItem for callers that hold c.mu.
+func (c *Client) getItemLocked(_ context.Context, input *GetItemInput) (*GetItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -543,30 +571,18 @@ func (c *Client) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutp
 	}
 
 	keyMap := mapAttributeValueMapToTypes(input.Key)
-	if vErr := types.ValidateItemMap(keyMap); vErr != nil {
-		return nil, mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
-	}
 
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, err := table.GetItem(keyMap, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
 	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+		return nil, mapKnownError(err)
 	}
 
-	stored := table.Data[key]
-
-	item, err := getItemAttributesForOutput(table, stored, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
-	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
-	}
+	item := mapTypesMapToAttributeValue(read.Projected)
 
 	out := &GetItemOutput{Item: item}
 
 	if mode != capacity.ModeNone {
-		sizeSource := stored
+		sizeSource := read.Stored
 		if len(sizeSource) == 0 {
 			sizeSource = keyMap
 		}
@@ -595,19 +611,25 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		return nil, ferr
 	}
 
-	if err := validateExpressionAttributes(
+	table, err := c.getTable(aws.ToString(input.TableName))
+	if err != nil {
+		return nil, err
+	}
+
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if ierr := table.ValidateSearchIndex(aws.ToString(input.IndexName)); ierr != nil {
+		return nil, mapKnownError(ierr)
+	}
+
+	if verr := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
 		aws.ToString(input.KeyConditionExpression),
 		aws.ToString(input.FilterExpression),
 		aws.ToString(input.ProjectionExpression),
-	); err != nil {
-		return nil, err
-	}
-
-	table, err := c.getTable(aws.ToString(input.TableName))
-	if err != nil {
-		return nil, err
+	); verr != nil {
+		return nil, verr
 	}
 
 	if input.ScanIndexForward == nil {
@@ -665,18 +687,24 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, ferr
 	}
 
-	if err := validateExpressionAttributes(
+	table, err := c.getTable(aws.ToString(input.TableName))
+	if err != nil {
+		return nil, err
+	}
+
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if ierr := table.ValidateSearchIndex(aws.ToString(input.IndexName)); ierr != nil {
+		return nil, mapKnownError(ierr)
+	}
+
+	if verr := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
 		aws.ToString(input.ProjectionExpression),
 		aws.ToString(input.FilterExpression),
-	); err != nil {
-		return nil, err
-	}
-
-	table, err := c.getTable(aws.ToString(input.TableName))
-	if err != nil {
-		return nil, err
+	); verr != nil {
+		return nil, verr
 	}
 
 	res, err := table.SearchData(core.QueryInput{
@@ -784,6 +812,9 @@ func batchWriteRequestKey(req WriteRequest) map[string]*AttributeValue {
 // predicate selects individual sub-requests to leave unprocessed while the rest are
 // applied.
 func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput) (*BatchWriteItemOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if err := validateBatchWriteItemInput(input); err != nil {
 		return nil, err
 	}
@@ -793,9 +824,13 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
+	emulation := c.batchEmulationLocked(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
+	}
+
+	if err := c.validateBatchWriteRequests(input.RequestItems); err != nil {
+		return nil, err
 	}
 
 	unprocessed := map[string][]WriteRequest{}
@@ -821,27 +856,64 @@ func (c *Client) BatchWriteItem(ctx context.Context, input *BatchWriteItemInput)
 	}, nil
 }
 
+// validateBatchWriteRequests rejects the whole batch when any request is invalid, so no request
+// is applied before one fails (D8). The checks and their order live in core.ValidateBatchWrite.
+// Callers must hold c.mu.
+func (c *Client) validateBatchWriteRequests(requestItems map[string][]WriteRequest) error {
+	requests := make(map[string][]core.WriteRequest, len(requestItems))
+
+	for name, reqs := range requestItems {
+		requests[name] = nil
+
+		for _, req := range reqs {
+			var r core.WriteRequest
+
+			switch {
+			case req.PutRequest != nil:
+				r.Put = mapAttributeValueMapToTypes(req.PutRequest.Item)
+			case req.DeleteRequest != nil:
+				r.Delete = mapAttributeValueMapToTypes(req.DeleteRequest.Key)
+			}
+
+			requests[name] = append(requests[name], r)
+		}
+	}
+
+	lookup := func(name string) (*core.Table, bool) {
+		table, ok := c.tables[name]
+
+		return table, ok
+	}
+
+	if err := core.ValidateBatchWrite(lookup, requests); err != nil {
+		return mapKnownError(err)
+	}
+
+	return nil
+}
+
 // applyBatchWriteRequest runs one put or delete sub-request and, when consumed capacity is
 // reported, bills it into acc. Sizes are measured before the request is applied: a delete bills
 // the item it removes and a put the larger of the item it replaces and the item it writes.
+// Callers must hold c.mu.
 func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, req WriteRequest, mode capacity.Mode, acc *capacity.WriteAccumulator) error {
 	var target capacity.WriteTarget
 
 	if mode != capacity.ModeNone {
 		target = batchWriteTarget(tableName, req)
-		c.snapshotLocked(&target)
+		target.Snapshot(c.tableOrNil)
 	}
 
 	var err error
 	if req.PutRequest != nil {
-		_, err = c.PutItem(ctx, &PutItemInput{
+		_, err = c.putItemLocked(ctx, &PutItemInput{
 			TableName: aws.String(tableName),
 			Item:      req.PutRequest.Item,
 		})
 	}
 
 	if req.DeleteRequest != nil {
-		_, err = c.DeleteItem(ctx, &DeleteItemInput{
+		_, err = c.deleteItemLocked(ctx, &DeleteItemInput{
 			TableName: aws.String(tableName),
 			Key:       req.DeleteRequest.Key,
 		})
@@ -852,7 +924,7 @@ func (c *Client) applyBatchWriteRequest(ctx context.Context, tableName string, r
 	}
 
 	if mode != capacity.ModeNone {
-		size, indexes := c.billLocked(&target)
+		size, indexes := target.Bill(c.tableOrNil)
 		acc.Add(tableName, size, indexes, 1)
 	}
 
@@ -916,6 +988,9 @@ func validateBatchGetItemInput(input *BatchGetItemInput) error {
 // UnprocessedKeys is produced only by EmulateUnprocessedItems, whose predicate selects
 // individual keys to leave unprocessed while the rest are fetched.
 func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*BatchGetItemOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if err := validateBatchGetItemInput(input); err != nil {
 		return nil, err
 	}
@@ -925,7 +1000,7 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := c.batchEmulationFor(tableNames(input.RequestItems)...)
+	emulation := c.batchEmulationLocked(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
@@ -957,8 +1032,10 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	}, nil
 }
 
+// batchGetItemForTable reads one table of a BatchGetItem. Callers must hold c.mu.
 func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation, mode capacity.Mode) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
-	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
+	read, err := c.batchGetTable(tableName, reqs)
+	if err != nil {
 		return nil, nil, 0, err
 	}
 
@@ -975,29 +1052,47 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 			continue
 		}
 
-		item, err := c.GetItem(ctx, &GetItemInput{
-			TableName:                aws.String(tableName),
-			Key:                      key,
-			ConsistentRead:           reqs.ConsistentRead,
-			ExpressionAttributeNames: reqs.ExpressionAttributeNames,
-			ProjectionExpression:     reqs.ProjectionExpression,
-		})
-		if err != nil {
-			return nil, nil, 0, err
-		}
+		item := mapTypesMapToAttributeValue(read[i].Projected)
 
 		if mode != capacity.ModeNone {
-			units += capacity.ReadUnits(capacity.Size(mapAttributeValueMapToTypes(item.Item)), consistent)
+			units += capacity.ReadUnits(capacity.Size(read[i].Projected), consistent)
 		}
 
-		if len(item.Item) > 0 {
-			responses = append(responses, item.Item)
+		if len(item) > 0 {
+			responses = append(responses, item)
 		}
 	}
 
 	return responses, unprocessedKeys, units, nil
 }
 
+// batchGetTable reads every key of one table of a BatchGetItem, checking all the keys, then the
+// projection once. Keys the unprocessed emulation skips are checked too. Callers must hold c.mu.
+func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes) ([]core.ReadItem, error) {
+	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
+		return nil, err
+	}
+
+	table, err := c.getTable(tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make([]map[string]*types.Item, len(reqs.Keys))
+	for i, key := range reqs.Keys {
+		keys[i] = mapAttributeValueMapToTypes(key)
+	}
+
+	read, err := table.BatchGetItem(keys, aws.ToString(reqs.ProjectionExpression), reqs.ExpressionAttributeNames)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	return read, nil
+}
+
+// prepareTransact validates a transaction and snapshots the tables it touches. Callers must
+// hold c.mu.
 func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {
 	snapshots := map[string]core.TableSnapshot{}
 	seenKeys := make(map[string]struct{}, len(items))
@@ -1179,6 +1274,7 @@ func transactWriteTargets(items []TransactWriteItem) []capacity.WriteTarget {
 	return targets
 }
 
+// validateTransactGetItemsInput checks the request shape and every key. The caller must hold c.mu.
 func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {
 	if input == nil {
 		return nil
@@ -1224,18 +1320,9 @@ func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) erro
 			return mapKnownError(err)
 		}
 
-		internalKeyMap := mapAttributeValueMapToTypes(get.Key)
-		if vErr := types.ValidateItemMap(internalKeyMap); vErr != nil {
-			return mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
-		}
-
-		if keyErr := table.ValidatePrimaryKeyMap(internalKeyMap); keyErr != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-		}
-
-		key, err := table.KeySchema.GetKey(table.AttributesDef, internalKeyMap)
+		key, err := table.CheckedKeyOf(mapAttributeValueMapToTypes(get.Key))
 		if err != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+			return mapKnownError(err)
 		}
 
 		id := tableName + "|" + key
@@ -1255,6 +1342,9 @@ func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) erro
 
 // TransactGetItems atomically retrieves multiple items from one or more tables.
 func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsInput) (*TransactGetItemsOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if err := validateTransactGetItemsInput(c, input); err != nil {
 		return nil, err
 	}
@@ -1270,7 +1360,7 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 	for _, item := range input.TransactItems {
 		get := item.Get
 
-		out, err := c.GetItem(ctx, &GetItemInput{
+		out, err := c.getItemLocked(ctx, &GetItemInput{
 			TableName:                get.TableName,
 			Key:                      get.Key,
 			ExpressionAttributeNames: get.ExpressionAttributeNames,
@@ -1293,6 +1383,8 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 	}, nil
 }
 
+// runTransactItem and the runTransact* helpers below apply one transaction item. Callers must
+// hold c.mu.
 func (c *Client) runTransactItem(i, n int, item TransactWriteItem) error {
 	switch {
 	case item.Put != nil:
@@ -1352,10 +1444,6 @@ func (c *Client) runTransactUpdate(i, n int, update *Update) error {
 		ReturnValuesOnConditionCheckFailure: toStringPtr(string(update.ReturnValuesOnConditionCheckFailure)),
 	})
 	if opErr != nil {
-		if errors.Is(opErr, interpreter.ErrSyntaxError) {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: opErr.Error()}
-		}
-
 		return newServerTransactionCancelledError(i, n, opErr)
 	}
 
@@ -1396,24 +1484,12 @@ func (c *Client) runTransactConditionCheck(i, n int, check *ConditionCheck) erro
 		return mapKnownError(tErr)
 	}
 
-	keyMap := mapAttributeValueMapToTypes(check.Key)
-	if vErr := types.ValidateItemMap(keyMap); vErr != nil {
-		return mapKnownError(types.NewError("ValidationException", vErr.Error(), nil))
-	}
-
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, kErr := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, kErr := table.GetItem(mapAttributeValueMapToTypes(check.Key), "", nil)
 	if kErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: kErr.Error()}
+		return mapKnownError(kErr)
 	}
 
-	stored := table.Data[key]
-	if stored == nil {
-		stored = map[string]*types.Item{}
-	}
+	stored := read.Stored
 
 	matched, mErr := table.InterpreterMatch(interpreter.MatchInput{
 		TableName:      table.Name,

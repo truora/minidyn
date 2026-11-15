@@ -181,7 +181,7 @@ func (fd *Client) clearUnprocessedMatchers() {
 	fd.unprocessedMatchers = map[string]func(int, map[string]types.AttributeValue) bool{}
 }
 
-// batchEmulation is a lock-free snapshot of the failure emulation that applies to a
+// batchEmulation is a snapshot of the failure emulation that applies to a
 // batch operation: a hard failure error (global or table-scoped) that fails the whole
 // call, and the per-table partial-failure predicates.
 type batchEmulation struct {
@@ -197,13 +197,10 @@ func (e batchEmulation) unprocessed(tableName string, n int, raw map[string]type
 	return ok && match(n, raw)
 }
 
-// batchEmulationFor snapshots the emulation state relevant to a batch touching the
+// batchEmulationLocked snapshots the emulation state relevant to a batch touching the
 // given tables. A global failure overrides everything; otherwise any table-scoped
-// failure hard-fails the whole batch. Takes fd.mu briefly so the loop can run lock-free.
-func (fd *Client) batchEmulationFor(tables ...string) batchEmulation {
-	fd.mu.Lock()
-	defer fd.mu.Unlock()
-
+// failure hard-fails the whole batch. Callers must hold fd.mu.
+func (fd *Client) batchEmulationLocked(tables ...string) batchEmulation {
 	snap := batchEmulation{}
 
 	if fd.forceFailureErr != nil {
@@ -251,6 +248,9 @@ func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 		panic("invalid interpreter type")
 	}
 
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	fd.nativeInterpreter = native
 
 	for _, table := range fd.tables {
@@ -260,18 +260,27 @@ func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 
 // GetNativeInterpreter returns native interpreter
 func (fd *Client) GetNativeInterpreter() *interpreter.Native {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	return fd.nativeInterpreter
 }
 
 // CreateTable creates a new table
 func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableInput, opt ...func(*dynamodb.Options)) (*dynamodb.CreateTableOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 	if _, ok := fd.tables[tableName]; ok {
 		return nil, &types.ResourceInUseException{Message: aws.String("Cannot create preexisting table")}
 	}
 
 	newTable := core.NewTable(tableName)
-	newTable.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions))
+	if err := newTable.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	newTable.BillingMode = aws.String(string(input.BillingMode))
 	newTable.NativeInterpreter = *fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
@@ -282,11 +291,10 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 		return nil, mapKnownError(err)
 	}
 
-	if err := newTable.AddGlobalIndexes(mapDynamoToTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes)); err != nil {
-		return nil, mapKnownError(err)
-	}
-
-	if err := newTable.AddLocalIndexes(mapDynamoToTypesLocalSecondaryIndexes(input.LocalSecondaryIndexes)); err != nil {
+	if err := newTable.AddIndexes(
+		mapDynamoToTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes),
+		mapDynamoToTypesLocalSecondaryIndexes(input.LocalSecondaryIndexes),
+	); err != nil {
 		return nil, mapKnownError(err)
 	}
 
@@ -299,6 +307,9 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 
 // DeleteTable deletes a table
 func (fd *Client) DeleteTable(ctx context.Context, input *dynamodb.DeleteTableInput, opt ...func(*dynamodb.Options)) (*dynamodb.DeleteTableOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, err := fd.getTable(tableName)
@@ -317,6 +328,9 @@ func (fd *Client) DeleteTable(ctx context.Context, input *dynamodb.DeleteTableIn
 
 // UpdateTable update a table
 func (fd *Client) UpdateTable(ctx context.Context, input *dynamodb.UpdateTableInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateTableOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, ok := fd.tables[tableName]
@@ -324,16 +338,12 @@ func (fd *Client) UpdateTable(ctx context.Context, input *dynamodb.UpdateTableIn
 		return nil, &types.ResourceNotFoundException{Message: aws.String("Cannot do operations on a non-existent table")}
 	}
 
-	if input.AttributeDefinitions != nil {
-		table.SetAttributeDefinition(mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions))
-	}
-
 	changes := make([]*mtypes.GlobalSecondaryIndexUpdate, 0, len(input.GlobalSecondaryIndexUpdates))
 	for _, change := range input.GlobalSecondaryIndexUpdates {
 		changes = append(changes, mapDynamoTotypesGlobalSecondaryIndexUpdate(change))
 	}
 
-	desc, err := table.ApplyIndexChanges(tableName, changes)
+	desc, err := table.UpdateTable(tableName, mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions), changes)
 
 	return &dynamodb.UpdateTableOutput{
 		TableDescription: mapTypesToDynamoTableDescription(desc),
@@ -342,6 +352,9 @@ func (fd *Client) UpdateTable(ctx context.Context, input *dynamodb.UpdateTableIn
 
 // DescribeTable returns information about the table
 func (fd *Client) DescribeTable(ctx context.Context, input *dynamodb.DescribeTableInput, ops ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	tableName := aws.ToString(input.TableName)
 
 	table, err := fd.getTable(tableName)
@@ -374,6 +387,11 @@ func (fd *Client) PutItem(ctx context.Context, input *dynamodb.PutItemInput, opt
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
+	return fd.putItemLocked(ctx, input)
+}
+
+// putItemLocked is PutItem for callers that hold fd.mu.
+func (fd *Client) putItemLocked(_ context.Context, input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -422,6 +440,11 @@ func (fd *Client) DeleteItem(ctx context.Context, input *dynamodb.DeleteItemInpu
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
+	return fd.deleteItemLocked(ctx, input)
+}
+
+// deleteItemLocked is DeleteItem for callers that hold fd.mu.
+func (fd *Client) deleteItemLocked(_ context.Context, input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -486,9 +509,13 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 		return nil, ferr
 	}
 
-	// DynamoDB reports the Key ahead of the rest of the request. An unknown table is reported
-	// where it always was, after the expressions.
+	// DynamoDB reports ReturnValues, then the Key, ahead of the rest of the request. An unknown
+	// table is reported where it always was, after the expressions.
 	if table, tableErr := fd.getTable(aws.ToString(input.TableName)); tableErr == nil {
+		if err := core.ValidateUpdateItemReturnValues(aws.String(string(input.ReturnValues))); err != nil {
+			return nil, mapKnownError(err)
+		}
+
 		if err := table.ValidatePrimaryKeyMap(mapDynamoToTypesMapItem(input.Key)); err != nil {
 			return nil, mapKnownError(mtypes.NewError("ValidationException", err.Error(), nil))
 		}
@@ -517,10 +544,6 @@ func (fd *Client) UpdateItem(ctx context.Context, input *dynamodb.UpdateItemInpu
 
 	item, err := table.Update(updateInput)
 	if err != nil {
-		if errors.Is(err, interpreter.ErrSyntaxError) {
-			return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
-		}
-
 		return nil, mapKnownError(err)
 	}
 
@@ -547,6 +570,11 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
+	return fd.getItemLocked(ctx, input)
+}
+
+// getItemLocked is GetItem for callers that hold fd.mu.
+func (fd *Client) getItemLocked(_ context.Context, input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -567,32 +595,20 @@ func (fd *Client) GetItem(ctx context.Context, input *dynamodb.GetItemInput, opt
 	}
 
 	keyMap := mapDynamoToTypesMapItem(input.Key)
-	if vErr := mtypes.ValidateItemMap(keyMap); vErr != nil {
-		return nil, mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
-	}
 
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, err := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, err := table.GetItem(keyMap, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
 	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+		return nil, mapKnownError(err)
 	}
 
-	stored := table.Data[key]
-
-	item, err := getItemAttributesForOutput(table, stored, aws.ToString(input.ProjectionExpression), input.ExpressionAttributeNames)
-	if err != nil {
-		return nil, &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
-	}
+	item := mapTypesToDynamoMapItem(read.Projected)
 
 	output := &dynamodb.GetItemOutput{
 		Item: copyItem(item),
 	}
 
 	if mode != capacity.ModeNone {
-		sizeSource := stored
+		sizeSource := read.Stored
 		if len(sizeSource) == 0 {
 			sizeSource = keyMap
 		}
@@ -621,12 +637,18 @@ func (fd *Client) Query(ctx context.Context, input *dynamodb.QueryInput, opt ...
 		return nil, ferr
 	}
 
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
+	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	table, err := fd.getTable(aws.ToString(input.TableName))
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if err = table.ValidateSearchIndex(aws.ToString(input.IndexName)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.KeyConditionExpression), aws.ToString(input.FilterExpression), aws.ToString(input.ProjectionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
@@ -683,12 +705,18 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		return nil, ferr
 	}
 
-	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
+	table, err := fd.getTable(aws.ToString(input.TableName))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
 
-	table, err := fd.getTable(aws.ToString(input.TableName))
+	// Stopgap until #243 moves the unused-placeholder pre-check into core: DynamoDB Local
+	// reports a missing table and an unknown index before unused names and values.
+	if err = table.ValidateSearchIndex(aws.ToString(input.IndexName)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
 	}
@@ -740,6 +768,9 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 
 // SetItemCollectionMetrics set the value of the property itemCollectionMetrics
 func (fd *Client) setItemCollectionMetrics(itemCollectionMetrics map[string][]types.ItemCollectionMetrics) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	fd.itemCollectionMetrics = itemCollectionMetrics
 }
 
@@ -759,6 +790,9 @@ func SetItemCollectionMetrics(client FakeClient, itemCollectionMetrics map[strin
 // predicate selects individual sub-requests to leave unprocessed while the rest are
 // applied.
 func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	if err := validateBatchWriteItemInput(input); err != nil {
 		return &dynamodb.BatchWriteItemOutput{}, err
 	}
@@ -768,9 +802,13 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := fd.batchEmulationFor(tableNames(input.RequestItems)...)
+	emulation := fd.batchEmulationLocked(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
+	}
+
+	if err := fd.validateBatchWriteRequests(input.RequestItems); err != nil {
+		return &dynamodb.BatchWriteItemOutput{}, err
 	}
 
 	unprocessed := map[string][]types.WriteRequest{}
@@ -790,15 +828,15 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 
 			if mode != capacity.ModeNone {
 				target = batchWriteTarget(table, req)
-				fd.snapshotLocked(&target)
+				target.Snapshot(fd.tableOrNil)
 			}
 
-			if err := executeBatchWriteRequest(ctx, fd, aws.String(table), req); err != nil {
+			if err := fd.executeBatchWriteRequest(ctx, aws.String(table), req); err != nil {
 				return &dynamodb.BatchWriteItemOutput{}, err
 			}
 
 			if mode != capacity.ModeNone {
-				size, indexes := fd.billLocked(&target)
+				size, indexes := target.Bill(fd.tableOrNil)
 				acc.Add(table, size, indexes, 1)
 			}
 		}
@@ -809,6 +847,42 @@ func (fd *Client) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWrite
 		ItemCollectionMetrics: fd.itemCollectionMetrics,
 		ConsumedCapacity:      sdkConsumedList(acc.Consumed(mode)),
 	}, nil
+}
+
+// validateBatchWriteRequests rejects the whole batch when any request is invalid, so no request
+// is applied before one fails (D8). The checks and their order live in core.ValidateBatchWrite.
+// Callers must hold fd.mu.
+func (fd *Client) validateBatchWriteRequests(requestItems map[string][]types.WriteRequest) error {
+	requests := make(map[string][]core.WriteRequest, len(requestItems))
+
+	for name, reqs := range requestItems {
+		requests[name] = nil
+
+		for _, req := range reqs {
+			var r core.WriteRequest
+
+			switch {
+			case req.PutRequest != nil:
+				r.Put = mapDynamoToTypesMapItem(req.PutRequest.Item)
+			case req.DeleteRequest != nil:
+				r.Delete = mapDynamoToTypesMapItem(req.DeleteRequest.Key)
+			}
+
+			requests[name] = append(requests[name], r)
+		}
+	}
+
+	lookup := func(name string) (*core.Table, bool) {
+		table, ok := fd.tables[name]
+
+		return table, ok
+	}
+
+	if err := core.ValidateBatchWrite(lookup, requests); err != nil {
+		return mapKnownError(err)
+	}
+
+	return nil
 }
 
 // batchWriteTarget describes a put or delete sub-request for billing.
@@ -850,12 +924,15 @@ func batchWriteRequestKey(req types.WriteRequest) map[string]types.AttributeValu
 // whole call. UnprocessedKeys is produced only by EmulateUnprocessedItems, whose
 // predicate selects individual keys to leave unprocessed while the rest are fetched.
 func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := fd.batchEmulationFor(tableNames(input.RequestItems)...)
+	emulation := fd.batchEmulationLocked(tableNames(input.RequestItems)...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
@@ -870,6 +947,11 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 
 		consistent := aws.ToBool(reqs.ConsistentRead)
 
+		read, err := fd.batchGetTable(tableName, reqs)
+		if err != nil {
+			return nil, err
+		}
+
 		for i, req := range reqs.Keys {
 			if emulation.unprocessed(tableName, i, req) {
 				unprocessedKeys = append(unprocessedKeys, req)
@@ -877,26 +959,14 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 				continue
 			}
 
-			getInput := &dynamodb.GetItemInput{
-				TableName:                aws.String(tableName),
-				Key:                      req,
-				ConsistentRead:           reqs.ConsistentRead,
-				AttributesToGet:          reqs.AttributesToGet,
-				ExpressionAttributeNames: reqs.ExpressionAttributeNames,
-				ProjectionExpression:     reqs.ProjectionExpression,
-			}
-
-			out, err := fd.GetItem(ctx, getInput)
-			if err != nil {
-				return nil, err
-			}
+			item := mapTypesToDynamoMapItem(read[i].Projected)
 
 			if mode != capacity.ModeNone {
-				unitsByTable[tableName] += capacity.ReadUnits(capacity.Size(mapDynamoToTypesMapItem(out.Item)), consistent)
+				unitsByTable[tableName] += capacity.ReadUnits(capacity.Size(read[i].Projected), consistent)
 			}
 
-			if len(out.Item) > 0 {
-				responses[tableName] = append(responses[tableName], out.Item)
+			if len(item) > 0 {
+				responses[tableName] = append(responses[tableName], copyItem(item))
 			}
 		}
 
@@ -915,6 +985,31 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 		UnprocessedKeys:  unprocessed,
 		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable),
 	}, nil
+}
+
+// batchGetTable reads every key of one table of a BatchGetItem, checking all the keys, then the
+// projection once. Keys the unprocessed emulation skips are checked too. Callers must hold fd.mu.
+func (fd *Client) batchGetTable(tableName string, reqs types.KeysAndAttributes) ([]core.ReadItem, error) {
+	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	table, err := fd.getTable(tableName)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	keys := make([]map[string]*mtypes.Item, len(reqs.Keys))
+	for i, req := range reqs.Keys {
+		keys[i] = mapDynamoToTypesMapItem(req)
+	}
+
+	read, err := table.BatchGetItem(keys, aws.ToString(reqs.ProjectionExpression), reqs.ExpressionAttributeNames)
+	if err != nil {
+		return nil, mapKnownError(err)
+	}
+
+	return read, nil
 }
 
 func validateWriteRequest(req types.WriteRequest) error {
@@ -950,9 +1045,10 @@ func validateBatchWriteItemInput(input *dynamodb.BatchWriteItemInput) error {
 	return nil
 }
 
-func executeBatchWriteRequest(ctx context.Context, fd *Client, table *string, req types.WriteRequest) error {
+// executeBatchWriteRequest applies one put or delete sub-request. Callers must hold fd.mu.
+func (fd *Client) executeBatchWriteRequest(ctx context.Context, table *string, req types.WriteRequest) error {
 	if req.PutRequest != nil {
-		_, err := fd.PutItem(ctx, &dynamodb.PutItemInput{
+		_, err := fd.putItemLocked(ctx, &dynamodb.PutItemInput{
 			Item:      req.PutRequest.Item,
 			TableName: table,
 		})
@@ -961,7 +1057,7 @@ func executeBatchWriteRequest(ctx context.Context, fd *Client, table *string, re
 	}
 
 	if req.DeleteRequest != nil {
-		_, err := fd.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		_, err := fd.deleteItemLocked(ctx, &dynamodb.DeleteItemInput{
 			Key:       req.DeleteRequest.Key,
 			TableName: table,
 		})
@@ -972,6 +1068,8 @@ func executeBatchWriteRequest(ctx context.Context, fd *Client, table *string, re
 	return nil
 }
 
+// prepareTransact validates a transaction and snapshots the tables it touches. Callers must
+// hold fd.mu.
 func (fd *Client) prepareTransact(items []types.TransactWriteItem) (map[string]core.TableSnapshot, error) {
 	snapshots := map[string]core.TableSnapshot{}
 	seenKeys := make(map[string]struct{}, len(items))
@@ -1122,6 +1220,7 @@ func transactWriteTargets(items []types.TransactWriteItem) []capacity.WriteTarge
 	return targets
 }
 
+// validateTransactGetItemsInput checks the request shape and every key. The caller must hold fd.mu.
 func validateTransactGetItemsInput(fd *Client, input *dynamodb.TransactGetItemsInput) error {
 	if input == nil {
 		return nil
@@ -1167,18 +1266,9 @@ func validateTransactGetItemsInput(fd *Client, input *dynamodb.TransactGetItemsI
 			return mapKnownError(err)
 		}
 
-		internalKeyMap := mapDynamoToTypesMapItem(get.Key)
-		if vErr := mtypes.ValidateItemMap(internalKeyMap); vErr != nil {
-			return mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
-		}
-
-		if keyErr := table.ValidatePrimaryKeyMap(internalKeyMap); keyErr != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-		}
-
-		key, err := table.KeySchema.GetKey(table.AttributesDef, internalKeyMap)
+		key, err := table.CheckedKeyOf(mapDynamoToTypesMapItem(get.Key))
 		if err != nil {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: err.Error()}
+			return mapKnownError(err)
 		}
 
 		id := tableName + "|" + key
@@ -1198,6 +1288,9 @@ func validateTransactGetItemsInput(fd *Client, input *dynamodb.TransactGetItemsI
 
 // TransactGetItems mock response for dynamodb.
 func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.TransactGetItemsInput, opts ...func(*dynamodb.Options)) (*dynamodb.TransactGetItemsOutput, error) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+
 	if fd.forceFailureErr != nil {
 		return nil, fd.forceFailureErr
 	}
@@ -1217,7 +1310,7 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 	for _, item := range input.TransactItems {
 		get := item.Get
 
-		out, err := fd.GetItem(ctx, &dynamodb.GetItemInput{
+		out, err := fd.getItemLocked(ctx, &dynamodb.GetItemInput{
 			TableName:                get.TableName,
 			Key:                      get.Key,
 			ExpressionAttributeNames: get.ExpressionAttributeNames,
@@ -1240,6 +1333,8 @@ func (fd *Client) TransactGetItems(ctx context.Context, input *dynamodb.Transact
 	}, nil
 }
 
+// runTransactItem and the runTransact* helpers below apply one transaction item. Callers must
+// hold fd.mu.
 func (fd *Client) runTransactItem(i, n int, item types.TransactWriteItem) error {
 	switch {
 	case item.Put != nil:
@@ -1284,10 +1379,6 @@ func (fd *Client) runTransactUpdate(i, n int, update *types.Update) error {
 
 	_, opErr := table.Update(mapDynamoToTypesTransactUpdate(update))
 	if opErr != nil {
-		if errors.Is(opErr, interpreter.ErrSyntaxError) {
-			return &smithy.GenericAPIError{Code: "ValidationException", Message: opErr.Error()}
-		}
-
 		return newTransactionCancelledError(i, n, opErr)
 	}
 
@@ -1351,24 +1442,12 @@ func (fd *Client) runTransactConditionCheck(i, n int, check *types.ConditionChec
 		return mapKnownError(tErr)
 	}
 
-	keyMap := mapDynamoToTypesMapItem(check.Key)
-	if vErr := mtypes.ValidateItemMap(keyMap); vErr != nil {
-		return mapKnownError(mtypes.NewError("ValidationException", vErr.Error(), nil))
-	}
-
-	if keyErr := table.ValidatePrimaryKeyMap(keyMap); keyErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: keyErr.Error()}
-	}
-
-	key, kErr := table.KeySchema.GetKey(table.AttributesDef, keyMap)
+	read, kErr := table.GetItem(mapDynamoToTypesMapItem(check.Key), "", nil)
 	if kErr != nil {
-		return &smithy.GenericAPIError{Code: "ValidationException", Message: kErr.Error()}
+		return mapKnownError(kErr)
 	}
 
-	stored := table.Data[key]
-	if stored == nil {
-		stored = map[string]*mtypes.Item{}
-	}
+	stored := read.Stored
 
 	matched, mErr := table.InterpreterMatch(interpreter.MatchInput{
 		TableName:      table.Name,
@@ -1418,6 +1497,7 @@ func newTransactionCancelledError(i, n int, opErr error) error {
 	}
 }
 
+// getTable returns the named table. Callers must hold fd.mu.
 func (fd *Client) getTable(tableName string) (*core.Table, error) {
 	table, ok := fd.tables[tableName]
 	if !ok {
@@ -1425,23 +1505,6 @@ func (fd *Client) getTable(tableName string) (*core.Table, error) {
 	}
 
 	return table, nil
-}
-
-func getItemAttributesForOutput(table *core.Table, stored map[string]*mtypes.Item, projectionExpr string, aliases map[string]string) (map[string]types.AttributeValue, error) {
-	if projectionExpr == "" {
-		return mapTypesToDynamoMapItem(stored), nil
-	}
-
-	projected, err := table.LangInterpreter.Project(interpreter.ProjectInput{
-		Expression: projectionExpr,
-		Item:       stored,
-		Aliases:    aliases,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return mapTypesToDynamoMapItem(projected), nil
 }
 
 func validateExpressionAttributes(exprNames map[string]string, exprValues map[string]types.AttributeValue, genericExpressions ...string) error {

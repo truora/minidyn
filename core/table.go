@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +86,22 @@ func (t *Table) IndexKind(name string) string {
 	}
 
 	return "GSI"
+}
+
+// ValidateSearchIndex rejects the IndexName of a Query or Scan when the table has no such
+// index, as DynamoDB does: before anything else of the request is looked at. The primary index
+// (an empty name) is always there. SearchData applies it first; the front ends call it ahead
+// of their own pre-check of the expression attributes, which DynamoDB runs after it.
+func (t *Table) ValidateSearchIndex(name string) error {
+	if name == PrimaryIndexName {
+		return nil
+	}
+
+	if _, ok := t.Indexes[name]; !ok {
+		return validationError(msgNoSuchIndex+name, "table", t.Name)
+	}
+
+	return nil
 }
 
 // IndexWriteDelta is how a write touches one secondary index, used to compute the per-index
@@ -188,11 +205,262 @@ func (t *Table) StoredItem(keyOrItem map[string]*types.Item) map[string]*types.I
 	return deepCopyItemMap(item)
 }
 
-// SetAttributeDefinition sets the attribute definition of a table
-func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) {
+// ReadItem is the result of reading one key. Stored is the item as stored (nil when there is
+// none), not a copy: callers copy what they hand out, and front ends measure it for capacity.
+// Projected is the attributes the ProjectionExpression selects, or Stored without one.
+type ReadItem struct {
+	Stored, Projected map[string]*types.Item
+}
+
+// GetItem reads the item stored under key. Like DynamoDB's GetItem it rejects a bad
+// ProjectionExpression (its syntax, then an undeclared #name) before it looks at the key.
+func (t *Table) GetItem(key map[string]*types.Item, projectionExpr string, aliases map[string]string) (ReadItem, error) {
+	checked, err := checkProjection(projectionExpr, aliases)
+	if err != nil {
+		return ReadItem{}, err
+	}
+
+	storageKey, err := t.CheckedKeyOf(key)
+	if err != nil {
+		return ReadItem{}, err
+	}
+
+	return t.readItem(storageKey, checked)
+}
+
+// BatchGetItem reads the keys of one table of a BatchGetItem, one ReadItem per key in order. As in
+// DynamoDB it validates every key before the ProjectionExpression, which it checks once.
+func (t *Table) BatchGetItem(keys []map[string]*types.Item, projectionExpr string, aliases map[string]string) ([]ReadItem, error) {
+	storageKeys := make([]string, len(keys))
+
+	for i, key := range keys {
+		storageKey, err := t.CheckedKeyOf(key)
+		if err != nil {
+			return nil, err
+		}
+
+		storageKeys[i] = storageKey
+	}
+
+	checked, err := checkProjection(projectionExpr, aliases)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]ReadItem, len(keys))
+
+	for i, storageKey := range storageKeys {
+		items[i], err = t.readItem(storageKey, checked)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return items, nil
+}
+
+// readItem reads the item under storageKey and projects it; a nil checked selects everything.
+func (t *Table) readItem(storageKey string, checked *interpreter.CheckedProjection) (ReadItem, error) {
+	stored := t.Data[storageKey]
+	if checked == nil {
+		return ReadItem{Stored: stored, Projected: stored}, nil
+	}
+
+	projected, err := t.LangInterpreter.ProjectChecked(checked, stored)
+	if err != nil {
+		return ReadItem{}, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return ReadItem{Stored: stored, Projected: projected}, nil
+}
+
+// checkProjection validates a ProjectionExpression (nil for none) and returns its parse.
+func checkProjection(expr string, aliases map[string]string) (*interpreter.CheckedProjection, error) {
+	if expr == "" {
+		return nil, nil
+	}
+
+	checked, err := interpreter.CheckProjection(expr, aliases)
+	if err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return checked, nil
+}
+
+// SetAttributeDefinition sets the attribute definitions of a table. It checks all of them first,
+// so a malformed entry leaves the table's definitions unchanged.
+func (t *Table) SetAttributeDefinition(attrs []*types.AttributeDefinition) error {
+	for _, attr := range attrs {
+		if attr == nil || attr.AttributeName == nil {
+			return validationError(msgNoKeyAttribute, "table", t.Name)
+		}
+
+		if *attr.AttributeName == "" {
+			return validationError(msgEmptyAttributeName, "table", t.Name)
+		}
+
+		if types.StringValue(attr.AttributeType) == "" {
+			return validationError(msgNoAttributeType, "attribute", *attr.AttributeName, "table", t.Name)
+		}
+	}
+
 	for _, attr := range attrs {
 		t.AttributesDef[*attr.AttributeName] = *attr.AttributeType
 	}
+
+	return nil
+}
+
+// validationError builds a ValidationException from DynamoDB's text and, optionally, minidyn-only
+// detail as alternating keys and values (see types.WithDetail).
+func validationError(message string, detail ...string) types.Error {
+	return types.NewError("ValidationException", types.WithDetail(message, detail...), nil)
+}
+
+// UpdateTable applies the attribute definitions and global secondary index changes of an
+// UpdateTable request, or none of them: when any part is rejected the table is left as it was.
+// The description of the table is returned either way.
+//
+// The request is checked in the order DynamoDB Local reports it: the structure of every index
+// change, then the attribute definitions, then what depends on them (the key attributes of an
+// index to create must be defined, by the table or by this request).
+func (t *Table) UpdateTable(name string, attrs []*types.AttributeDefinition, changes []*types.GlobalSecondaryIndexUpdate) (*types.TableDescription, error) {
+	if err := t.validateIndexChanges(changes); err != nil {
+		return t.Description(name), err
+	}
+
+	previous := maps.Clone(t.AttributesDef)
+
+	if err := t.SetAttributeDefinition(attrs); err != nil {
+		return t.Description(name), err
+	}
+
+	created, err := t.buildCreatedIndexes(changes)
+	if err != nil {
+		t.AttributesDef = previous
+
+		return t.Description(name), err
+	}
+
+	return t.applyIndexChanges(name, changes, created), nil
+}
+
+// validateIndexChanges checks the structure of every entry of an UpdateTable request before any
+// of them is applied, as DynamoDB does: a request with one bad entry changes nothing.
+//
+// DynamoDB allows one index to be created or deleted per request and counts that first, so the
+// limit is reported ahead of any problem with an entry. The entries are then checked in order.
+func (t *Table) validateIndexChanges(changes []*types.GlobalSecondaryIndexUpdate) error {
+	onlineChanges := 0
+
+	for _, change := range changes {
+		if change == nil {
+			continue
+		}
+
+		if change.Create != nil {
+			onlineChanges++
+		}
+
+		if change.Delete != nil {
+			onlineChanges++
+		}
+	}
+
+	if onlineChanges > 1 {
+		return types.NewError("LimitExceededException", types.WithDetail(msgIndexLimit, "table", t.Name, "changes", strconv.Itoa(onlineChanges)), nil)
+	}
+
+	touched := map[string]struct{}{}
+
+	for _, change := range changes {
+		if err := t.validateIndexChange(change, touched); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, touched map[string]struct{}) error {
+	if change == nil || (change.Create == nil && change.Delete == nil && change.Update == nil) {
+		return validationError(msgNullGSIAction)
+	}
+
+	var name *string
+
+	switch {
+	case change.Create != nil:
+		name = change.Create.IndexName
+	case change.Delete != nil:
+		name = change.Delete.IndexName
+	default:
+		name = change.Update.IndexName
+	}
+
+	indexName := types.StringValue(name)
+
+	// Local accepts or fails with a 500 on these combinations, the message is minidyn's pick
+	if (change.Create != nil && change.Update != nil) || (change.Delete != nil && change.Update != nil) {
+		return validationError(msgOneUpdatePerName,
+			"reason", "create or delete combined with update in one entry", "index", indexName)
+	}
+
+	if indexName == "" {
+		return validationError(msgInvalidGSIName)
+	}
+
+	if _, ok := touched[indexName]; ok {
+		return validationError(msgOneUpdatePerName, "index", indexName)
+	}
+
+	touched[indexName] = struct{}{}
+
+	_, exists := t.Indexes[indexName]
+
+	switch {
+	case change.Create != nil:
+		if err := validateIndexShape(indexName, change.Create.Projection, change.Create.KeySchema); err != nil {
+			return err
+		}
+
+		if exists {
+			return validationError(msgIndexExists, "index", indexName, "table", t.Name)
+		}
+	case change.Delete != nil && !exists:
+		return types.NewError("ResourceNotFoundException", types.WithDetail("Requested resource not found", "index", indexName, "table", t.Name), nil)
+	case change.Update != nil && !exists:
+		return validationError(msgInvalidGSIName, "index", indexName, "table", t.Name)
+	}
+
+	return nil
+}
+
+// buildCreatedIndexes builds, without registering them, the indexes the changes create, so every
+// error applying them could give surfaces before the table is touched.
+func (t *Table) buildCreatedIndexes(changes []*types.GlobalSecondaryIndexUpdate) (map[string]*index, error) {
+	created := map[string]*index{}
+
+	for _, change := range changes {
+		if change.Create == nil {
+			continue
+		}
+
+		i, err := buildGSI(t, &types.GlobalSecondaryIndex{
+			IndexName:             change.Create.IndexName,
+			KeySchema:             change.Create.KeySchema,
+			Projection:            change.Create.Projection,
+			ProvisionedThroughput: change.Create.ProvisionedThroughput,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		created[*change.Create.IndexName] = i
+	}
+
+	return created, nil
 }
 
 func parseKeySchema(schema []*types.KeySchemaElement) (keySchema, error) {
@@ -304,69 +572,99 @@ func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
 	return i, nil
 }
 
-// ApplyIndexChange applies the index change
+// ApplyIndexChange applies the index change after checking it as UpdateTable does.
 func (t *Table) ApplyIndexChange(change *types.GlobalSecondaryIndexUpdate) error {
-	switch {
-	case change.Create != nil:
-		{
-			gsi := &types.GlobalSecondaryIndex{
-				IndexName:             change.Create.IndexName,
-				KeySchema:             change.Create.KeySchema,
-				Projection:            change.Create.Projection,
-				ProvisionedThroughput: change.Create.ProvisionedThroughput,
-			}
+	_, err := t.ApplyIndexChanges(t.Name, []*types.GlobalSecondaryIndexUpdate{change})
 
-			return t.addGlobalIndex(gsi)
-		}
-	case change.Delete != nil:
-		return t.deleteIndex(*change.Delete.IndexName)
-	case change.Update != nil:
-		return t.updateIndex(*change.Update.IndexName, change.Update.ProvisionedThroughput)
-	}
-
-	return nil
+	return err
 }
 
 // AddGlobalIndexes adds global indexes to a table
 func (t *Table) AddGlobalIndexes(input []*types.GlobalSecondaryIndex) error {
-	if input != nil && len(input) == 0 {
+	return t.AddIndexes(input, nil)
+}
+
+// AddLocalIndexes adds local indexes to a table
+func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
+	return t.AddIndexes(nil, input)
+}
+
+// AddIndexes adds the indexes of a CreateTable request, or none of them. DynamoDB Local checks
+// the local indexes (name, definition and key attributes) before the global ones, so a problem
+// with a local index is reported ahead of any with a global one.
+func (t *Table) AddIndexes(gsis []*types.GlobalSecondaryIndex, lsis []*types.LocalSecondaryIndex) error {
+	if gsis != nil && len(gsis) == 0 {
 		return types.NewError("ValidationException", "GSI list is empty/invalid", nil)
 	}
 
-	for _, gsiInput := range input {
-		if err := t.addGlobalIndex(gsiInput); err != nil {
+	if lsis != nil && len(lsis) == 0 {
+		return types.NewError("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
+	}
+
+	built := map[string]*index{}
+
+	for _, lsi := range lsis {
+		name, i, err := t.buildCreateTableLSI(lsi)
+		if err != nil {
 			return err
 		}
+
+		built[name] = i
 	}
+
+	for _, gsi := range gsis {
+		name, i, err := t.buildCreateTableGSI(gsi)
+		if err != nil {
+			return err
+		}
+
+		built[name] = i
+	}
+
+	maps.Copy(t.Indexes, built)
 
 	return nil
 }
 
-func (t *Table) addGlobalIndex(gsiInput *types.GlobalSecondaryIndex) error {
-	i, err := buildGSI(t, gsiInput)
-	if err != nil {
-		return err
+// buildCreateTableLSI and buildCreateTableGSI check and build an index of a CreateTable request. A
+// nil entry is an empty index, which has no name.
+func (t *Table) buildCreateTableLSI(lsi *types.LocalSecondaryIndex) (string, *index, error) {
+	if lsi == nil {
+		lsi = &types.LocalSecondaryIndex{}
 	}
 
-	i.createdAt = time.Now()
-	t.Indexes[*gsiInput.IndexName] = i
-
-	return nil
-}
-
-func (t *Table) deleteIndex(indexName string) error {
-	if _, ok := t.Indexes[indexName]; !ok {
-		return types.NewError("ResourceNotFoundException", "Requested resource not found", nil)
+	if err := validateIndexName(lsi.IndexName); err != nil {
+		return "", nil, err
 	}
 
-	delete(t.Indexes, indexName)
+	if err := validateIndexShape(*lsi.IndexName, lsi.Projection, lsi.KeySchema); err != nil {
+		return "", nil, err
+	}
 
-	return nil
+	i, err := buildLSI(t, lsi)
+
+	return *lsi.IndexName, i, err
 }
 
-func (t *Table) updateIndex(indexName string, provisionedThroughput *types.ProvisionedThroughput) error {
-	// we do not have support for provisionedThroughput values in the index
-	return nil
+func (t *Table) buildCreateTableGSI(gsi *types.GlobalSecondaryIndex) (string, *index, error) {
+	if gsi == nil {
+		gsi = &types.GlobalSecondaryIndex{}
+	}
+
+	if err := validateIndexName(gsi.IndexName); err != nil {
+		return "", nil, err
+	}
+
+	if err := validateIndexShape(*gsi.IndexName, gsi.Projection, gsi.KeySchema); err != nil {
+		return "", nil, err
+	}
+
+	i, err := buildGSI(t, gsi)
+	if err == nil {
+		i.createdAt = time.Now()
+	}
+
+	return *gsi.IndexName, i, err
 }
 
 func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
@@ -384,24 +682,6 @@ func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 	i.projection = lsiInput.Projection
 
 	return i, nil
-}
-
-// AddLocalIndexes adds local indexes to a table
-func (t *Table) AddLocalIndexes(input []*types.LocalSecondaryIndex) error {
-	if input != nil && len(input) == 0 {
-		return types.NewError("ValidationException", "ValidationException: LSI list is empty/invalid", nil)
-	}
-
-	for _, lsi := range input {
-		i, err := buildLSI(t, lsi)
-		if err != nil {
-			return err
-		}
-
-		t.Indexes[*lsi.IndexName] = i
-	}
-
-	return nil
 }
 
 func validateSearchInputMaps(input QueryInput) error {
@@ -895,7 +1175,7 @@ type SearchResult struct {
 
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
-	if err := t.validateSelect(input); err != nil {
+	if err := t.ValidateSearchIndex(input.Index); err != nil {
 		return SearchResult{}, err
 	}
 
@@ -912,6 +1192,11 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 	}
 
 	if err := t.validateKeyCondition(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	// DynamoDB reports Select after the key condition.
+	if err := t.validateSelect(input); err != nil {
 		return SearchResult{}, err
 	}
 
@@ -1217,6 +1502,149 @@ func (t *Table) Restore(s TableSnapshot) {
 	}
 }
 
+// WriteRequest is one put or delete of a batch write. Exactly one of Put (the whole item) and
+// Delete (the key) is set.
+type WriteRequest struct {
+	Put    map[string]*types.Item
+	Delete map[string]*types.Item
+}
+
+// ValidateBatchWrite rejects a whole batch write when any of its requests is invalid, so a
+// front end can apply none of them (D8). lookup finds a table by name.
+//
+// Which error wins when a batch has both a missing table and an invalid request is not stable
+// in DynamoDB Local: probes got either error depending on the order of the tables on the wire
+// and on the table's key schema. minidyn reports invalid requests first, and a missing table
+// only when every request of the existing tables is valid. When two existing tables are
+// invalid, Local reports the first one in the request; a Go map carries no order, so minidyn
+// uses table name order, and the requests of a table in order. Both are minidyn's choices (D1
+// level 3), pinned by unit tests.
+func ValidateBatchWrite(lookup func(name string) (*Table, bool), requests map[string][]WriteRequest) error {
+	var missing error
+
+	for _, name := range slices.Sorted(maps.Keys(requests)) {
+		table, ok := lookup(name)
+		if !ok {
+			if missing == nil {
+				missing = types.NewError("ResourceNotFoundException", "Cannot do operations on a non-existent table", nil)
+			}
+
+			continue
+		}
+
+		for _, req := range requests[name] {
+			var err error
+
+			switch {
+			case req.Put != nil:
+				err = table.ValidatePutItem(req.Put)
+			case req.Delete != nil:
+				err = table.ValidateDeleteKey(req.Delete)
+			}
+
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return missing
+}
+
+// ValidatePutItem runs the checks Put makes on an item that do not depend on a condition, in
+// the same order. It changes nothing, so a batch can reject an invalid request before it
+// applies any (D8).
+func (t *Table) ValidatePutItem(item map[string]*types.Item) error {
+	if err := validateItemValues(item); err != nil {
+		return err
+	}
+
+	if err := t.checkItemKeyValues(item); err != nil {
+		return err
+	}
+
+	if _, err := t.primaryKeyOf(item); err != nil {
+		return err
+	}
+
+	_, err := t.checkedIndexKeysOf(item)
+
+	return err
+}
+
+// ValidateDeleteKey runs the checks Delete makes on a key that do not depend on a condition, in
+// the same order. It changes nothing.
+func (t *Table) ValidateDeleteKey(key map[string]*types.Item) error {
+	_, err := t.CheckedKeyOf(key)
+
+	return err
+}
+
+// CheckedKeyOf runs the checks a key gets before it is read or deleted and returns its storage
+// key: its values, that it holds exactly the primary key attributes, and that none is missing.
+func (t *Table) CheckedKeyOf(key map[string]*types.Item) (string, error) {
+	if err := validateItemValues(key); err != nil {
+		return "", err
+	}
+
+	if err := t.checkPrimaryKeyShape(key); err != nil {
+		return "", err
+	}
+
+	return t.primaryKeyOf(key)
+}
+
+// The helpers below are the steps Put, Delete and the Validate* functions have in common. Each
+// returns a ValidationException, so a check added to one reaches every path that calls it.
+
+// validateItemValues rejects an attribute value DynamoDB does not accept.
+func validateItemValues(m map[string]*types.Item) error {
+	if err := types.ValidateItemMap(m); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// checkItemKeyValues rejects empty values in the primary key and index key attributes of item.
+func (t *Table) checkItemKeyValues(item map[string]*types.Item) error {
+	if err := t.validateItemKeyValues(item); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// checkPrimaryKeyShape rejects a key that does not hold exactly the primary key attributes.
+func (t *Table) checkPrimaryKeyShape(key map[string]*types.Item) error {
+	if err := t.KeySchema.validatePrimaryKeyMap(key); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
+// primaryKeyOf returns the storage key of an item, or a key, and rejects one that is missing a
+// key attribute or has one of the wrong type.
+func (t *Table) primaryKeyOf(item map[string]*types.Item) (string, error) {
+	key, err := t.KeySchema.GetKey(t.AttributesDef, item)
+	if err != nil {
+		return "", types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return key, nil
+}
+
+// checkedIndexKeysOf is indexKeysOf with its error as a ValidationException.
+func (t *Table) checkedIndexKeysOf(item map[string]*types.Item) (map[string]string, error) {
+	keys, err := t.indexKeysOf(item)
+	if err != nil {
+		return nil, types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return keys, nil
+}
+
 // Put puts an item into the table. It returns the item it replaced when
 // ReturnValues is ALL_OLD, and nil otherwise (or when there was none).
 func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) { //nolint:gocognit // conditional write, key resolution, GSI updates
@@ -1228,17 +1656,17 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.Item); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.Item); err != nil {
+		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.ExpressionAttributeValues); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB reports the key values of the item before the placeholders of the condition.
-	if err := t.validateItemKeyValues(input.Item); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := t.checkItemKeyValues(input.Item); err != nil {
+		return nil, err
 	}
 
 	if err := validateConditionExpression(input.ExpressionAttributeNames, input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
@@ -1247,9 +1675,9 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 
 	item := copyItem(input.Item)
 
-	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Item)
+	key, err := t.primaryKeyOf(input.Item)
 	if err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+		return nil, err
 	}
 
 	// support conditional writes
@@ -1270,9 +1698,9 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		}
 	}
 
-	indexKeys, err := t.indexKeysOf(item)
+	indexKeys, err := t.checkedIndexKeysOf(item)
 	if err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+		return nil, err
 	}
 
 	old := t.Data[key]
@@ -1297,82 +1725,74 @@ func (t *Table) interpreterUpdate(input interpreter.UpdateInput) error {
 // ValidateNoneOrAllOldReturnValues accepts the ReturnValues modes that PutItem
 // and DeleteItem support: empty, NONE and ALL_OLD.
 func ValidateNoneOrAllOldReturnValues(rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
-	})
-}
-
-// validateNoneOrAllOld accepts empty, NONE and ALL_OLD, and builds the
-// ValidationException message of any other value with invalid.
-func validateNoneOrAllOld(rv *string, invalid func(value string) string) error {
-	if rv == nil {
+	if rv == nil || isNoneOrAllOld(*rv) {
 		return nil
 	}
 
-	switch *rv {
+	return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
+}
+
+// invalidReturnValuesMessage is DynamoDB's text for a ReturnValues outside the modes the
+// operation supports, the same for PutItem, UpdateItem and DeleteItem.
+func invalidReturnValuesMessage(value string) string {
+	return types.WithDetail("Return values set to invalid value", "value", value, "field", "ReturnValues")
+}
+
+// isNoneOrAllOld reports whether v is a mode of the NONE | ALL_OLD enums (ReturnValues of
+// PutItem and DeleteItem, ReturnValuesOnConditionCheckFailure). Empty means the default.
+func isNoneOrAllOld(v string) bool {
+	switch v {
 	case "", "NONE", "ALL_OLD":
-		return nil
+		return true
 	default:
-		return types.NewError("ValidationException", invalid(*rv), nil)
+		return false
+	}
+}
+
+// isUpdateReturnValue reports whether v is a ReturnValues mode of UpdateItem: the NONE | ALL_OLD
+// modes plus UPDATED_OLD, UPDATED_NEW and ALL_NEW. Empty means the default.
+func isUpdateReturnValue(v string) bool {
+	if isNoneOrAllOld(v) {
+		return true
+	}
+
+	switch v {
+	case "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
+		return true
+	default:
+		return false
 	}
 }
 
 // ValidateUpdateItemReturnValues accepts the ReturnValues modes UpdateItem supports.
 func ValidateUpdateItemReturnValues(rv *string) error {
-	if rv == nil || *rv == "" {
+	if rv == nil || isUpdateReturnValue(*rv) {
 		return nil
 	}
 
-	switch *rv {
-	case "NONE", "ALL_OLD", "UPDATED_OLD", "UPDATED_NEW", "ALL_NEW":
-		return nil
-	default:
-		return types.NewError("ValidationException",
-			fmt.Sprintf("1 validation error detected: Value '%s' at 'returnValues' failed to satisfy constraint: Member must satisfy enum value set: [NONE, ALL_OLD, UPDATED_OLD, UPDATED_NEW, ALL_NEW]", *rv),
-			nil)
-	}
+	return types.NewError("ValidationException", invalidReturnValuesMessage(*rv), nil)
 }
 
-func dynamoItemEqual(a, b *types.Item) bool {
-	return reflect.DeepEqual(a, b)
-}
+// writtenAttributes returns, for the top-level attributes of the written paths, the ones whose
+// path resolves in item. Like DynamoDB it keeps the whole top-level attribute for nested paths.
+func writtenAttributes(item map[string]*types.Item, paths [][]language.PathElement) map[string]*types.Item {
+	out := map[string]*types.Item{}
 
-func changedUpdateAttributeKeys(oldItem, newItem map[string]*types.Item) []string {
-	keys := make(map[string]struct{})
-
-	for k := range oldItem {
-		keys[k] = struct{}{}
-	}
-
-	for k := range newItem {
-		keys[k] = struct{}{}
-	}
-
-	changed := make([]string, 0, len(keys))
-
-	for k := range keys {
-		ov, okO := oldItem[k]
-		nv, okN := newItem[k]
-
-		if !okO {
-			ov = nil
-		}
-
-		if !okN {
-			nv = nil
-		}
-
-		if !dynamoItemEqual(ov, nv) {
-			changed = append(changed, k)
+	for _, path := range paths {
+		if _, ok := language.LookupProjectedPath(item, path); ok {
+			out[path[0].Key] = deepCopyTypesItem(item[path[0].Key])
 		}
 	}
 
-	sort.Strings(changed)
-
-	return changed
+	return out
 }
 
-func buildUpdateItemReturnAttributes(rv *string, oldItem, newItem map[string]*types.Item) map[string]*types.Item {
+// buildUpdateItemReturnAttributes builds the UpdateItem Attributes response. UPDATED_OLD and
+// UPDATED_NEW return the attributes the update expression writes (paths), whether or not their
+// value changed, as they were in oldItem or are in newItem.
+func buildUpdateItemReturnAttributes(rv *string, paths [][]language.PathElement,
+	oldItem, newItem map[string]*types.Item,
+) map[string]*types.Item {
 	mode := ""
 
 	if rv != nil {
@@ -1380,42 +1800,14 @@ func buildUpdateItemReturnAttributes(rv *string, oldItem, newItem map[string]*ty
 	}
 
 	switch mode {
-	case "", "NONE":
-		return nil
 	case "ALL_NEW":
 		return copyItem(newItem)
 	case "ALL_OLD":
 		return copyItem(oldItem)
 	case "UPDATED_OLD":
-		ck := changedUpdateAttributeKeys(oldItem, newItem)
-		if len(ck) == 0 {
-			return map[string]*types.Item{}
-		}
-
-		out := make(map[string]*types.Item, len(ck))
-
-		for _, k := range ck {
-			if v, ok := oldItem[k]; ok {
-				out[k] = deepCopyTypesItem(v)
-			}
-		}
-
-		return out
+		return writtenAttributes(oldItem, paths)
 	case "UPDATED_NEW":
-		ck := changedUpdateAttributeKeys(oldItem, newItem)
-		if len(ck) == 0 {
-			return map[string]*types.Item{}
-		}
-
-		out := make(map[string]*types.Item, len(ck))
-
-		for _, k := range ck {
-			if v, ok := newItem[k]; ok {
-				out[k] = deepCopyTypesItem(v)
-			}
-		}
-
-		return out
+		return writtenAttributes(newItem, paths)
 	default:
 		return nil
 	}
@@ -1427,7 +1819,9 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
-	// DynamoDB reports ReturnValues, then the Key, then the rest of the request.
+	// minidyn reports ReturnValues, then the Key, then RVOCCF, then the placeholders. DynamoDB
+	// Local reports ReturnValues and the Key first too, but puts RVOCCF after the unused names
+	// and values and the undefined placeholders; see #243.
 	if err := ValidateUpdateItemReturnValues(input.ReturnValues); err != nil {
 		return nil, err
 	}
@@ -1448,10 +1842,13 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
+	// A parse error leaves no paths: the interpreter reports it later.
+	writtenPaths := interpreter.UpdateTargetPaths(input.UpdateExpression,
+		input.ExpressionAttributeNames, input.ExpressionAttributeValues)
+
 	if !t.KeySchema.Secondary {
-		if err := language.ValidateUpdateExpressionDoesNotTargetPrimaryKey(
-			input.UpdateExpression,
-			input.ExpressionAttributeNames,
+		if err := language.ValidatePathsDoNotTargetPrimaryKey(
+			writtenPaths,
 			t.KeySchema.HashKey,
 			t.KeySchema.RangeKey,
 		); err != nil {
@@ -1496,7 +1893,11 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		item = copyItem(input.Key)
 	}
 
-	oldItem := deepCopyItemMap(item)
+	// An item the update creates has no old item to return.
+	oldItem := map[string]*types.Item{}
+	if ok {
+		oldItem = deepCopyItemMap(item)
+	}
 
 	err = t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.Name,
@@ -1530,7 +1931,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 
 	newItem := copyItem(item)
 
-	return buildUpdateItemReturnAttributes(input.ReturnValues, oldItem, newItem), nil
+	return buildUpdateItemReturnAttributes(input.ReturnValues, writtenPaths, oldItem, newItem), nil
 }
 
 // Delete deletes an item in the table based on the input
@@ -1543,25 +1944,25 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.Key); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.Key); err != nil {
+		return nil, err
 	}
 
-	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := validateItemValues(input.ExpressionAttributeValues); err != nil {
+		return nil, err
 	}
 
-	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	if err := t.checkPrimaryKeyShape(input.Key); err != nil {
+		return nil, err
 	}
 
 	if err := validateConditionExpression(deleteAliases(input.ExpressionAttributeNames), input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
 		return nil, err
 	}
 
-	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
+	key, err := t.primaryKeyOf(input.Key)
 	if err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+		return nil, err
 	}
 
 	item, ok := t.Data[key]
@@ -1756,33 +2157,33 @@ func (t *Table) globalIndexDescription(indexName string, index *index) types.Glo
 // carry their creation markers and deleted ones are still listed, as DELETING. On error the
 // description of the table is still returned.
 func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryIndexUpdate) (*types.TableDescription, error) {
+	return t.UpdateTable(name, nil, changes)
+}
+
+// applyIndexChanges applies changes that validateIndexChanges accepted, registering the indexes
+// buildCreatedIndexes built for them.
+func (t *Table) applyIndexChanges(name string, changes []*types.GlobalSecondaryIndexUpdate, built map[string]*index) *types.TableDescription {
 	var (
 		created []string
 		dropped []types.GlobalSecondaryIndexDescription
-		err     error
 	)
 
 	for _, change := range changes {
-		var droppedDesc *types.GlobalSecondaryIndexDescription
+		switch {
+		case change.Create != nil:
+			indexName := *change.Create.IndexName
 
-		if change.Delete != nil {
-			if idx, ok := t.Indexes[*change.Delete.IndexName]; ok {
-				d := t.globalIndexDescription(*change.Delete.IndexName, idx)
-				d.IndexStatus = new("DELETING")
-				droppedDesc = &d
-			}
-		}
+			built[indexName].createdAt = time.Now()
+			t.Indexes[indexName] = built[indexName]
+			created = append(created, indexName)
+		case change.Delete != nil:
+			indexName := *change.Delete.IndexName
 
-		if err = t.ApplyIndexChange(change); err != nil {
-			break
-		}
+			d := t.globalIndexDescription(indexName, t.Indexes[indexName])
+			d.IndexStatus = new("DELETING")
+			dropped = append(dropped, d)
 
-		if change.Create != nil {
-			created = append(created, *change.Create.IndexName)
-		}
-
-		if droppedDesc != nil {
-			dropped = append(dropped, *droppedDesc)
+			delete(t.Indexes, indexName)
 		}
 	}
 
@@ -1795,7 +2196,7 @@ func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryI
 
 	desc.GlobalSecondaryIndexes = append(desc.GlobalSecondaryIndexes, dropped...)
 
-	return desc, err
+	return desc
 }
 
 // markIndexCreating sets the fields DynamoDB reports for an index created by UpdateTable.
@@ -1816,9 +2217,13 @@ func (t *Table) markIndexCreating(g *types.GlobalSecondaryIndexDescription) {
 // The front ends call it before their own expression pre-check and the table lookup, to keep
 // DynamoDB's order; Put, Update and Delete call it again, so core never runs with a bad mode.
 func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		return returnValuesOnConditionCheckFailureMessage(value, "returnValuesOnConditionCheckFailure")
-	})
+	if rv == nil || isNoneOrAllOld(*rv) {
+		return nil
+	}
+
+	msg := returnValuesOnConditionCheckFailureMessage(*rv, "returnValuesOnConditionCheckFailure")
+
+	return types.NewError("ValidationException", msg, nil)
 }
 
 // ValidateTransactItemReturnValuesOnConditionCheckFailure validates the mode of the Put, Update,
@@ -1826,12 +2231,16 @@ func ValidateReturnValuesOnConditionCheckFailure(rv *string) error {
 // index of TransactWriteItems. DynamoDB Local accepts any value here; minidyn follows the API
 // reference ("Valid Values: ALL_OLD | NONE") and rejects the whole request.
 func ValidateTransactItemReturnValuesOnConditionCheckFailure(index int, shape string, rv *string) error {
-	return validateNoneOrAllOld(rv, func(value string) string {
-		path := fmt.Sprintf("transactItems.%d.member.%s.returnValuesOnConditionCheckFailure", index+1, shape)
+	if rv == nil || isNoneOrAllOld(*rv) {
+		return nil
+	}
 
-		// DynamoDB's text already names the field and the 1-based item, so no detail is added.
-		return returnValuesOnConditionCheckFailureMessage(value, path)
-	})
+	path := fmt.Sprintf("transactItems.%d.member.%s.returnValuesOnConditionCheckFailure", index+1, shape)
+
+	// DynamoDB's text already names the field and the 1-based item, so no detail is added.
+	msg := returnValuesOnConditionCheckFailureMessage(*rv, path)
+
+	return types.NewError("ValidationException", msg, nil)
 }
 
 func returnValuesOnConditionCheckFailureMessage(value, path string) string {

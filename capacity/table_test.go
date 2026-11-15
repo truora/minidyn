@@ -14,10 +14,12 @@ func newBillingTable(t *testing.T) *core.Table {
 
 	table := core.NewTable("pokemons")
 	table.BillingMode = new("PAY_PER_REQUEST")
-	table.SetAttributeDefinition([]*types.AttributeDefinition{
+	if err := table.SetAttributeDefinition([]*types.AttributeDefinition{
 		{AttributeName: new("id"), AttributeType: new("S")},
 		{AttributeName: new("type"), AttributeType: new("S")},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := table.CreatePrimaryIndex(&types.CreateTableInput{
 		KeySchema: []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}},

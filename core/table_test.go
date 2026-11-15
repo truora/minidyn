@@ -82,18 +82,11 @@ func createPokemonTable() (*Table, error) {
 	return table, nil
 }
 
-func createGlobalSecondaryIndex() *types.GlobalSecondaryIndexUpdate {
-	return &types.GlobalSecondaryIndexUpdate{
-		Create: &types.CreateGlobalSecondaryIndexAction{},
-		Delete: &types.DeleteGlobalSecondaryIndexAction{},
-		Update: &types.UpdateGlobalSecondaryIndexAction{},
-	}
-}
-
 func createLocalSecondaryIndex() []*types.LocalSecondaryIndex {
 	return []*types.LocalSecondaryIndex{
 		{
-			IndexName: new("indexname"),
+			IndexName:  new("indexname"),
+			Projection: &types.Projection{ProjectionType: new("ALL")},
 		},
 	}
 }
@@ -105,7 +98,7 @@ func TestAddLocalIndexes(t *testing.T) {
 	newTable := NewTable(tableName)
 
 	err := newTable.AddLocalIndexes(localIndexes)
-	c.Contains(err.Error(), " No Hash Key specified in schema.")
+	c.Contains(err.Error(), " No defined key schema.")
 
 	localIndexes[0].KeySchema = []*types.KeySchemaElement{
 		{
@@ -168,71 +161,35 @@ func TestTableIndexesDescription(t *testing.T) {
 func TestApplyIndexChange(t *testing.T) {
 	c := require.New(t)
 
-	globalSecondaryIndex := createGlobalSecondaryIndex()
+	hashKey := []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}}
+	create := gsiCreate(new("indexname"), hashKey, gsiAllProjection())
 	newTable := NewTable(tableName)
 
-	err := newTable.ApplyIndexChange(globalSecondaryIndex)
+	err := newTable.ApplyIndexChange(create)
 	c.Contains(err.Error(), "No provisioned throughput specified for the global secondary index")
 
 	newTable.BillingMode = new("PAY_PER_REQUEST")
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.Contains(err.Error(), "No Hash Key specified in schema.")
+	err = newTable.ApplyIndexChange(create)
+	c.Contains(err.Error(), "Global Secondary Index Hash Key not specified in Attribute Definitions.")
 
 	newTable, err = createPokemonTable()
 	c.NoError(err)
 
 	newTable.BillingMode = new("PAY_PER_REQUEST")
-	createTableInput := &types.CreateTableInput{
-		KeySchema: []*types.KeySchemaElement{
-			{
-				AttributeName: "id",
-				KeyType:       "HASH",
-			},
-		},
-	}
+	c.NoError(newTable.CreatePrimaryIndex(&types.CreateTableInput{KeySchema: hashKey}))
 
-	err = newTable.CreatePrimaryIndex(createTableInput)
-	c.NoError(err)
+	c.NoError(newTable.ApplyIndexChange(create))
+	c.Contains(newTable.Indexes, "indexname")
 
-	globalSecondaryIndex.Create = &types.CreateGlobalSecondaryIndexAction{
-		KeySchema: []*types.KeySchemaElement{
-			{
-				AttributeName: "id",
-				KeyType:       "HASH",
-			},
-		},
-		IndexName: new("indexname"),
-	}
+	c.NoError(newTable.ApplyIndexChange(gsiUpdate(new("indexname"))))
+	c.NoError(newTable.ApplyIndexChange(gsiDelete(new("indexname"))))
+	c.NotContains(newTable.Indexes, "indexname")
 
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
-
-	globalSecondaryIndex.Create = nil
-
-	globalSecondaryIndex.Delete = &types.DeleteGlobalSecondaryIndexAction{
-		IndexName: new("indexname"),
-	}
-
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
-
-	newTable.Indexes = map[string]*index{}
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
+	err = newTable.ApplyIndexChange(gsiDelete(new("indexname")))
 	c.Contains(err.Error(), "Requested resource not found")
 
-	globalSecondaryIndex.Delete = nil
-
-	globalSecondaryIndex.Update = &types.UpdateGlobalSecondaryIndexAction{
-		IndexName: new("indexname"),
-	}
-
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
-
-	globalSecondaryIndex.Update = nil
-
-	err = newTable.ApplyIndexChange(globalSecondaryIndex)
-	c.NoError(err)
+	err = newTable.ApplyIndexChange(&types.GlobalSecondaryIndexUpdate{})
+	c.Contains(err.Error(), "Update global secondary index action is null")
 
 	err = newTable.AddGlobalIndexes([]*types.GlobalSecondaryIndex{})
 	c.Contains(err.Error(), "GSI list is empty/invalid")
@@ -1013,6 +970,96 @@ func TestUpdateReturnValuesSemantics(t *testing.T) {
 	newTable.Clear()
 }
 
+// An update that creates the item has no old item, so ALL_OLD returns nothing, as DynamoDB
+// does (#214).
+func TestUpdateAllOldOnMissingItem(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	item := createPokemon(pokemon{ID: "all-old-missing", Type: "grass", Name: "Bulbasaur"})
+
+	out, err := newTable.Update(&types.UpdateItemInput{
+		TableName:                 &newTable.Name,
+		Key:                       primaryKeyFromPokemonItem(item),
+		ReturnValues:              aws.String("ALL_OLD"),
+		UpdateExpression:          "SET second_type = :st",
+		ExpressionAttributeValues: map[string]*types.Item{":st": {S: new("poison")}},
+	})
+	c.NoError(err)
+	c.Empty(out)
+
+	// the item was created
+	c.Len(newTable.Data, 1)
+
+	// now it exists: ALL_OLD returns it as it was before the update
+	out, err = newTable.Update(&types.UpdateItemInput{
+		TableName:                 &newTable.Name,
+		Key:                       primaryKeyFromPokemonItem(item),
+		ReturnValues:              aws.String("ALL_OLD"),
+		UpdateExpression:          "SET second_type = :st",
+		ExpressionAttributeValues: map[string]*types.Item{":st": {S: new("fire")}},
+	})
+	c.NoError(err)
+	c.Equal("poison", types.StringValue(out["second_type"].S))
+	c.Equal("all-old-missing", types.StringValue(out["id"].S))
+}
+
+// What an update that creates the item returns for each ReturnValues, with and without a
+// condition that passes on the missing item (#214).
+func TestUpdateReturnValuesOnMissingItem(t *testing.T) {
+	cases := []struct {
+		name         string
+		returnValues string
+		condition    *string
+		want         map[string]string
+	}{
+		{name: "ALL_OLD", returnValues: "ALL_OLD"},
+		{name: "ALL_OLD with a passing condition", returnValues: "ALL_OLD", condition: aws.String("attribute_not_exists(second_type)")},
+		{name: "UPDATED_OLD", returnValues: "UPDATED_OLD"},
+		{name: "UPDATED_NEW", returnValues: "UPDATED_NEW", want: map[string]string{"second_type": "poison"}},
+		{
+			name: "ALL_NEW", returnValues: "ALL_NEW",
+			want: map[string]string{"id": "missing", "name": "Bulbasaur", "second_type": "poison"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := require.New(t)
+
+			table, err := createPokemonTable()
+			c.NoError(err)
+
+			item := createPokemon(pokemon{ID: "missing", Type: "grass", Name: "Bulbasaur"})
+
+			out, err := table.Update(&types.UpdateItemInput{
+				TableName:                 &table.Name,
+				Key:                       primaryKeyFromPokemonItem(item),
+				ReturnValues:              aws.String(tc.returnValues),
+				ConditionExpression:       tc.condition,
+				UpdateExpression:          "SET second_type = :st",
+				ExpressionAttributeValues: map[string]*types.Item{":st": {S: new("poison")}},
+			})
+			c.NoError(err)
+			c.Len(table.Data, 1)
+
+			got := map[string]string{}
+			for k, v := range out {
+				got[k] = types.StringValue(v.S)
+			}
+
+			if len(tc.want) == 0 {
+				c.Empty(got)
+				return
+			}
+
+			c.Equal(tc.want, got)
+		})
+	}
+}
+
 func TestUpdateInvalidReturnValues(t *testing.T) {
 	c := require.New(t)
 
@@ -1040,7 +1087,7 @@ func TestUpdateInvalidReturnValues(t *testing.T) {
 		ExpressionAttributeValues: map[string]*types.Item{":new": {S: new("X")}},
 	})
 	c.Error(err)
-	c.Contains(err.Error(), "returnValues")
+	c.Contains(err.Error(), "Return values set to invalid value")
 
 	newTable.Clear()
 }
@@ -1794,7 +1841,7 @@ func TestSetAttributeDefinition(t *testing.T) {
 		},
 	}
 
-	newTable.SetAttributeDefinition(newAttributesDef)
+	c.NoError(newTable.SetAttributeDefinition(newAttributesDef))
 	c.Equal(types.StringValue(newAttributesDef[0].AttributeType), newTable.AttributesDef["name"])
 }
 
@@ -2160,10 +2207,10 @@ func TestWriteIndexDeltasSkipsUnchangedProjections(t *testing.T) {
 
 	table := NewTable("t")
 	table.BillingMode = aws.String("PAY_PER_REQUEST")
-	table.SetAttributeDefinition([]*types.AttributeDefinition{
+	c.NoError(table.SetAttributeDefinition([]*types.AttributeDefinition{
 		{AttributeName: aws.String("id"), AttributeType: aws.String("S")},
 		{AttributeName: aws.String("type"), AttributeType: aws.String("S")},
-	})
+	}))
 	c.NoError(table.CreatePrimaryIndex(&types.CreateTableInput{
 		KeySchema: []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}},
 	}))
@@ -2207,4 +2254,158 @@ func TestWriteIndexDeltasSkipsUnchangedProjections(t *testing.T) {
 
 	// Entering an index always writes the entry.
 	c.Len(table.WriteIndexDeltas(nil, item("a", "x")), 2)
+}
+
+// ValidatePutItem and ValidateDeleteKey run the checks Put and Delete make without a condition,
+// so a batch can reject an invalid request before it applies any (#216). They never write.
+func TestValidatePutItemAndDeleteKey(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+	n := "1"
+
+	c.NoError(newTable.ValidatePutItem(map[string]*types.Item{"id": s("1"), "name": s("a")}))
+	c.NoError(newTable.ValidateDeleteKey(map[string]*types.Item{"id": s("1"), "name": s("a")}))
+
+	puts := map[string]map[string]*types.Item{
+		"The AttributeValue for a key attribute cannot contain an empty string value. Key: id": {"id": s(""), "name": s("a")},
+		"One or more parameter values were invalid: Type mismatch for key":                     {"id": {N: &n}, "name": s("a")},
+		"One of the required keys was not given a value":                                       {"id": s("1")},
+	}
+
+	for msg, item := range puts {
+		err = newTable.ValidatePutItem(item)
+		c.Error(err, msg)
+		c.Contains(err.Error(), msg)
+	}
+
+	dels := map[string]map[string]*types.Item{
+		"The AttributeValue for a key attribute cannot contain an empty string value. Key: name": {"id": s("1"), "name": s("")},
+		"One or more parameter values were invalid: Type mismatch for key":                       {"id": {N: &n}, "name": s("a")},
+		"The number of conditions on the keys is invalid":                                        {"id": s("1")},
+	}
+
+	for msg, key := range dels {
+		err = newTable.ValidateDeleteKey(key)
+		c.Error(err, msg)
+		c.Contains(err.Error(), msg)
+	}
+
+	c.Empty(newTable.Data)
+
+	// an attribute value DynamoDB rejects
+	err = newTable.ValidatePutItem(map[string]*types.Item{"id": s("1"), "name": s("a"), "ss": {SS: []*string{&n, &n}}})
+	c.Error(err)
+	c.Contains(err.Error(), "duplicate")
+
+	err = newTable.ValidateDeleteKey(map[string]*types.Item{"id": s("1"), "name": {SS: []*string{&n, &n}}})
+	c.Error(err)
+
+	// the key of a secondary index
+	idx := NewTable(tableName)
+	idx.AttributesDef = map[string]string{"pk": "S", "g": "S"}
+	idx.KeySchema = keySchema{"pk", "", false}
+	idxName := "by-g"
+	c.NoError(idx.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
+		IndexName:             &idxName,
+		KeySchema:             []*types.KeySchemaElement{{AttributeName: "g", KeyType: "HASH"}},
+		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
+		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+	}}))
+
+	c.NoError(idx.ValidatePutItem(map[string]*types.Item{"pk": s("1"), "g": s("x")}))
+	c.Error(idx.ValidatePutItem(map[string]*types.Item{"pk": s("1"), "g": {N: &n}}))
+	c.Empty(idx.Data)
+}
+
+// ValidateBatchWrite checks every request of every existing table before it reports an unknown
+// table, and reports the first invalid existing table by name (#216).
+func TestValidateBatchWrite(t *testing.T) {
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+
+	pokemons, err := createPokemonTable()
+	require.NoError(t, err)
+
+	other, err := createPokemonTable()
+	require.NoError(t, err)
+
+	tables := map[string]*Table{"pokemons": pokemons, "other": other}
+	lookup := func(name string) (*Table, bool) {
+		table, ok := tables[name]
+
+		return table, ok
+	}
+
+	valid := WriteRequest{Put: map[string]*types.Item{"id": s("1"), "name": s("a")}}
+	validDelete := WriteRequest{Delete: map[string]*types.Item{"id": s("1"), "name": s("a")}}
+	emptyKey := WriteRequest{Put: map[string]*types.Item{"id": s(""), "name": s("a")}}
+	missingRange := WriteRequest{Put: map[string]*types.Item{"id": s("1")}}
+	deleteMissingRange := WriteRequest{Delete: map[string]*types.Item{"id": s("1")}}
+
+	const (
+		emptyMsg   = "The AttributeValue for a key attribute cannot contain an empty string value. Key: id"
+		missingMsg = "One of the required keys was not given a value"
+		deleteMsg  = "The number of conditions on the keys is invalid"
+		tableMsg   = "Cannot do operations on a non-existent table"
+	)
+
+	tests := []struct {
+		name    string
+		reqs    map[string][]WriteRequest
+		code    string
+		message string
+	}{
+		{name: "valid", reqs: map[string][]WriteRequest{"pokemons": {valid, validDelete}, "other": {valid}}},
+		{name: "empty", reqs: map[string][]WriteRequest{}},
+		{
+			name: "invalid put", reqs: map[string][]WriteRequest{"pokemons": {valid, emptyKey}},
+			code: "ValidationException", message: emptyMsg,
+		},
+		{
+			name: "invalid delete", reqs: map[string][]WriteRequest{"pokemons": {valid, deleteMissingRange}},
+			code: "ValidationException", message: deleteMsg,
+		},
+		{
+			name: "unknown table", reqs: map[string][]WriteRequest{"pokemons": {valid}, "zzz": {valid}},
+			code: "ResourceNotFoundException", message: tableMsg,
+		},
+		{
+			// the unknown table sorts first, but an invalid item of an existing table comes before it
+			name: "invalid item and an unknown table that sorts first", reqs: map[string][]WriteRequest{
+				"aaa": {valid}, "pokemons": {emptyKey},
+			},
+			code: "ValidationException", message: emptyMsg,
+		},
+		{
+			// DynamoDB Local reports the first table of the request; a map has no order, so
+			// the first by name is reported
+			name: "two invalid tables", reqs: map[string][]WriteRequest{
+				"pokemons": {emptyKey}, "other": {missingRange},
+			},
+			code: "ValidationException", message: missingMsg,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateBatchWrite(lookup, tt.reqs)
+			if tt.code == "" {
+				require.NoError(t, err)
+
+				return
+			}
+
+			var typed types.Error
+
+			require.ErrorAs(t, err, &typed)
+			require.Equal(t, tt.code, typed.Code())
+			require.Contains(t, typed.Message(), tt.message)
+		})
+	}
+
+	require.Empty(t, pokemons.Data)
+	require.Empty(t, other.Data)
 }

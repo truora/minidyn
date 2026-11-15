@@ -1,6 +1,7 @@
 package core
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -87,7 +88,7 @@ func TestUpdateDelete_keyBeforeExpressions(t *testing.T) {
 			Key: emptyKey, UpdateExpression: "SET n = :v", ReturnValues: new("BOGUS"),
 			ExpressionAttributeValues: map[string]*types.Item{":v": {S: new("x")}},
 		})
-		require.ErrorContains(t, err, "returnValues")
+		require.ErrorContains(t, err, "Return values set to invalid value")
 	})
 
 	t.Run("put reports the key values before the placeholders", func(t *testing.T) {
@@ -202,9 +203,7 @@ func TestSearchData_betweenBoundsByType(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			vals := map[string]*types.Item{":p": p, "lo": tc.lo, "hi": tc.hi}
-			for k, v := range tc.extra {
-				vals[k] = v
-			}
+			maps.Copy(vals, tc.extra)
 
 			err := queryBetween(betweenTable(tc.attr), vals)
 			if tc.want == "" {
@@ -307,4 +306,79 @@ func TestTable_indexRejectionWritesNothing(t *testing.T) {
 		require.Len(t, table.Data, 1)
 		require.Len(t, table.SortedKeys, 1)
 	})
+
+	t.Run("update of a new item", func(t *testing.T) {
+		table, key := newTable(t)
+
+		_, err := table.Update(&types.UpdateItemInput{
+			Key:                       map[string]*types.Item{"id": {S: new("b")}, "name": {S: new("n")}},
+			UpdateExpression:          "SET #t = :n",
+			ExpressionAttributeNames:  map[string]string{"#t": "type"},
+			ExpressionAttributeValues: map[string]*types.Item{":n": nItem("5")},
+		})
+		require.Error(t, err)
+		require.Len(t, table.Data, 1)
+		require.Len(t, table.SortedKeys, 1)
+		requireOld(t, table, key)
+	})
+}
+
+// DynamoDB rejects an IndexName the table does not have before anything else of a Query or
+// Scan, ahead of the placeholders, the key condition and Select, and before any item is read.
+func TestSearchData_unknownIndexComesFirst(t *testing.T) {
+	table := createSelectTable(t)
+
+	const want = "ValidationException: The table does not have the specified index: nope | table: pokemons"
+
+	cases := []struct {
+		name  string
+		input QueryInput
+	}{
+		{"query", QueryInput{
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": {S: new("001")}},
+		}},
+		{"scan", QueryInput{Scan: true}},
+		{"query empty hash value", QueryInput{
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": emptyS()},
+		}},
+		{"query key condition type mismatch", QueryInput{
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": nItem("1")},
+		}},
+		{"query undeclared name", QueryInput{
+			KeyConditionExpression:    "#n = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": {S: new("001")}},
+		}},
+		{"query undefined value", QueryInput{KeyConditionExpression: "id = :id"}},
+		{"query invalid select", QueryInput{
+			Select:                    "BOGUS",
+			KeyConditionExpression:    "id = :id",
+			ExpressionAttributeValues: map[string]*types.Item{":id": {S: new("001")}},
+		}},
+		{"scan undeclared name", QueryInput{Scan: true, FilterExpression: "#n = :v", ExpressionAttributeValues: map[string]*types.Item{":v": {S: new("x")}}}},
+		{"scan undefined value", QueryInput{Scan: true, FilterExpression: "name = :v"}},
+		{"scan invalid select", QueryInput{Scan: true, Select: "BOGUS"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.input.Index = "nope"
+			tc.input.ScanIndexForward = true
+
+			_, err := table.SearchData(tc.input)
+			require.EqualError(t, err, want)
+		})
+	}
+}
+
+func TestValidateSearchIndex(t *testing.T) {
+	table := createSelectTable(t)
+
+	require.NoError(t, table.ValidateSearchIndex(PrimaryIndexName))
+	require.NoError(t, table.ValidateSearchIndex("keys"))
+
+	err := table.ValidateSearchIndex("nope")
+	require.EqualError(t, err, "ValidationException: The table does not have the specified index: nope | table: "+table.Name)
 }

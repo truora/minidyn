@@ -212,3 +212,46 @@ func TestExtractPathListIndex_reservedWordEval(t *testing.T) {
 		t.Fatal("expected reserved word index to error")
 	}
 }
+
+func TestLookupProjectedPath(t *testing.T) {
+	t.Parallel()
+
+	one, two := "1", "2"
+	item := map[string]*types.Item{
+		"a": {N: &one},
+		"m": {M: map[string]*types.Item{"k": {L: []*types.Item{{N: &two}}}}},
+	}
+	key := func(k string) PathElement { return PathElement{Kind: PathKindMapKey, Key: k} }
+	idx := func(i int64) PathElement { return PathElement{Kind: PathKindListIndex, Index: i} }
+
+	tests := []struct {
+		name string
+		path []PathElement
+		want *string
+	}{
+		{name: "top level", path: []PathElement{key("a")}, want: &one},
+		{name: "nested", path: []PathElement{key("m"), key("k"), idx(0)}, want: &two},
+		{name: "empty path", path: nil},
+		{name: "list first", path: []PathElement{idx(0)}},
+		{name: "missing root", path: []PathElement{key("z")}},
+		{name: "missing nested key", path: []PathElement{key("m"), key("z")}},
+		{name: "index out of range", path: []PathElement{key("m"), key("k"), idx(1)}},
+		{name: "negative index", path: []PathElement{key("m"), key("k"), idx(-1)}},
+		{name: "key into scalar", path: []PathElement{key("a"), key("x")}},
+	}
+
+	for _, tt := range tests {
+		got, ok := LookupProjectedPath(item, tt.path)
+		if tt.want == nil {
+			if ok {
+				t.Fatalf("%s: expected no value", tt.name)
+			}
+
+			continue
+		}
+
+		if !ok || *got.N != *tt.want {
+			t.Fatalf("%s: got %v ok=%v", tt.name, got, ok)
+		}
+	}
+}

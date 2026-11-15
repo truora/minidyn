@@ -158,6 +158,8 @@ Behavior:
 * `EmulateUnprocessedItems` is the only way to get partial `UnprocessedItems`/
   `UnprocessedKeys`. It applies to batch operations only — single-item `PutItem`,
   `GetItem`, and `DeleteItem` are unaffected.
+* A predicate runs while the client lock is held, so it **must not call the client**
+  (or the `*Server`); doing so deadlocks.
 * Failure conditions and predicates are **sticky** until cleared
   (`FailureConditionNone`, a `nil` predicate, or `ClearUnprocessedItems`). A global
   failure overrides a table-scoped one.

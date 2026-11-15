@@ -9,7 +9,7 @@ Minidyn is an in-memory Amazon DynamoDB testing library written in Go (module `g
 
 ## Dependencies
 
-- **Go 1.26**
+- **Go 1.27**
 - `github.com/aws/aws-sdk-go-v2` — AWS SDK v2 client support
 - `github.com/stretchr/testify` — test assertions
 - `github.com/google/go-cmp` — deep equality in tests
@@ -73,7 +73,7 @@ The agent discovers available skills progressively — only read and apply a ski
 The mandatory workflow for any implementation is:
 
 1. **Design and clarify use cases** — Understand the scenario first so acceptance criteria are explicit.
-2. **Plan the implementation** — Design the work so it satisfies those use cases. For new features, define the `e2e/` parity scenarios that should cover the behavior before implementation starts, and **include code snippets in the plan** for the proposed parity tests (table setup, `RunE2E` calls, assertions or normalization as appropriate). Follow patterns in `e2e/` and `.agents/skills/writing-minidyn-e2e-parity-tests/SKILL.md` when drafting those snippets.
+2. **Plan the implementation** — Design the work so it satisfies those use cases and follows the decisions in [`docs/architecture.md`](../../docs/architecture.md) (which layer owns the change, validation order, error format, object model, caching, locking, atomicity); if the work needs a different decision, update that document in the same change. For new features, define the `e2e/` parity scenarios that should cover the behavior before implementation starts, and **include code snippets in the plan** for the proposed parity tests (table setup, `RunE2E` calls, assertions or normalization as appropriate). Follow patterns in `e2e/` and `.agents/skills/writing-minidyn-e2e-parity-tests/SKILL.md` when drafting those snippets.
 3. **Implementation** — With shared understanding of use cases and plan, implement what was agreed.
 4. **Verification** — Invoke the **qa-engineer** subagent with an explicit prompt (for example: “Use the qa-engineer subagent to verify these test cases: 1. …, 2. …”). Pass **only** the test cases that apply to the feature you implemented; do not ask it to exercise unrelated behavior or full end-to-end flows unless they are in scope. **Wait** for its detailed report before treating the task as finished.
 

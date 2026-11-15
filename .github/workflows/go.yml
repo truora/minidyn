@@ -46,6 +46,13 @@ jobs:
     - name: Tools
       run: go test ./tools/...
 
+    # server/requests.go is generated from the SDK's input shapes; after an SDK bump it must be
+    # regenerated (go run ./tools/generate_requests), or the server silently drops new fields.
+    - name: Generated requests are up to date
+      run: |
+        go run ./tools/generate_requests
+        git diff --exit-code server/requests.go
+
 
 
 

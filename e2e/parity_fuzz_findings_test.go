@@ -473,8 +473,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 		{
 			// A 38-digit N key written with PutItem reads back with 17 significant digits
 			// when projected.
-			knownIssue: "#259",
-			name:       "ProjectedNumberKeyKeepsPrecision",
+			name: "ProjectedNumberKeyKeepsPrecision",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
@@ -495,8 +494,7 @@ func TestE2E_FuzzFindings(t *testing.T) {
 		},
 		{
 			// UpdateItem that creates an item writes its N key with 17 significant digits.
-			knownIssue: "#259",
-			name:       "UpdateItemCreatedNumberKeyKeepsPrecision",
+			name: "UpdateItemCreatedNumberKeyKeepsPrecision",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

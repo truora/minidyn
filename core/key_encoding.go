@@ -2,9 +2,6 @@ package core
 
 import (
 	"fmt"
-	"math"
-	"strconv"
-	"strings"
 
 	"github.com/truora/minidyn/types"
 )
@@ -31,10 +28,6 @@ const (
 
 	// numberExpBias maps the signed decimal exponent onto an unsigned 16-bit value.
 	numberExpBias = 1 << 15
-	// minNumberExp and maxNumberExp are the exponents (0.digits * 10^exp) of the smallest
-	// (1E-130) and largest (9.99...E+125) magnitudes DynamoDB accepts.
-	minNumberExp = -129
-	maxNumberExp = 126
 )
 
 // appendKeyPart appends the encoding of one key attribute value of attribute type typ.
@@ -73,64 +66,18 @@ func appendEscaped[T ~string | ~[]byte](dst []byte, b T) []byte {
 // returns ErrInvalidNumber when s is not a number or its exponent text doesn't fit in 32 bits,
 // which is where DynamoDB stops treating it as a number.
 func parseDecimal(s string) (neg bool, digits string, exp int, err error) {
-	if s != "" && (s[0] == '-' || s[0] == '+') {
-		neg = s[0] == '-'
-		s = s[1:]
-	}
-
-	mantissa := s
-
-	if i := strings.IndexAny(s, "eE"); i >= 0 {
-		e, perr := strconv.ParseInt(s[i+1:], 10, 32)
-		if perr != nil || e == math.MinInt32 {
-			return false, "", 0, ErrInvalidNumber
-		}
-
-		mantissa, exp = s[:i], int(e)
-	}
-
-	intPart, frac, _ := strings.Cut(mantissa, ".")
-
-	all := intPart + frac
-	if all == "" || !onlyDigits(all) {
+	d, ok := types.ParseDecimal(s)
+	if !ok {
 		return false, "", 0, ErrInvalidNumber
 	}
 
-	// Each leading zero moves the point one place right of the first significant digit.
-	trimmed := strings.TrimLeft(all, "0")
-	exp += len(intPart) - (len(all) - len(trimmed))
-
-	return neg, strings.TrimRight(trimmed, "0"), exp, nil
-}
-
-func onlyDigits(s string) bool {
-	for i := range len(s) {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-
-	return true
-}
-
-// checkNumberRange accepts the magnitudes DynamoDB stores, 1E-130 to 9.99...E+125, which are the
-// exponents minNumberExp to maxNumberExp of the 0.digits * 10^exp form. They all fit the 16-bit
-// exponent of the encoding.
-func checkNumberRange(exp int) error {
-	switch {
-	case exp > maxNumberExp:
-		return ErrNumberOverflow
-	case exp < minNumberExp:
-		return ErrNumberUnderflow
-	}
-
-	return nil
+	return d.Neg, d.Digits, d.Exp, nil
 }
 
 func appendNumber(dst []byte, field, s string) ([]byte, error) {
 	neg, digits, exp, err := parseDecimal(s)
-	if err == nil && digits != "" {
-		err = checkNumberRange(exp)
+	if err == nil {
+		err = types.Decimal{Neg: neg, Digits: digits, Exp: exp}.CheckRange()
 	}
 
 	if err != nil {
@@ -148,7 +95,7 @@ func appendNumber(dst []byte, field, s string) ([]byte, error) {
 
 	dst = append(dst, sign)
 	start := len(dst)
-	e := uint16(exp + numberExpBias) //nolint:gosec // bounded by checkNumberRange
+	e := uint16(exp + numberExpBias) //nolint:gosec // bounded by Decimal.CheckRange
 
 	dst = append(dst, byte(e>>8), byte(e))
 	for i := range len(digits) {

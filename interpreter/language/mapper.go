@@ -2,7 +2,6 @@ package language
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/truora/minidyn/types"
 )
@@ -18,9 +17,7 @@ func MapToObject(val *types.Item) (Object, error) {
 
 		return FALSE, nil
 	case val.N != nil:
-		n, err := strconv.ParseFloat(types.StringValue(val.N), 64)
-
-		return &Number{Value: n}, err
+		return mapAttributeToNumber(val.N)
 	case val.S != nil:
 		return &String{Value: types.StringValue(val.S)}, nil
 	case val.NULL != nil && *val.NULL:
@@ -28,6 +25,19 @@ func MapToObject(val *types.Item) (Object, error) {
 	}
 
 	return mapComplexAttributeToObject(val)
+}
+
+func mapAttributeToNumber(text *string) (Object, error) {
+	n, ok := NewNumber(types.StringValue(text))
+	if !ok {
+		return nil, invalidNumberError(text)
+	}
+
+	return n, nil
+}
+
+func invalidNumberError(text *string) error {
+	return fmt.Errorf("invalid number %q", types.StringValue(text))
 }
 
 func mapComplexAttributeToObject(val *types.Item) (Object, error) {
@@ -117,15 +127,15 @@ func mapAttributeToBinarySet(val *types.Item) (Object, error) {
 }
 
 func mapAttributeToNumberSet(val *types.Item) (Object, error) {
-	ns := map[float64]bool{}
+	ns := map[string]bool{}
 
 	for _, val := range val.NS {
-		n, err := strconv.ParseFloat(types.StringValue(val), 64)
-		if err != nil {
-			return nil, err
+		n, ok := NewNumber(types.StringValue(val))
+		if !ok {
+			return nil, invalidNumberError(val)
 		}
 
-		ns[n] = true
+		ns[n.Text] = true
 	}
 
 	return &NumberSet{

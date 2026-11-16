@@ -142,14 +142,7 @@ func fzB(b []byte) dynamodbtypes.AttributeValue {
 func (g *fuzzGen) typedKey(t dynamodbtypes.ScalarAttributeType) dynamodbtypes.AttributeValue {
 	switch t {
 	case dynamodbtypes.ScalarAttributeTypeN:
-		n := pick(g, fuzzNumbers...)
-		for !g.known && len(strings.TrimLeft(n, "-")) == 38 {
-			// #259: minidyn rounds N keys of 38 digits to 17
-			// significant digits in some responses.
-			n = pick(g, fuzzNumbers...)
-		}
-
-		return fzN(n)
+		return fzN(pick(g, fuzzNumbers...))
 	case dynamodbtypes.ScalarAttributeTypeB:
 		return fzB(pick(g, fuzzBinaries...))
 	default:

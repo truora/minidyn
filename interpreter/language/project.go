@@ -162,7 +162,12 @@ func extractPathListIndex(idxExpr Expression, env *Environment) (int64, error) {
 		return 0, fmt.Errorf("projection path: list index must be a number")
 	}
 
-	return int64(number.Value), nil
+	idx, ok := number.int64Value()
+	if !ok {
+		return 0, fmt.Errorf("projection path: list index must be an integer")
+	}
+
+	return idx, nil
 }
 
 // LookupProjectedPath returns the value path resolves to in source, the read counterpart of

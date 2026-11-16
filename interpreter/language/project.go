@@ -3,6 +3,7 @@ package language
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/truora/minidyn/types"
 )
@@ -48,6 +49,58 @@ func ExtractPath(n Expression, env *Environment) ([]PathElement, error) {
 		return extractPathFromIndex(node, env)
 	default:
 		return nil, fmt.Errorf("projection path: unsupported expression %T", n)
+	}
+}
+
+// RootAttributes returns the top-level attribute each document path in the expressions starts
+// at, once each and in order of first appearance, with expression attribute names resolved
+// through aliases. Value placeholders and function names are not attributes. It only reads the
+// tree, so it works before any item is read.
+func RootAttributes(aliases map[string]string, exprs ...Expression) []string {
+	var roots []string
+
+	seen := map[string]bool{}
+
+	for _, e := range exprs {
+		collectRoots(e, aliases, func(name string) {
+			if !seen[name] {
+				seen[name] = true
+				roots = append(roots, name)
+			}
+		})
+	}
+
+	return roots
+}
+
+func collectRoots(e Expression, aliases map[string]string, visit func(string)) {
+	switch node := e.(type) {
+	case *Identifier:
+		if !strings.HasPrefix(node.Value, ":") {
+			visit(resolvePathName(node.Value, &Environment{Aliases: aliases}))
+		}
+	case *IndexExpression:
+		// Only the root of a path is an attribute of the item: the index is a segment.
+		collectRoots(node.Left, aliases, visit)
+	case *CallExpression:
+		for _, arg := range node.Arguments {
+			collectRoots(arg, aliases, visit)
+		}
+	case *PrefixExpression:
+		collectRoots(node.Right, aliases, visit)
+	case *InfixExpression:
+		collectRoots(node.Left, aliases, visit)
+		collectRoots(node.Right, aliases, visit)
+	case *BetweenExpression:
+		collectRoots(node.Left, aliases, visit)
+		collectRoots(node.Range[0], aliases, visit)
+		collectRoots(node.Range[1], aliases, visit)
+	case *InExpression:
+		collectRoots(node.Left, aliases, visit)
+
+		for _, r := range node.Range {
+			collectRoots(r, aliases, visit)
+		}
 	}
 }
 

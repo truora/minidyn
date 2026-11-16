@@ -140,6 +140,50 @@ func (i *index) ProjectItem(item map[string]*types.Item) map[string]*types.Item 
 	}
 }
 
+// readItem returns what a Query or Scan reading this index sees of a stored item: its projection,
+// except that an LSI reads the attributes it does not project from the table when the request
+// asks for ALL_ATTRIBUTES or names attributes in a ProjectionExpression (#202). A GSI never does.
+func (i *index) readItem(item map[string]*types.Item, input QueryInput) map[string]*types.Item {
+	if i.typ == indexTypeLocal {
+		switch {
+		case input.Select == selectAllAttributes:
+			return copyItem(item)
+		case input.ProjectionExpression != "" && input.projection != nil:
+			// The caller's ProjectChecked builds a new item and does not mutate this one.
+			return item
+		case input.ProjectionExpression != "":
+			return copyItem(item)
+		}
+	}
+
+	return i.ProjectItem(item)
+}
+
+// unprojected returns the attributes among names this index does not project, sorted. It asks
+// ProjectItem what survives for an item holding every name, so it follows the projection types.
+// Running a probe item through ProjectItem is deliberate: it reuses the one projection
+// implementation instead of keeping a parallel attribute-set helper that could drift from it.
+func (i *index) unprojected(names []string) []string {
+	probe := make(map[string]*types.Item, len(names))
+	for _, name := range names {
+		probe[name] = &types.Item{}
+	}
+
+	projected := i.ProjectItem(probe)
+
+	var missing []string
+
+	for _, name := range names {
+		if _, ok := projected[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+
+	sort.Strings(missing)
+
+	return missing
+}
+
 func (i *index) projectKeysOnly(item map[string]*types.Item) map[string]*types.Item {
 	out := make(map[string]*types.Item)
 	maps.Copy(out, i.Table.KeySchema.getKeyItem(item))

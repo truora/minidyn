@@ -36,6 +36,8 @@ type QueryInput struct {
 	ScanIndexForward bool
 	Scan             bool
 	started          bool
+	// projection is ProjectionExpression, checked and parsed once by SearchData.
+	projection *interpreter.CheckedProjection
 }
 
 // Table struct to mock a dynamodb table
@@ -810,6 +812,31 @@ func (t *Table) validateKeyCondition(input QueryInput) error {
 	return nil
 }
 
+// validateFilterProjected rejects a Query on an index whose FilterExpression names attributes the
+// index does not project, as DynamoDB does, with the attributes sorted. A Scan has no such rule: its
+// filter reads the stored item.
+func (t *Table) validateFilterProjected(input QueryInput) error {
+	if input.Scan || input.FilterExpression == "" {
+		return nil
+	}
+
+	idx, ok := t.Indexes[input.Index]
+	if !ok {
+		return nil
+	}
+
+	missing := idx.unprojected(interpreter.FilterRootAttributes(input.FilterExpression, input.Aliases))
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return validationError(
+		fmt.Sprintf("One or more parameter values were invalid: Secondary index %s does not project one or more filter attributes: [%s]",
+			input.Index, strings.Join(missing, ", ")),
+		"index", input.Index,
+	)
+}
+
 // errKeyConditionType is a key condition value whose type differs from the key attribute's.
 const errKeyConditionType = "One or more parameter values were invalid: Condition parameter type does not match schema type"
 
@@ -1116,15 +1143,11 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string, i
 
 	baseItem := storedItem
 	if idx != nil {
-		baseItem = idx.ProjectItem(storedItem)
+		baseItem = idx.readItem(storedItem, *input)
 	}
 
-	if input.ProjectionExpression != "" {
-		projected, err := t.LangInterpreter.Project(interpreter.ProjectInput{
-			Expression: input.ProjectionExpression,
-			Item:       baseItem,
-			Aliases:    input.Aliases,
-		})
+	if input.projection != nil {
+		projected, err := t.LangInterpreter.ProjectChecked(input.projection, baseItem)
 		if err != nil {
 			return nil, nil, lastMatchExpressionType, false, err
 		}
@@ -1173,6 +1196,14 @@ type SearchResult struct {
 	ScannedCount int64
 }
 
+// checkProjection validates the ProjectionExpression and keeps its parse for the items.
+func (in *QueryInput) checkProjection() error {
+	projection, err := checkProjection(in.ProjectionExpression, in.Aliases)
+	in.projection = projection
+
+	return err
+}
+
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
 	if err := t.ValidateSearchIndex(input.Index); err != nil {
@@ -1191,11 +1222,20 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		return SearchResult{}, err
 	}
 
+	// DynamoDB checks the projection's syntax and names before the key condition.
+	if err := input.checkProjection(); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := t.validateKeyCondition(input); err != nil {
 		return SearchResult{}, err
 	}
 
-	// DynamoDB reports Select after the key condition.
+	if err := t.validateFilterProjected(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	// DynamoDB reports Select after the key condition and the filter attributes.
 	if err := t.validateSelect(input); err != nil {
 		return SearchResult{}, err
 	}

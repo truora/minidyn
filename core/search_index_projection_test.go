@@ -241,6 +241,93 @@ func TestSearchDataQueryFilterMustBeProjected(t *testing.T) {
 	})
 }
 
+// A GSI cannot fetch from the table: a ProjectionExpression naming an attribute it does not
+// project is rejected, for a Query and a Scan (#201).
+func TestSearchDataGSIRejectsNonProjectedProjection(t *testing.T) {
+	const prefix = "One or more parameter values were invalid: Global secondary index "
+
+	tests := []struct {
+		name       string
+		index      string
+		sel        string
+		projection string
+		wantErr    string
+	}{
+		{name: "KeysOnly", index: "gko", projection: "b", wantErr: prefix + "gko does not project [b]"},
+		{name: "KeysOnlySpecific", index: "gko", sel: "SPECIFIC_ATTRIBUTES", projection: "b", wantErr: prefix + "gko does not project [b]"},
+		{name: "KeysOnlyIncludeAttribute", index: "gko", projection: "a", wantErr: prefix + "gko does not project [a]"},
+		{name: "IncludeNonProjected", index: "ginc", projection: "b", wantErr: prefix + "ginc does not project [b]"},
+		{name: "IncludeSomeProjected", index: "ginc", projection: "a, b", wantErr: prefix + "ginc does not project [b]"},
+		{name: "LSIKeyIsNotProjected", index: "gko", projection: "g, l", wantErr: prefix + "gko does not project [l]"},
+		{name: "Sorted", index: "gko", projection: "l, b, a", wantErr: prefix + "gko does not project [a, b, l]"},
+		{name: "Once", index: "gko", projection: "b.x, b.y", wantErr: prefix + "gko does not project [b]"},
+		{name: "ListPath", index: "gko", projection: "b[0]", wantErr: prefix + "gko does not project [b]"},
+		{name: "Unknown", index: "gko", projection: "zz", wantErr: prefix + "gko does not project [zz]"},
+		{name: "IncludeProjected", index: "ginc", projection: "a"},
+		{name: "KeysOnlyKeys", index: "gko", projection: "id, g"},
+		{name: "ReportedAfterSelect", index: "gko", sel: "COUNT", projection: "b", wantErr: "Cannot specify the ProjectionExpression when choosing to get only the Count"},
+	}
+
+	for _, withItem := range []bool{true, false} {
+		table := createProjectionTable(t, withItem)
+
+		for _, tt := range tests {
+			for op, build := range map[string]func(string) QueryInput{"Query": projectionQuery, "Scan": projectionScan} {
+				t.Run(op+tt.name, func(t *testing.T) {
+					input := build(tt.index)
+					input.Select = tt.sel
+					input.ProjectionExpression = tt.projection
+
+					_, err := table.SearchData(input)
+
+					if tt.wantErr == "" {
+						require.NoError(t, err)
+
+						return
+					}
+
+					require.Error(t, err)
+					require.Contains(t, err.Error(), "ValidationException")
+					require.Contains(t, err.Error(), tt.wantErr)
+				})
+			}
+		}
+	}
+}
+
+// The projection check comes after the key condition and Select, and the filter attributes
+// come first.
+func TestSearchDataGSIProjectionCheckOrder(t *testing.T) {
+	table := createProjectionTable(t, true)
+
+	b := "b"
+
+	tests := []struct {
+		name    string
+		mutate  func(*QueryInput)
+		wantErr string
+	}{
+		{name: "AfterKeyCondition", mutate: func(in *QueryInput) { in.KeyConditionExpression = "zz = :k" }, wantErr: "Query condition missed key schema element"},
+		{name: "AfterInvalidSelect", mutate: func(in *QueryInput) { in.Select = "BOGUS" }, wantErr: "Select must be"},
+		{name: "AfterFilterAttributes", mutate: func(in *QueryInput) {
+			in.FilterExpression = "b = :b"
+			in.ExpressionAttributeValues[":b"] = &types.Item{S: &b}
+		}, wantErr: "does not project one or more filter attributes: [b]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := projectionQuery("gko")
+			input.ProjectionExpression = "b"
+			tt.mutate(&input)
+
+			_, err := table.SearchData(input)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
 // The filter check is a request check: it fails on an empty table, after the placeholders and the
 // key condition, and before Select.
 func TestSearchDataQueryFilterProjectionOrder(t *testing.T) {

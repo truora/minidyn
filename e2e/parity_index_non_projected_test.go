@@ -22,7 +22,6 @@ type parityIndexReadReq struct {
 	projection string
 	filter     string
 	keyCond    string // overrides the default key condition of a Query
-	knownIssue string // the issue tracking a divergence of minidyn on this case (see RunE2EKnown)
 	names      map[string]string
 	values     map[string]dynamodbtypes.AttributeValue
 }
@@ -99,16 +98,6 @@ func parityIndexReadRun(ctx context.Context, client *dynamodb.Client, r parityIn
 	return fmt.Sprintf("%s count=%d scanned=%d", paritySortedAttrNames(items), count, scanned)
 }
 
-// parityGSIRejectCases names the cases whose GSI variants wait for #201: minidyn does not yet
-// reject a GSI request for attributes the index does not project.
-var parityGSIRejectCases = map[string]bool{
-	"SpecificB": true, "ProjectionB": true, "ProjectionAB": true, "ProjectionBA": true, "ProjectionA": true,
-	"ProjectionKeys": true, "ProjectionNestedB": true, "ProjectionUnknownAttr": true, "FilterBSpecificA": true,
-	"FilterAProjectionB": true, "FilterAndProjectionB": true, "ProjectionNamesSorted": true,
-	"ProjectionBNestedTwice": true, "ProjectionListB": true, "BadKeyCondProjectionB": true,
-	"UndefinedKeyValueProjectionB": true,
-}
-
 // parityIndexNonProjectedCases lists the requests, for Query and Scan, on every index.
 func parityIndexNonProjectedCases() (names []string, reqs []parityIndexReadReq) {
 	bVal := map[string]dynamodbtypes.AttributeValue{":b": &dynamodbtypes.AttributeValueMemberS{Value: "b"}}
@@ -123,10 +112,6 @@ func parityIndexNonProjectedCases() (names []string, reqs []parityIndexReadReq) 
 
 		addTo := func(idx string) func(string, parityIndexReadReq) {
 			return func(name string, r parityIndexReadReq) {
-				if strings.HasPrefix(idx, "g") && parityGSIRejectCases[name] {
-					r.knownIssue = "#201"
-				}
-
 				r.scan, r.index = scan, idx
 				names = append(names, op+"/"+idx+"/"+name)
 				reqs = append(reqs, r)
@@ -207,7 +192,10 @@ func parityIndexNonProjectedCases() (names []string, reqs []parityIndexReadReq) 
 			add("FilterBSyntaxErrorProjection", parityIndexReadReq{projection: "a,", filter: "b = :b", values: bVal})
 			add("FilterBUndeclaredFilterName", parityIndexReadReq{filter: "#x = :b", values: bVal})
 			add("FilterBUnusedValue", parityIndexReadReq{filter: "b = :b", values: map[string]dynamodbtypes.AttributeValue{":b": bVal[":b"], ":u": bVal[":b"]}})
-			add("ProjectionNamesSorted", parityIndexReadReq{projection: "a, b, l"})
+			// Local lists the names of the GSI error in hash order ([zz, b]), which the normalizer sorts.
+			add("ProjectionBZZ", parityIndexReadReq{projection: "b, zz"})
+			add("ProjectionBZZA", parityIndexReadReq{projection: "b, zz, a"})
+			add("ProjectionZZYYBA", parityIndexReadReq{projection: "zz, yy, b, a"})
 			add("ProjectionBNestedTwice", parityIndexReadReq{projection: "b.x, b.y"})
 			add("ProjectionListB", parityIndexReadReq{projection: "b[0]"})
 		}
@@ -234,7 +222,7 @@ func TestE2E_IndexNonProjectedAttributes(t *testing.T) {
 		}
 
 		t.Run(name, func(t *testing.T) {
-			run := func(t *testing.T, client *dynamodb.Client, known bool) any {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()
 
@@ -252,21 +240,11 @@ func TestE2E_IndexNonProjectedAttributes(t *testing.T) {
 				}
 
 				out := make([]any, 0, len(reqs))
-
 				for i, r := range reqs {
-					if (r.knownIssue != "") == known {
-						out = append(out, names[i]+": "+parityIndexReadRun(ctx, client, r))
-					}
+					out = append(out, names[i]+": "+parityIndexReadRun(ctx, client, r))
 				}
 
 				return out
-			}
-
-			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any { return run(t, client, false) })
-
-			// The GSI cases that wait for #201 run apart, so one fixed case cannot hide behind the rest.
-			t.Run("KnownIssue", func(t *testing.T) {
-				RunE2EKnown(t, "#201", func(t *testing.T, client *dynamodb.Client) any { return run(t, client, true) })
 			})
 		})
 	}

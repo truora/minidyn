@@ -140,3 +140,73 @@ func TestBatchGetItemKeyBeforeProjection(t *testing.T) {
 		})
 	}
 }
+
+func listIndexClient(t *testing.T) FakeClient {
+	t.Helper()
+
+	client := setupClient(rangeTableName)
+	require.NoError(t, AddTable(context.Background(), client, rangeTableName, "pk", "sk"))
+
+	str := func(v string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberS{Value: v} }
+
+	_, err := client.PutItem(context.Background(), &dynamodb.PutItemInput{
+		TableName: aws.String(rangeTableName),
+		Item: map[string]dynamodbtypes.AttributeValue{
+			"pk": str("a"), "sk": str("1"),
+			"l": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{str("x"), str("y"), str("z")}},
+		},
+	})
+	require.NoError(t, err)
+
+	return client
+}
+
+func listIndexKey() map[string]dynamodbtypes.AttributeValue {
+	return map[string]dynamodbtypes.AttributeValue{
+		"pk": &dynamodbtypes.AttributeValueMemberS{Value: "a"},
+		"sk": &dynamodbtypes.AttributeValueMemberS{Value: "1"},
+	}
+}
+
+// GetItem with a projection of a list element used to panic on a nil element in the
+// projected list (#262); DynamoDB returns a list with only the selected elements.
+func TestGetItemListElementProjection(t *testing.T) {
+	client := listIndexClient(t)
+
+	tests := map[string]struct {
+		projection string
+		want       []string
+	}{
+		"element":       {"l[1]", []string{"y"}},
+		"in list order": {"l[2], l[0]", []string{"x", "z"}},
+		"past the end":  {"l[5]", nil},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			out, err := client.GetItem(context.Background(), &dynamodb.GetItemInput{
+				TableName:            aws.String(rangeTableName),
+				Key:                  listIndexKey(),
+				ProjectionExpression: aws.String(tt.projection),
+			})
+			require.NoError(t, err)
+
+			if tt.want == nil {
+				require.Empty(t, out.Item)
+
+				return
+			}
+
+			var got []string
+
+			list, ok := out.Item["l"].(*dynamodbtypes.AttributeValueMemberL)
+			require.True(t, ok, "%T", out.Item["l"])
+
+			for _, e := range list.Value {
+				got = append(got, e.(*dynamodbtypes.AttributeValueMemberS).Value)
+			}
+
+			require.Equal(t, tt.want, got)
+		})
+	}
+}

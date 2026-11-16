@@ -641,7 +641,6 @@ func TestSearchData(t *testing.T) {
 	}
 
 	queryInput.Index = "indice"
-	queryInput.started = true
 
 	result, lastItem, err = searchData(newTable, queryInput)
 	c.NoError(err)

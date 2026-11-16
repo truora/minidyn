@@ -327,6 +327,56 @@ func (i *index) startSearch(scanForward bool, prefix string, onlyPrefix bool) {
 	}
 }
 
+// skipPast drops the entries of sortedRefs a search resumed after an ExclusiveStartKey does
+// not visit, and returns how many there were. The start key is a primary key and an index
+// key, and it need not belong to an item (#258).
+//
+// Entries are ordered by (index key, primary key) and the search resumes right after the
+// start key in that order, going either way. This is a D1 level-3 choice: DynamoDB Local
+// orders entries that share an index key by an internal rule that can't be matched, so
+// minidyn seeks in its own tie order, the one its LastEvaluatedKey comes from. A start key
+// inside a run of equal index keys then never repeats or loses an entry.
+func (i *index) skipPast(startPK, startIK string, forward bool) int {
+	size := len(i.sortedRefs)
+
+	// sortedRefs is in search order: ascending when going forward.
+	asc := func(j int) [2]string {
+		if forward {
+			return i.sortedRefs[j]
+		}
+
+		return i.sortedRefs[size-1-j]
+	}
+
+	pos := sort.Search(size, func(j int) bool {
+		r := asc(j)
+
+		return r[1] > startIK || (r[1] == startIK && r[0] >= startPK)
+	})
+	exact := pos < size && asc(pos) == [2]string{startPK, startIK}
+
+	n := skipped(pos, exact, size, forward)
+	i.sortedRefs = i.sortedRefs[n:]
+
+	return n
+}
+
+// skipped returns how many entries a search skips to resume after a start key, of size
+// entries in all. pos is where the start key sorts in ascending order and exact tells if an
+// entry equals it. Going forward the walk skips what sorts before it and the entry itself;
+// going backward, what sorts at or after it.
+func skipped(pos int, exact bool, size int, forward bool) int {
+	if !forward {
+		return size - pos
+	}
+
+	if exact {
+		return pos + 1
+	}
+
+	return pos
+}
+
 func (i *index) getPrimaryKey(indexKey string) (string, bool) {
 	if len(i.sortedRefs) > 0 {
 		key := i.sortedRefs[0]

@@ -1,9 +1,12 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"math/big"
 	"math/rand/v2"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -35,12 +38,56 @@ type fuzzOp struct {
 //   - an update expression uses each path once and conditions have no redundant
 //     parentheses (#164: minidyn accepts invalid expressions).
 type fuzzGen struct {
-	rng   *rand.Rand
-	known bool
+	rng    *rand.Rand
+	known  bool
+	schema fuzzSchema
+	// stored are keys written by an unconditional PutItem and not targeted by a DeleteItem
+	// since: items that certainly exist, to resume a Query after.
+	stored []map[string]dynamodbtypes.AttributeValue
+}
+
+// fuzzSchema is the key layout of the fuzz table. The default fuzz mode rotates through three
+// layouts by seed (see fuzzSchemaFor), so that N and B range keys, and an index whose range
+// key type differs from the table's, are exercised as well as S keys (#225).
+type fuzzSchema struct {
+	name string
+	// skType is the table's range key (sk) type.
+	skType dynamodbtypes.ScalarAttributeType
+	// idxRange is the GSI's range key attribute: sk itself for the S layout, a separate
+	// attribute r of a different type than sk otherwise.
+	idxRange     string
+	idxRangeType dynamodbtypes.ScalarAttributeType
+}
+
+var (
+	fuzzSchemaS = fuzzSchema{"S", dynamodbtypes.ScalarAttributeTypeS, "sk", dynamodbtypes.ScalarAttributeTypeS}
+	fuzzSchemaN = fuzzSchema{"N", dynamodbtypes.ScalarAttributeTypeN, "r", dynamodbtypes.ScalarAttributeTypeB}
+	fuzzSchemaB = fuzzSchema{"B", dynamodbtypes.ScalarAttributeTypeB, "r", dynamodbtypes.ScalarAttributeTypeN}
+)
+
+// fuzzSchemaFor picks the layout of a seed: 0 -> sk S, 1 -> sk N (index range B), 2 -> sk B
+// (index range N). A seed always maps to the same layout, so reproduce commands keep working.
+func fuzzSchemaFor(seed uint64) fuzzSchema {
+	switch seed % 3 {
+	case 1:
+		return fuzzSchemaN
+	case 2:
+		return fuzzSchemaB
+	default:
+		return fuzzSchemaS
+	}
+}
+
+func (s fuzzSchema) String() string {
+	return fmt.Sprintf("pk S, sk %s, GSI %q on g S / %s %s", s.skType, fuzzGSI, s.idxRange, s.idxRangeType)
 }
 
 func newFuzzGen(seed uint64, known bool) *fuzzGen {
-	return &fuzzGen{rng: rand.New(rand.NewPCG(seed, 0x6d696e6964796e)), known: known} //nolint:gosec // deterministic test data
+	return &fuzzGen{
+		rng:    rand.New(rand.NewPCG(seed, 0x6d696e6964796e)), //nolint:gosec // deterministic test data
+		known:  known,
+		schema: fuzzSchemaFor(seed),
+	}
 }
 
 func (g *fuzzGen) chance(p float64) bool { return g.rng.Float64() < p }
@@ -57,6 +104,62 @@ func fzN(n string) dynamodbtypes.AttributeValue {
 
 func (g *fuzzGen) pk() dynamodbtypes.AttributeValue { return fzS(pick(g, "a", "b", "c")) }
 
+// fuzzNumbers stress the numeric key encoding: signs, zero and negative zero, decimals, equal
+// spellings of one value, and exponents at the edges of DynamoDB's range (1E-130 .. 9.99E+125,
+// at most 38 significant digits).
+var fuzzNumbers = []string{
+	"-1", "-0", "0", "1", "1.0", "01", "1e0", "1E0", "2", "10", "1E1", "100", "1E2",
+	"-1.5", "1.5", "0.5", "0.50", "-0.5", "-10", "-100", "9", "99",
+	"1E-130", "-1E-130", "9.99E+125", "-9.99E+125", "1E+125", "1E-129",
+	"12345678901234567890123456789012345678", "-12345678901234567890123456789012345678",
+	"0.0000000000000000000000000000000000001",
+}
+
+// fuzzBinaries stress the binary key encoding: 0x00, 0x01 and 0xFF bytes and values that are
+// prefixes of each other. DynamoDB rejects empty key values, so none is empty.
+var fuzzBinaries = [][]byte{
+	{0x00},
+	{0x00, 0x00},
+	{0x00, 0x01},
+	{0x00, 0xFF},
+	{0x01},
+	{0x01, 0x00},
+	{0x01, 0x01},
+	{0x01, 0xFF},
+	{0xFF},
+	{0xFF, 0x00},
+	{0xFF, 0xFF},
+	{0xFF, 0xFF, 0x00},
+	{0x61},
+	{0x61, 0x62},
+}
+
+func fzB(b []byte) dynamodbtypes.AttributeValue {
+	return &dynamodbtypes.AttributeValueMemberB{Value: b}
+}
+
+// typedKey returns a random key value of type t.
+func (g *fuzzGen) typedKey(t dynamodbtypes.ScalarAttributeType) dynamodbtypes.AttributeValue {
+	switch t {
+	case dynamodbtypes.ScalarAttributeTypeN:
+		n := pick(g, fuzzNumbers...)
+		for !g.known && len(strings.TrimLeft(n, "-")) == 38 {
+			// #259: minidyn rounds N keys of 38 digits to 17
+			// significant digits in some responses.
+			n = pick(g, fuzzNumbers...)
+		}
+
+		return fzN(n)
+	case dynamodbtypes.ScalarAttributeTypeB:
+		return fzB(pick(g, fuzzBinaries...))
+	default:
+		return g.sk()
+	}
+}
+
+// skValue returns a random table range key value.
+func (g *fuzzGen) skValue() dynamodbtypes.AttributeValue { return g.typedKey(g.schema.skType) }
+
 func (g *fuzzGen) sk() dynamodbtypes.AttributeValue {
 	if g.chance(0.2) {
 		return fzS(pick(g, "x.y", "x")) // "." in keys must not collide
@@ -66,7 +169,7 @@ func (g *fuzzGen) sk() dynamodbtypes.AttributeValue {
 }
 
 func (g *fuzzGen) key() map[string]dynamodbtypes.AttributeValue {
-	return map[string]dynamodbtypes.AttributeValue{"pk": g.pk(), "sk": g.sk()}
+	return map[string]dynamodbtypes.AttributeValue{"pk": g.pk(), "sk": g.skValue()}
 }
 
 func (g *fuzzGen) num() string {
@@ -149,6 +252,10 @@ func (g *fuzzGen) item() map[string]dynamodbtypes.AttributeValue {
 		if g.chance(0.6) {
 			it[a] = g.attrValue(a)
 		}
+	}
+
+	if g.schema.idxRange != "sk" && g.chance(0.7) {
+		it[g.schema.idxRange] = g.typedKey(g.schema.idxRangeType)
 	}
 
 	return it
@@ -281,6 +388,9 @@ func (g *fuzzGen) putItem() fuzzOp {
 		in.ConditionExpression = aws.String(g.condition(e, true))
 		in.ExpressionAttributeNames = e.namesOrNil()
 		in.ExpressionAttributeValues = e.valuesOrNil()
+	} else {
+		g.forget(in.Item) // replaces an equal spelling of the key, if any
+		g.stored = append(g.stored, map[string]dynamodbtypes.AttributeValue{"pk": in.Item["pk"], "sk": in.Item["sk"]})
 	}
 
 	if g.chance(0.3) {
@@ -300,6 +410,15 @@ func (g *fuzzGen) updateAction(e *fuzzExpr) (kw, action, path string) {
 }
 
 func (g *fuzzGen) rawUpdateAction(e *fuzzExpr) (string, string) {
+	if r := g.schema.idxRange; r != "sk" && g.chance(0.15) {
+		// Move the item inside the index, or drop it from it.
+		if g.chance(0.7) {
+			return "SET", e.name(r) + " = " + e.val(g.typedKey(g.schema.idxRangeType))
+		}
+
+		return "REMOVE", e.name(r)
+	}
+
 	switch g.rng.IntN(12) {
 	case 0:
 		return "SET", e.name("n") + " = " + e.name("n") + " " + pick(g, "+", "-") + " " + e.val(fzN(g.num()))
@@ -408,12 +527,20 @@ func (g *fuzzGen) updateItem() fuzzOp {
 	return fuzzOp{"UpdateItem", func(ctx context.Context, c *dynamodb.Client) { _, _ = c.UpdateItem(ctx, in) }}
 }
 
+// forget drops a key from g.stored, whatever the spelling of its N or S range key.
+func (g *fuzzGen) forget(key map[string]dynamodbtypes.AttributeValue) {
+	g.stored = slices.DeleteFunc(g.stored, func(k map[string]dynamodbtypes.AttributeValue) bool {
+		return compareKeyValues(k["pk"], key["pk"]) == 0 && compareKeyValues(k["sk"], key["sk"]) == 0
+	})
+}
+
 func (g *fuzzGen) deleteItem() fuzzOp {
 	in := &dynamodb.DeleteItemInput{
 		TableName:    aws.String(fuzzTable),
 		Key:          g.key(),
 		ReturnValues: pick(g, dynamodbtypes.ReturnValueNone, dynamodbtypes.ReturnValueAllOld),
 	}
+	g.forget(in.Key)
 
 	if g.chance(0.4) {
 		e := newFuzzExpr()
@@ -431,6 +558,9 @@ func (g *fuzzGen) projection(e *fuzzExpr) *string {
 	}
 
 	parts := []string{e.name("sk")}
+	if g.schema.idxRange != "sk" {
+		parts = append(parts, e.name(g.schema.idxRange)) // keeps ties on the index order detectable
+	}
 
 	paths := []func() string{
 		func() string { return e.name("n") },
@@ -460,20 +590,69 @@ func (g *fuzzGen) getItem() fuzzOp {
 	return fuzzOp{"GetItem", func(ctx context.Context, c *dynamodb.Client) { _, _ = c.GetItem(ctx, in) }}
 }
 
-func (g *fuzzGen) skCondition(e *fuzzExpr) string {
-	sk := e.name("sk")
+// skCondition returns an optional range key condition on attr, of key type typ.
+func (g *fuzzGen) skCondition(e *fuzzExpr, attr string, typ dynamodbtypes.ScalarAttributeType) string {
+	sk := e.name(attr)
 
 	switch g.rng.IntN(5) {
 	case 0:
 		return ""
 	case 1:
-		return " AND " + sk + " " + pick(g, "=", "<", "<=", ">", ">=") + " " + e.val(g.sk())
+		return " AND " + sk + " " + pick(g, "=", "<", "<=", ">", ">=") + " " + e.val(g.typedKey(typ))
 	case 2:
+		return g.between(e, sk, typ)
+	default:
+		return g.skPrefixOrCompare(e, sk, typ)
+	}
+}
+
+// between returns a BETWEEN condition. DynamoDB rejects a lower bound above the upper one,
+// which minidyn accepts (#164), so outside known mode the bounds are ordered.
+func (g *fuzzGen) between(e *fuzzExpr, sk string, typ dynamodbtypes.ScalarAttributeType) string {
+	if typ == dynamodbtypes.ScalarAttributeTypeS {
 		return " AND " + sk + " BETWEEN " + e.val(fzS("1")) + " AND " + e.val(g.sk())
+	}
+
+	lo, hi := g.typedKey(typ), g.typedKey(typ)
+	if !g.known && compareKeyValues(lo, hi) > 0 {
+		lo, hi = hi, lo
+	}
+
+	return " AND " + sk + " BETWEEN " + e.val(lo) + " AND " + e.val(hi)
+}
+
+// skPrefixOrCompare returns begins_with on S and B keys, a comparison on N keys (begins_with
+// is not defined for numbers).
+func (g *fuzzGen) skPrefixOrCompare(e *fuzzExpr, sk string, typ dynamodbtypes.ScalarAttributeType) string {
+	switch typ {
+	case dynamodbtypes.ScalarAttributeTypeN:
+		return " AND " + sk + " " + pick(g, "<", "<=", ">", ">=") + " " + e.val(g.typedKey(typ))
+	case dynamodbtypes.ScalarAttributeTypeB:
+		prefix := pick(g, fuzzBinaries...)
+		if g.chance(0.5) {
+			prefix = prefix[:1+g.rng.IntN(len(prefix))]
+		}
+
+		return " AND begins_with(" + sk + ", " + e.val(fzB(prefix)) + ")"
 	default:
 		prefix := pick(g, "1", "x", "")
 
 		return " AND begins_with(" + sk + ", " + e.val(fzS(prefix)) + ")"
+	}
+}
+
+// compareKeyValues orders two key values of the same type (N numerically, B bytewise).
+func compareKeyValues(a, b dynamodbtypes.AttributeValue) int {
+	switch av := a.(type) {
+	case *dynamodbtypes.AttributeValueMemberN:
+		x, _ := new(big.Rat).SetString(av.Value)
+		y, _ := new(big.Rat).SetString(b.(*dynamodbtypes.AttributeValueMemberN).Value)
+
+		return x.Cmp(y)
+	case *dynamodbtypes.AttributeValueMemberB:
+		return bytes.Compare(av.Value, b.(*dynamodbtypes.AttributeValueMemberB).Value)
+	default:
+		return strings.Compare(a.(*dynamodbtypes.AttributeValueMemberS).Value, b.(*dynamodbtypes.AttributeValueMemberS).Value)
 	}
 }
 
@@ -487,9 +666,16 @@ func (g *fuzzGen) query() fuzzOp {
 	onIndex := g.chance(0.3)
 	if onIndex {
 		in.IndexName = aws.String(fuzzGSI)
-		in.KeyConditionExpression = aws.String(e.name("g") + " = " + e.val(fzS(pick(g, "g1", "g2"))) + g.skCondition(e))
+		in.KeyConditionExpression = aws.String(e.name("g") + " = " + e.val(fzS(pick(g, "g1", "g2"))) +
+			g.skCondition(e, g.schema.idxRange, g.schema.idxRangeType))
 	} else {
-		in.KeyConditionExpression = aws.String(e.name("pk") + " = " + e.val(g.pk()) + g.skCondition(e))
+		pk := g.pk()
+		in.KeyConditionExpression = aws.String(e.name("pk") + " = " + e.val(pk) +
+			g.skCondition(e, "sk", g.schema.skType))
+
+		// Resume after a random key of the partition (both directions); with Limit this is
+		// paging. Index queries have no Limit (ties) and so no paging.
+		g.exclusiveStartKey(in, pk)
 	}
 
 	g.readOptions(e, &in.FilterExpression, &in.Limit)
@@ -510,6 +696,40 @@ func (g *fuzzGen) query() fuzzOp {
 	in.ExpressionAttributeValues = e.valuesOrNil()
 
 	return fuzzOp{"Query", func(ctx context.Context, c *dynamodb.Client) { _, _ = c.Query(ctx, in) }}
+}
+
+// exclusiveStartKey sometimes resumes a table query after a key. Outside known mode:
+//
+//   - #171: DynamoDB rejects a start key outside the range key predicate,
+//     minidyn returns an empty page, so there is no range condition with a start key.
+//   - #258: a start key that is not an existing item resumes at the next
+//     larger key on DynamoDB Local, minidyn returns nothing, so the key is one of g.stored.
+func (g *fuzzGen) exclusiveStartKey(in *dynamodb.QueryInput, pk dynamodbtypes.AttributeValue) {
+	if !g.chance(0.4) {
+		return
+	}
+
+	if g.known {
+		in.ExclusiveStartKey = map[string]dynamodbtypes.AttributeValue{"pk": pk, "sk": g.skValue()}
+
+		return
+	}
+
+	if strings.Contains(*in.KeyConditionExpression, " AND ") {
+		return
+	}
+
+	var same []map[string]dynamodbtypes.AttributeValue
+
+	for _, k := range g.stored {
+		if compareKeyValues(k["pk"], pk) == 0 {
+			same = append(same, k)
+		}
+	}
+
+	if len(same) > 0 {
+		in.ExclusiveStartKey = pick(g, same...)
+	}
 }
 
 func (g *fuzzGen) scan() fuzzOp {
@@ -542,24 +762,39 @@ func (g *fuzzGen) readOptions(e *fuzzExpr, filter **string, limit **int32) {
 	}
 }
 
-// fuzzCreateTable creates the fuzz table: pk (S) / sk (S) with GSI by-g on g (S) / sk.
+// fuzzCreateTable creates the fuzz table with the S layout: pk (S) / sk (S) with GSI by-g on
+// g (S) / sk.
 func fuzzCreateTable(ctx context.Context, client *dynamodb.Client) error {
+	return fuzzCreateTableFor(ctx, client, fuzzSchemaS)
+}
+
+// fuzzCreateTableFor creates the fuzz table with a layout: pk (S) / sk (any key type) with GSI
+// by-g on g (S) / the layout's index range key.
+func fuzzCreateTableFor(ctx context.Context, client *dynamodb.Client, schema fuzzSchema) error {
+	attrs := []dynamodbtypes.AttributeDefinition{
+		{AttributeName: aws.String("pk"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+		{AttributeName: aws.String("sk"), AttributeType: schema.skType},
+		{AttributeName: aws.String("g"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
+	}
+
+	if schema.idxRange != "sk" {
+		attrs = append(attrs, dynamodbtypes.AttributeDefinition{
+			AttributeName: aws.String(schema.idxRange), AttributeType: schema.idxRangeType,
+		})
+	}
+
 	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(fuzzTable),
 		KeySchema: []dynamodbtypes.KeySchemaElement{
 			{AttributeName: aws.String("pk"), KeyType: dynamodbtypes.KeyTypeHash},
 			{AttributeName: aws.String("sk"), KeyType: dynamodbtypes.KeyTypeRange},
 		},
-		AttributeDefinitions: []dynamodbtypes.AttributeDefinition{
-			{AttributeName: aws.String("pk"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
-			{AttributeName: aws.String("sk"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
-			{AttributeName: aws.String("g"), AttributeType: dynamodbtypes.ScalarAttributeTypeS},
-		},
+		AttributeDefinitions: attrs,
 		GlobalSecondaryIndexes: []dynamodbtypes.GlobalSecondaryIndex{{
 			IndexName: aws.String(fuzzGSI),
 			KeySchema: []dynamodbtypes.KeySchemaElement{
 				{AttributeName: aws.String("g"), KeyType: dynamodbtypes.KeyTypeHash},
-				{AttributeName: aws.String("sk"), KeyType: dynamodbtypes.KeyTypeRange},
+				{AttributeName: aws.String(schema.idxRange), KeyType: dynamodbtypes.KeyTypeRange},
 			},
 			Projection: &dynamodbtypes.Projection{ProjectionType: dynamodbtypes.ProjectionTypeAll},
 		}},

@@ -136,7 +136,16 @@ allowlisted gap that is now covered, so the list can't go stale.
 `TestE2E_Fuzz` (`fuzz_test.go`, generator in `fuzz_gen_test.go`) runs random
 sequences of `PutItem`, `UpdateItem`, `DeleteItem`, `GetItem`, `Query` and
 `Scan` (with conditions, filters, projections, a GSI and `ReturnValues`) against
-both engines in lockstep. It fails at the first response or final table state
+both engines in lockstep. The key layout rotates by seed, so one run covers all
+three: `sk` of type S (seed % 3 = 0), N (1) or B (2). With N and B range keys the
+GSI ranges over a separate attribute `r` of the other type (B and N), so the
+index's key types differ from the table's. Keys are drawn from values that stress
+the typed key encoding: N with negatives, `0` and `-0`, decimals, equal spellings
+(`1`, `1.0`, `01`, `1e0`) and exponents from `1E-130` to `9.99E+125` (up to 38
+digits); B with `0x00`, `0x01` and `0xFF` bytes and values that are prefixes of
+each other. `Query` uses them in `<`, `<=`, `>`, `>=`, `=`, `BETWEEN` and
+`begins_with` (S and B) conditions, in both directions, with `Limit` and
+`ExclusiveStartKey`. It fails at the first response or final table state
 that differs, printing the seed, the requests so far and a reproduce command.
 
 ```bash

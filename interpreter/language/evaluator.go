@@ -360,22 +360,22 @@ func evalNumberInfixExpression(operator string, left, right Object) Object {
 		return newError("right operand is not a number: %s", right.Type())
 	}
 
-	leftVal := leftNum.Value
-	rightVal := rightNum.Value
+	// Numbers are normalized, so equal text is equal value and only an ordering reads the digits.
+	if operator == "=" || operator == "<>" {
+		return nativeBoolToBooleanObject((leftNum.Text == rightNum.Text) == (operator == "="))
+	}
+
+	order := leftNum.decimal().Cmp(rightNum.decimal())
 
 	switch operator {
 	case "<":
-		return nativeBoolToBooleanObject(leftVal < rightVal)
+		return nativeBoolToBooleanObject(order < 0)
 	case "<=":
-		return nativeBoolToBooleanObject(leftVal <= rightVal)
+		return nativeBoolToBooleanObject(order <= 0)
 	case ">":
-		return nativeBoolToBooleanObject(leftVal > rightVal)
+		return nativeBoolToBooleanObject(order > 0)
 	case ">=":
-		return nativeBoolToBooleanObject(leftVal >= rightVal)
-	case "=":
-		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "<>":
-		return nativeBoolToBooleanObject(leftVal != rightVal)
+		return nativeBoolToBooleanObject(order >= 0)
 	default:
 		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
@@ -771,7 +771,12 @@ func evalListIndexValue(node *Identifier, env *Environment) (int64, Object) {
 		return 0, newError("access index with [] only support N as index : got %q", obj.Type())
 	}
 
-	return int64(number.Value), nil
+	idx, ok := number.int64Value()
+	if !ok {
+		return 0, newError("access index with [] only support integers : got %q", number.Text)
+	}
+
+	return idx, nil
 }
 
 func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
@@ -1412,17 +1417,26 @@ func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
 			return errObj
 		}
 
-		return &Number{Value: augend.Value + addend.Value}
+		return resultOrError(sumNumbers(augend, addend))
 	case "-":
 		minuend, subtrahend, errObj := evalArithmeticTerms(node, env)
 		if isError(errObj) {
 			return errObj
 		}
 
-		return &Number{Value: minuend.Value - subtrahend.Value}
+		return resultOrError(subtractNumbers(minuend, subtrahend))
 	}
 
 	return newError("unknown operator: %s", node.Operator)
+}
+
+// resultOrError turns the result of an arithmetic helper into the Object evaluation returns.
+func resultOrError(n *Number, errObj *Error) Object {
+	if errObj != nil {
+		return errObj
+	}
+
+	return n
 }
 
 func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object {

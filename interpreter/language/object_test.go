@@ -9,21 +9,21 @@ import (
 )
 
 func TestNumberInspect(t *testing.T) {
-	n := Number{Value: 1.0}
+	n := Number{Text: "1"}
 	if n.Inspect() != "1" {
 		t.Fatalf("not equal actual=%s expected=%s", n.Inspect(), "1")
 	}
 }
 
 func TestNumberAdd(t *testing.T) {
-	n := Number{Value: 1.0}
+	n := Number{Text: "1"}
 
-	obj := n.Add(&Number{Value: 1.0})
+	obj := n.Add(&Number{Text: "1"})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
 
-	if n.Value != 2 {
+	if n.Text != "2" {
 		t.Fatalf("result object should be 2, got=%q", n.Inspect())
 	}
 }
@@ -106,7 +106,7 @@ func TestStringContains(t *testing.T) {
 		t.Fatalf("should be false")
 	}
 
-	if str.Contains(&Number{Value: 10}) {
+	if str.Contains(&Number{Text: "10"}) {
 		t.Fatalf("should be false")
 	}
 }
@@ -132,7 +132,7 @@ func TestMapInspect(t *testing.T) {
 func TestListInspect(t *testing.T) {
 	str := List{
 		Value: []Object{
-			&String{Value: "Cookies"}, &String{Value: "Coffee"}, &Number{Value: 3.14159},
+			&String{Value: "Cookies"}, &String{Value: "Coffee"}, &Number{Text: "3.14159"},
 		},
 	}
 
@@ -145,7 +145,7 @@ func TestListInspect(t *testing.T) {
 func TestListContains(t *testing.T) {
 	list := List{
 		Value: []Object{
-			&String{Value: "Cookies"}, &String{Value: "Coffee"}, &Number{Value: 3.14159},
+			&String{Value: "Cookies"}, &String{Value: "Coffee"}, &Number{Text: "3.14159"},
 		},
 	}
 
@@ -153,7 +153,7 @@ func TestListContains(t *testing.T) {
 		t.Fatalf("should be true")
 	}
 
-	if !list.Contains(&Number{Value: 3.14159}) {
+	if !list.Contains(&Number{Text: "3.14159"}) {
 		t.Fatalf("should be true")
 	}
 
@@ -254,7 +254,7 @@ func TestStringSetContains(t *testing.T) {
 		t.Fatalf("should be false")
 	}
 
-	if strSet.Contains(&Number{Value: 10}) {
+	if strSet.Contains(&Number{Text: "10"}) {
 		t.Fatalf("should be false")
 	}
 }
@@ -351,7 +351,7 @@ func TestBinarySetContains(t *testing.T) {
 		t.Fatalf("should be false")
 	}
 
-	if strSet.Contains(&Number{Value: 10}) {
+	if strSet.Contains(&Number{Text: "10"}) {
 		t.Fatalf("should be false")
 	}
 }
@@ -428,9 +428,9 @@ func TestBinarySetRemove(t *testing.T) {
 
 func TestNumberSetInspect(t *testing.T) {
 	strSet := NumberSet{
-		Value: map[float64]bool{
-			1: true,
-			2: true,
+		Value: map[string]bool{
+			"1": true,
+			"2": true,
 		},
 	}
 
@@ -442,25 +442,25 @@ func TestNumberSetInspect(t *testing.T) {
 
 func TestNumberSetContains(t *testing.T) {
 	strSet := NumberSet{
-		Value: map[float64]bool{
-			1: true,
-			2: true,
+		Value: map[string]bool{
+			"1": true,
+			"2": true,
 		},
 	}
 
-	if !strSet.Contains(&Number{Value: 1}) {
+	if !strSet.Contains(&Number{Text: "1"}) {
 		t.Fatalf("should be true")
 	}
 
-	if strSet.Contains(&Number{Value: 3}) {
+	if strSet.Contains(&Number{Text: "3"}) {
 		t.Fatalf("should be false")
 	}
 
-	if !strSet.Contains(&NumberSet{Value: map[float64]bool{1: true}}) {
+	if !strSet.Contains(&NumberSet{Value: map[string]bool{"1": true}}) {
 		t.Fatalf("should be true")
 	}
 
-	if strSet.Contains(&NumberSet{Value: map[float64]bool{3: true}}) {
+	if strSet.Contains(&NumberSet{Value: map[string]bool{"3": true}}) {
 		t.Fatalf("should be false")
 	}
 
@@ -470,9 +470,9 @@ func TestNumberSetContains(t *testing.T) {
 }
 
 func TestNumberSetAdd(t *testing.T) {
-	ns := NumberSet{Value: map[float64]bool{1: true}}
+	ns := NumberSet{Value: map[string]bool{"1": true}}
 
-	obj := ns.Add(&NumberSet{Value: map[float64]bool{2: true}})
+	obj := ns.Add(&NumberSet{Value: map[string]bool{"2": true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
@@ -481,7 +481,7 @@ func TestNumberSetAdd(t *testing.T) {
 		t.Fatalf("result object should be 2 elements, got=%q", ns.Inspect())
 	}
 
-	obj = ns.Add(&NumberSet{Value: map[float64]bool{3: true}})
+	obj = ns.Add(&NumberSet{Value: map[string]bool{"3": true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
@@ -492,10 +492,10 @@ func TestNumberSetAdd(t *testing.T) {
 }
 
 func TestNumberSetDelete(t *testing.T) {
-	ns := NumberSet{Value: map[float64]bool{1: true, 2: true, 3: true}}
+	ns := NumberSet{Value: map[string]bool{"1": true, "2": true, "3": true}}
 
 	// DELETE only accepts sets; scalar operands are rejected and leave the set unchanged.
-	obj := ns.Delete(&Number{Value: 2})
+	obj := ns.Delete(&Number{Text: "2"})
 	if !isError(obj) {
 		t.Fatalf("a scalar operand should be rejected, got=%q", obj.Inspect())
 	}
@@ -504,7 +504,7 @@ func TestNumberSetDelete(t *testing.T) {
 		t.Fatalf("set should be unchanged, got=%q", ns.Inspect())
 	}
 
-	obj = ns.Delete(&NumberSet{Value: map[float64]bool{1: true, 2: true, 3: true}})
+	obj = ns.Delete(&NumberSet{Value: map[string]bool{"1": true, "2": true, "3": true}})
 	if obj != UNDEFINED {
 		t.Fatalf("return object should be NULL, got=%q", obj.Inspect())
 	}
@@ -526,7 +526,7 @@ func BenchmarkStringInspect(b *testing.B) {
 
 //nolint:gocyclo // comprehensive conversions covered in one test
 func TestToDynamo(t *testing.T) {
-	num := Number{Value: 3}
+	num := Number{Text: "3"}
 	dNum := num.ToDynamoDB()
 
 	if num.Inspect() != types.StringValue(dNum.N) {
@@ -593,7 +593,7 @@ func TestToDynamo(t *testing.T) {
 		t.Errorf("binary set item to be %s got=%s", bs.Value[0], dBs.BS[0])
 	}
 
-	nm := NumberSet{Value: map[float64]bool{1: true}}
+	nm := NumberSet{Value: map[string]bool{"1": true}}
 	dNm := nm.ToDynamoDB()
 
 	if types.StringValue(dNm.NS[0]) != "1" {
@@ -632,7 +632,7 @@ func TestSetAddRejectsSingleValue(t *testing.T) {
 		operand Object
 	}{
 		{"string set", &StringSet{Value: map[string]bool{"a": true}}, &String{Value: "b"}},
-		{"number set", &NumberSet{Value: map[float64]bool{1: true}}, &Number{Value: 2}},
+		{"number set", &NumberSet{Value: map[string]bool{"1": true}}, &Number{Text: "2"}},
 		{"binary set", &BinarySet{Value: [][]byte{[]byte("a")}}, &Binary{Value: []byte("b")}},
 	}
 

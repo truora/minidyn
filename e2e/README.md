@@ -59,6 +59,17 @@ stays visible and is checked on every run:
   caller paging until `LastEvaluatedKey` is empty would miss them. The cost is one extra, empty page when a range ends
   exactly at a page boundary. The default fuzz mode avoids the case (see
   `fuzz_gen_test.go`).
+- **Trailing zeros in numbers** (`TestE2E_NumberPrecision/TrailingZerosAreTrimmed`).
+  DynamoDB Local keeps the `BigDecimal` scale in arithmetic and the text as
+  sent in the values `UpdateItem` writes and inside lists and maps:
+  `SET n = :a + :b` with 1.1 and 1.20 stores 2.30, `ADD n :a` of 0.1 to 1.10
+  stores 1.20, `SET n = :a` with 1.50 stores 1.50, and `l = [1.0]` read back or
+  copied with `SET c = l[0]` stays 1.0. minidyn trims them (2.3, 1.2, 1.5, 1
+  and `[1]`), as the developer guide's
+  [Number type](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html#HowItWorks.DataTypes)
+  says: "Leading and trailing zeroes are trimmed". Only the form differs, the
+  value is the same. The test asserts each engine's values explicitly.
+  Verifying the behavior against real DynamoDB is tracked in #224.
 - **`ReturnConsumedCapacity` outside `INDEXES`, `TOTAL` and `NONE`**
   (`TestE2E_ConsumedCapacityInvalidMode`). DynamoDB Local accepts any value
   and answers as if it were `NONE`. minidyn rejects it with a

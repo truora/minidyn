@@ -87,7 +87,7 @@ func runFuzzSeed(t *testing.T, seed uint64, ops int, known bool) {
 
 	for _, ep := range []string{minidynEP, localEP} {
 		client := newSDKClient(t, ep)
-		require.NoError(t, fuzzCreateTable(ctx, client))
+		require.NoError(t, fuzzCreateTableFor(ctx, client, fuzzSchemaFor(seed)))
 		parityWaitUntilGSIActive(ctx, t, client, fuzzTable, fuzzGSI)
 	}
 
@@ -170,12 +170,24 @@ func fuzzNormalize(e traceEntry) traceEntry {
 		// and ScanIndexForward are still checked. (Scan items are already fully sorted.)
 		if _, onIndex := req["IndexName"]; onIndex && e.Op == "Query" {
 			if items, ok := resp["Items"].([]any); ok {
-				resp["Items"] = sortTies(items, "sk")
+				resp["Items"] = sortTies(items, fuzzIndexRange(items))
 			}
 		}
 	}
 
 	return e
+}
+
+// fuzzIndexRange is the index range key attribute of GSI query results: r in the layouts with
+// N or B table range keys (every indexed item has it), sk in the S layout.
+func fuzzIndexRange(items []any) string {
+	for _, it := range items {
+		if _, ok := attrOf(it, "r").(map[string]any); ok {
+			return "r"
+		}
+	}
+
+	return "sk"
 }
 
 // sortTies sorts each run of consecutive items with an equal attr value by JSON, keeping the
@@ -215,7 +227,7 @@ func fuzzReport(seed uint64, known bool, where string, calls []traceEntry, diff 
 
 	fmt.Fprintf(&b, "minidyn diverges from DynamoDB Local at %s (seed %d)\n", where, seed)
 	fmt.Fprintf(&b, "diff (-minidyn +dynamodb-local):\n%s\n", diff)
-	fmt.Fprintf(&b, "requests so far (table %q: pk S, sk S, GSI %q on g/sk):\n", fuzzTable, fuzzGSI)
+	fmt.Fprintf(&b, "requests so far (table %q: %s):\n", fuzzTable, fuzzSchemaFor(seed))
 
 	for i, c := range calls {
 		req, _ := json.Marshal(c.Request)

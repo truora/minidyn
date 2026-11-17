@@ -238,8 +238,17 @@ never goes through it.
 - **Note:** a concrete assertion is fine where that type is the only one
   possible, such as arithmetic on `*Number`, `list_append` on `*List`, or
   `indexAccessor.Get`/`Set` on `*Map`/`*List`.
+- **Numbers are decimal text, never `float64`:** `*Number` holds the N text in
+  the form DynamoDB stores (`types.NormalizeNumber`: no leading or trailing
+  zeros, no exponent), and `*NumberSet` keys its members the same way. Equality
+  is text equality; ordering and arithmetic go through `types.Decimal`, which
+  is exact up to 38 significant digits and fails with DynamoDB's "only supports
+  precision up to 38 digits" beyond. Every item read into the interpreter is
+  written back (an update rewrites the whole item), so a `float64` anywhere on
+  that path rounds values it never meant to change (#259).
 - **Check:** does the diff add a new `switch x.(type)` over value types, or an
-  `x.(*String)` assertion, where an interface fits?
+  `x.(*String)` assertion, where an interface fits? Does a number go through
+  `float64`?
 
 ### D6. Parse and scan each expression text once
 

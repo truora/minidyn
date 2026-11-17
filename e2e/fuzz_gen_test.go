@@ -691,38 +691,19 @@ func (g *fuzzGen) query() fuzzOp {
 	return fuzzOp{"Query", func(ctx context.Context, c *dynamodb.Client) { _, _ = c.Query(ctx, in) }}
 }
 
-// exclusiveStartKey sometimes resumes a table query after a key. Outside known mode:
-//
-//   - #171: DynamoDB rejects a start key outside the range key predicate,
-//     minidyn returns an empty page, so there is no range condition with a start key.
-//   - #258: a start key that is not an existing item resumes at the next
-//     larger key on DynamoDB Local, minidyn returns nothing, so the key is one of g.stored.
+// exclusiveStartKey sometimes resumes a table query after a key, which need not belong to an
+// item. Outside known mode, #171: DynamoDB rejects a start key outside the range key
+// predicate, minidyn returns an empty page, so there is no range condition with a start key.
 func (g *fuzzGen) exclusiveStartKey(in *dynamodb.QueryInput, pk dynamodbtypes.AttributeValue) {
 	if !g.chance(0.4) {
 		return
 	}
 
-	if g.known {
-		in.ExclusiveStartKey = map[string]dynamodbtypes.AttributeValue{"pk": pk, "sk": g.skValue()}
-
+	if !g.known && strings.Contains(*in.KeyConditionExpression, " AND ") {
 		return
 	}
 
-	if strings.Contains(*in.KeyConditionExpression, " AND ") {
-		return
-	}
-
-	var same []map[string]dynamodbtypes.AttributeValue
-
-	for _, k := range g.stored {
-		if compareKeyValues(k["pk"], pk) == 0 {
-			same = append(same, k)
-		}
-	}
-
-	if len(same) > 0 {
-		in.ExclusiveStartKey = pick(g, same...)
-	}
+	in.ExclusiveStartKey = map[string]dynamodbtypes.AttributeValue{"pk": pk, "sk": g.skValue()}
 }
 
 func (g *fuzzGen) scan() fuzzOp {

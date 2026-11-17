@@ -178,6 +178,8 @@ func (li *Language) ProjectChecked(checked *CheckedProjection, itemIn map[string
 
 	out := map[string]*types.Item{}
 
+	var padded []*types.Item
+
 	for _, expr := range exprs {
 		result := language.Eval(expr, env)
 		if language.IsUndefinedObject(result) {
@@ -194,8 +196,10 @@ func (li *Language) ProjectChecked(checked *CheckedProjection, itemIn map[string
 		}
 
 		val := result.ToDynamoDB()
-		language.SetProjectedPath(out, path, val)
+		padded = append(padded, language.SetProjectedPath(out, path, val)...)
 	}
+
+	language.CompactPaddedLists(padded)
 
 	return out, nil
 }

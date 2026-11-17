@@ -99,3 +99,20 @@ func TestUpdateItemUnknownTableBeforeInvalidReturnValues(t *testing.T) {
 
 	require.ErrorContains(t, err, "ResourceNotFoundException")
 }
+
+// A placeholder as a list index is a minidyn extension (#164), and a negative one used to panic.
+func TestUpdateItemNegativeListIndex(t *testing.T) {
+	client := listIndexClient(t)
+
+	_, err := client.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName:        aws.String(rangeTableName),
+		Key:              listIndexKey(),
+		UpdateExpression: aws.String("SET l[:i] = :v"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":i": &dynamodbtypes.AttributeValueMemberN{Value: "-1"},
+			":v": &dynamodbtypes.AttributeValueMemberS{Value: "w"},
+		},
+	})
+	require.ErrorContains(t, err, "ValidationException")
+	require.ErrorContains(t, err, "The document path provided in the update expression is invalid for update")
+}

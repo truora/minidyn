@@ -200,3 +200,77 @@ func TestServerBatchGetItemKeyBeforeProjection(t *testing.T) {
 		})
 	}
 }
+
+func listIndexServerClient(t *testing.T) *dynamodb.Client {
+	t.Helper()
+
+	ts := httptest.NewServer(NewServer())
+	t.Cleanup(ts.Close)
+
+	cli := newTestDynamoClient(t, ts.URL)
+	ctx := context.Background()
+
+	_, err := cli.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:            aws.String("lists"),
+		KeySchema:            []ddbtypes.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: ddbtypes.KeyTypeHash}},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{AttributeName: aws.String("pk"), AttributeType: ddbtypes.ScalarAttributeTypeS}},
+		BillingMode:          ddbtypes.BillingModePayPerRequest,
+	})
+	require.NoError(t, err)
+
+	str := func(v string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueMemberS{Value: v} }
+
+	_, err = cli.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("lists"),
+		Item: map[string]ddbtypes.AttributeValue{
+			"pk": str("a"),
+			"l":  &ddbtypes.AttributeValueMemberL{Value: []ddbtypes.AttributeValue{str("x"), str("y"), str("z")}},
+		},
+	})
+	require.NoError(t, err)
+
+	return cli
+}
+
+// A projection of a list element is answered with only the selected elements; the list used to
+// hold a nil element for each skipped one (#262).
+func TestServerGetItemListElementProjection(t *testing.T) {
+	cli := listIndexServerClient(t)
+
+	tests := map[string]struct {
+		projection string
+		want       []string
+	}{
+		"element":       {"l[1]", []string{"y"}},
+		"in list order": {"l[2], l[0]", []string{"x", "z"}},
+		"past the end":  {"l[5]", nil},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			out, err := cli.GetItem(context.Background(), &dynamodb.GetItemInput{
+				TableName:            aws.String("lists"),
+				Key:                  map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: "a"}},
+				ProjectionExpression: aws.String(tt.projection),
+			})
+			require.NoError(t, err)
+
+			if tt.want == nil {
+				require.Empty(t, out.Item)
+
+				return
+			}
+
+			var got []string
+
+			list, ok := out.Item["l"].(*ddbtypes.AttributeValueMemberL)
+			require.True(t, ok, "%T", out.Item["l"])
+
+			for _, e := range list.Value {
+				got = append(got, e.(*ddbtypes.AttributeValueMemberS).Value)
+			}
+
+			require.Equal(t, tt.want, got)
+		})
+	}
+}

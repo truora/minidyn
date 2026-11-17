@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -109,4 +110,22 @@ func TestServerUpdateItemUnknownTableBeforeInvalidReturnValues(t *testing.T) {
 	})
 
 	require.ErrorContains(t, err, "ResourceNotFoundException")
+}
+
+// A placeholder as a list index is a minidyn extension (#164), and a negative one used to panic
+// the handler.
+func TestServerUpdateItemNegativeListIndex(t *testing.T) {
+	cli := listIndexServerClient(t)
+
+	_, err := cli.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName:        aws.String("lists"),
+		Key:              map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: "a"}},
+		UpdateExpression: aws.String("SET l[:i] = :v"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+			":i": &ddbtypes.AttributeValueMemberN{Value: "-1"},
+			":v": &ddbtypes.AttributeValueMemberS{Value: "w"},
+		},
+	})
+	require.ErrorContains(t, err, "ValidationException")
+	require.ErrorContains(t, err, "The document path provided in the update expression is invalid for update")
 }

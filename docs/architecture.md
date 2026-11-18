@@ -12,6 +12,8 @@ Other documents cover the rest:
 - [`docs/interpreter.md`](interpreter.md): the **expression grammar**.
 - [`docs/operations.md`](operations.md): **API coverage**.
 - [`e2e/README.md`](../e2e/README.md): the **parity tooling** and its commands.
+- [`docs/adr/`](adr/README.md): **why** each decision was taken, one record
+  per decision, named by creation date.
 
 How to read the entries:
 
@@ -492,8 +494,10 @@ never goes through it.
 
 ## 4. Changing this document
 
-Add or edit a decision in the same pull request as the code that motivates it.
-Keep each entry in this shape:
+Add or edit a decision in the same pull request as the code that motivates it,
+together with an ADR in [`docs/adr/`](adr/README.md) that records the context
+and the rejected alternatives. Link the ADR from the entry. Keep each entry in
+this shape:
 
 - **Decision**, **Why** and **Check**;
 - "On `main`" when the current state needs saying;

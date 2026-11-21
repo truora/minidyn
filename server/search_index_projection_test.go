@@ -130,6 +130,36 @@ func TestLSIQueryAndScanFetchFromTable(t *testing.T) {
 	}
 }
 
+// A GSI cannot fetch from the table: asking it for an attribute it does not project is rejected.
+func TestGSIQueryAndScanRejectNonProjectedAttributes(t *testing.T) {
+	client := createProjectionTable(t)
+	ctx := context.Background()
+
+	const want = "ValidationException: One or more parameter values were invalid: Global secondary index gko does not project [b]"
+
+	for _, sel := range []dynamodbtypes.Select{"", dynamodbtypes.SelectSpecificAttributes} {
+		_, err := client.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String("proj"), IndexName: aws.String("gko"), Select: sel,
+			KeyConditionExpression: aws.String("g = :v"), ProjectionExpression: aws.String("b"),
+			ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: "g"}},
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), want)
+
+		_, err = client.Scan(ctx, &dynamodb.ScanInput{
+			TableName: aws.String("proj"), IndexName: aws.String("gko"), Select: sel, ProjectionExpression: aws.String("b"),
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), want)
+	}
+
+	out, err := client.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String("proj"), IndexName: aws.String("gko"), ProjectionExpression: aws.String("g"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"g"}, sortedProjectionNames(out.Items))
+}
+
 // A Query's FilterExpression can only name attributes the index projects. A Scan's filter reads
 // the stored item.
 func TestIndexQueryFilterMustBeProjected(t *testing.T) {

@@ -614,11 +614,24 @@ func setListValue(list *List, value Object, index int64) Object {
 	return UNDEFINED
 }
 
+// newNegativeListIndexError is minidyn's error for a placeholder list index below zero, which a
+// document path cannot address. DynamoDB Local rejects every placeholder index as a syntax
+// error, so there is no text of its own: the invalid document path message says what failed
+// and the detail says why.
+func newNegativeListIndexError(fieldID, path string) *Error {
+	return &Error{Message: types.WithDetail(invalidDocumentPathMessage,
+		"field id", fieldID, "path", path, "reason", "list index must not be negative")}
+}
+
 func (i indexAccessor) Set(container, val Object) Object {
 	switch c := container.(type) {
 	case *List:
 		pos, ok := i.val.(int64)
 		if i.kind == ObjectTypeList && ok {
+			if pos < 0 {
+				return newNegativeListIndexError(i.fieldID, i.pathSuffix)
+			}
+
 			return setListValue(c, val, pos)
 		}
 	case *Map:
@@ -1174,7 +1187,7 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
-		return addToTarget(obj, val, func(created Object) { env.Set(id.Value, created) })
+		return addToTarget(obj, val, func(created Object) Object { env.Set(id.Value, created); return UNDEFINED })
 	}
 
 	indexField, ok := node.Left.(*IndexExpression)
@@ -1189,22 +1202,23 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 			return errObj
 		}
 
-		// resolveNestedTarget only returns a target whose container matches the accessor, so
-		// Set cannot fail here.
-		return addToTarget(path.target, val, func(created Object) { _ = path.pos.Set(path.container, created) })
+		return addToTarget(path.target, val, func(created Object) Object { return path.pos.Set(path.container, created) })
 	}
 
 	return UNDEFINED
 }
 
-// addToTarget applies ADD of val to obj; create stores val when obj does not exist.
-func addToTarget(obj, val Object, create func(Object)) Object {
+// addToTarget applies ADD of val to obj; create stores val when obj does not exist and returns
+// an error object when the store is refused.
+func addToTarget(obj, val Object, create func(Object) Object) Object {
 	if obj == UNDEFINED {
 		if !isAddOperand(val) {
 			return newIncorrectAddOperandError(obj, val)
 		}
 
-		create(val)
+		if errObj := create(val); isError(errObj) {
+			return errObj
+		}
 
 		return obj
 	}

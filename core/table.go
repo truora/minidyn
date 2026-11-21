@@ -837,6 +837,29 @@ func (t *Table) validateFilterProjected(input QueryInput) error {
 	)
 }
 
+// validateIndexProjection rejects a Query or Scan on a GSI whose ProjectionExpression names
+// attributes the index does not project, with the attributes sorted. A GSI cannot read the table, so
+// DynamoDB refuses the request, unlike an LSI (see index.readItem). It follows the Select checks.
+func (t *Table) validateIndexProjection(input QueryInput) error {
+	idx, ok := t.Indexes[input.Index]
+	if !ok || idx.typ != indexTypeGlobal || input.projection == nil {
+		return nil
+	}
+
+	missing := idx.unprojected(input.projection.RootAttributes())
+	if len(missing) == 0 {
+		return nil
+	}
+
+	// DynamoDB Local lists these in Java HashSet order (b, zz gives [zz, b]); minidyn sorts, a D1
+	// level-3 choice. The e2e normalizer sorts the list on both sides.
+	return validationError(
+		fmt.Sprintf("One or more parameter values were invalid: Global secondary index %s does not project [%s]",
+			input.Index, strings.Join(missing, ", ")),
+		"index", input.Index,
+	)
+}
+
 // errKeyConditionType is a key condition value whose type differs from the key attribute's.
 const errKeyConditionType = "One or more parameter values were invalid: Condition parameter type does not match schema type"
 
@@ -1237,6 +1260,10 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 
 	// DynamoDB reports Select after the key condition and the filter attributes.
 	if err := t.validateSelect(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	if err := t.validateIndexProjection(input); err != nil {
 		return SearchResult{}, err
 	}
 

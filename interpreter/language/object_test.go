@@ -188,6 +188,20 @@ func TestListAdd(t *testing.T) {
 	}
 }
 
+func TestListRemove_outOfRangeIsNoop(t *testing.T) {
+	l := List{Value: []Object{&String{Value: "Cookies"}}}
+
+	for _, pos := range []int64{-1, 1, 5} {
+		if obj := l.Remove(pos); obj != UNDEFINED {
+			t.Fatalf("Remove(%d) should return UNDEFINED, got=%q", pos, obj.Inspect())
+		}
+	}
+
+	if len(l.Value) != 1 || l.Value[0] == nil || l.dirty {
+		t.Fatalf("an out of range Remove must leave the list untouched, got=%q", l.Inspect())
+	}
+}
+
 func TestListRemove(t *testing.T) {
 	l := List{Value: []Object{&String{Value: "Cookies"}, &String{Value: "Orange"}}}
 

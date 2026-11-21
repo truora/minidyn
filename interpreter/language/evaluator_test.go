@@ -1953,3 +1953,51 @@ func TestOperandText(t *testing.T) {
 		}
 	}
 }
+
+// A placeholder list index is a minidyn extension. A negative one cannot address an element:
+// assigning to it is a document path error, not a panic (#262).
+func TestEvalUpdateNegativeListIndex(t *testing.T) {
+	t.Parallel()
+
+	const message = updPathMsg + " | field id: l; path: -1; reason: list index must not be negative"
+
+	tests := map[string]string{
+		"SET l[:neg] = :val":              message,
+		"SET l[0] = :val, l[:neg] = :val": message,
+		"ADD l[:neg] :one":                message,
+	}
+
+	for input, message := range tests {
+		env := startUpdateMismatchEnv(t)
+		if err := env.AddAttributes(map[string]*types.Item{":neg": {N: new("-1")}}); err != nil {
+			t.Fatal(err)
+		}
+
+		got := testEvalUpdate(t, input, env)
+
+		errObj, ok := got.(*Error)
+		if !ok {
+			t.Errorf("%q: expected an error, got=%s", input, got.Inspect())
+
+			continue
+		}
+
+		if errObj.Message != message {
+			t.Errorf("%q: expected=%q got=%q", input, message, errObj.Message)
+		}
+	}
+}
+
+// Removing a list element that does not exist is a no-op, and a negative index never exists.
+func TestEvalUpdateRemoveNegativeListIndex(t *testing.T) {
+	t.Parallel()
+
+	env := startUpdateMismatchEnv(t)
+	if err := env.AddAttributes(map[string]*types.Item{":neg": {N: new("-1")}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := testEvalUpdate(t, "REMOVE l[:neg]", env); isError(got) {
+		t.Fatalf("expected no error, got=%s", got.Inspect())
+	}
+}

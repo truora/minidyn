@@ -37,6 +37,18 @@ func TestNormalizeSDKErrorString(t *testing.T) {
 			"api error ValidationException: Invalid ProjectionExpression: Syntax error; token: \"(\", near: \"(\"",
 			"api error ValidationException: Invalid ProjectionExpression: Syntax error",
 		},
+		{
+			"sorts the GSI not-project list (Local uses hash order)",
+			"api error ValidationException: One or more parameter values were invalid: " +
+				"Global secondary index gko does not project [zz, a, b]",
+			"api error ValidationException: One or more parameter values were invalid: " +
+				"Global secondary index gko does not project [a, b, zz]",
+		},
+		{
+			"leaves a single name and other lists alone",
+			"Global secondary index gko does not project [b]; Secondary index lko does not project one or more filter attributes: [b, a]",
+			"Global secondary index gko does not project [b]; Secondary index lko does not project one or more filter attributes: [b, a]",
+		},
 	}
 
 	for _, tt := range tests {

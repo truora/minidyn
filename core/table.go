@@ -811,6 +811,185 @@ func (t *Table) validateKeyCondition(input QueryInput) error {
 	return nil
 }
 
+// DynamoDB's texts for an ExclusiveStartKey it rejects, probed against DynamoDB Local (#171).
+const (
+	msgStartKeySize      = "Exclusive Start Key must have same size as table's key schema"
+	msgStartKeyInvalid   = "The provided starting key is invalid"
+	msgStartKeyType      = "Type mismatch for attribute to update"
+	msgStartKeyPredicate = "The provided starting key does not match the range key predicate"
+	msgStartKeyRestart   = "The query can return at most one row and cannot be restarted. "
+)
+
+// startKeyAttr is one key attribute an ExclusiveStartKey must hold: Hash when it is the hash key
+// of the table or of the index, Index the index it belongs to ("" for the table's own key).
+type startKeyAttr struct {
+	Name  string
+	Hash  bool
+	Index string
+}
+
+// startKeyAttrs lists the key attributes of an ExclusiveStartKey in the order DynamoDB checks
+// them: the table's hash and range key, then the index's when it adds any. idx is nil for the
+// table.
+func (t *Table) startKeyAttrs(idx *index, indexName string) []startKeyAttr {
+	attrs := []startKeyAttr{{Name: t.KeySchema.HashKey, Hash: true}}
+
+	if t.KeySchema.RangeKey != "" {
+		attrs = append(attrs, startKeyAttr{Name: t.KeySchema.RangeKey})
+	}
+
+	if idx == nil {
+		return attrs
+	}
+
+	for _, attr := range []startKeyAttr{
+		{Name: idx.keySchema.HashKey, Hash: true, Index: indexName},
+		{Name: idx.keySchema.RangeKey, Index: indexName},
+	} {
+		if attr.Name == "" || slices.ContainsFunc(attrs, func(a startKeyAttr) bool { return a.Name == attr.Name }) {
+			continue
+		}
+
+		attrs = append(attrs, attr)
+	}
+
+	return attrs
+}
+
+// validateStartKey rejects an ExclusiveStartKey DynamoDB rejects, before any item is read (#171):
+// one that is not a key of the table (or of the index being read), and, for a Query, one that
+// does not satisfy the key condition, such as a key of another partition. It need not name an
+// existing item (#258). The checks run in the order DynamoDB Local reports them:
+//
+//  0. a number DynamoDB cannot store, in any attribute;
+//  1. the size: for the table and a local index, the number of key attributes (a table's key
+//     schema, plus the index key for an LSI); for a global index, simply invalid;
+//  2. each key attribute in turn, the table's first: it must be present, and of the declared type;
+//  3. an empty S or B value in any of them, in the same order;
+//  4. the key condition of a Query, which the start key must match.
+//
+// An empty ExclusiveStartKey counts as none: the front ends cannot tell it from an absent one.
+func (t *Table) validateStartKey(input QueryInput) error {
+	start := input.ExclusiveStartKey
+	if len(start) == 0 {
+		return nil
+	}
+
+	if err := checkStartKeyNumbers(start); err != nil {
+		return err
+	}
+
+	idx := t.Indexes[input.Index]
+	attrs := t.startKeyAttrs(idx, input.Index)
+
+	if len(start) != len(attrs) {
+		msg := msgStartKeySize
+		if idx != nil && idx.typ == indexTypeGlobal {
+			msg = msgStartKeyInvalid
+		}
+
+		return validationError(msg, startKeyDetail(input.Index, "reason", fmt.Sprintf("%d attributes, want %d", len(start), len(attrs)))...)
+	}
+
+	for _, attr := range attrs {
+		if err := t.checkStartKeyAttr(input.Index, attr, start); err != nil {
+			return err
+		}
+	}
+
+	for _, attr := range attrs {
+		kind := emptyValueKind(start[attr.Name])
+		if kind == "" {
+			continue
+		}
+
+		msg := msgStartKeyInvalid + ": " + emptyKeyError(kind, attr.Index, attr.Name).Error()
+		if attr.Hash {
+			msg = msgStartKeyRestart + msg
+		}
+
+		return validationError(msg, startKeyDetail(input.Index, "attribute", attr.Name)...)
+	}
+
+	return t.checkStartKeyCondition(input)
+}
+
+// startKeyDetail is the detail of a start key error: the index when the search reads one (the
+// table has no name to give), then kv.
+func startKeyDetail(index string, kv ...string) []string {
+	if index == "" {
+		return kv
+	}
+
+	return append([]string{"index", index}, kv...)
+}
+
+// checkStartKeyAttr checks that start holds attr, with the type the table declares for it.
+func (t *Table) checkStartKeyAttr(indexName string, attr startKeyAttr, start map[string]*types.Item) error {
+	val, ok := start[attr.Name]
+	if !ok {
+		return validationError(msgStartKeyInvalid, startKeyDetail(indexName, "attribute", attr.Name, "reason", "missing")...)
+	}
+
+	if _, ok := getGoValue(val, t.AttributesDef[attr.Name]); !ok {
+		return validationError(msgStartKeyType, startKeyDetail(indexName, "attribute", attr.Name,
+			"expected", t.AttributesDef[attr.Name], "actual", itemTypeName(val))...)
+	}
+
+	return nil
+}
+
+// checkStartKeyNumbers rejects an N value of the ExclusiveStartKey that DynamoDB cannot store, with
+// its text. It is checked ahead of the shape: left unreported, an unreadable key would restart the
+// walk from the first item, and a client paging until LastEvaluatedKey is empty would never finish.
+func checkStartKeyNumbers(start map[string]*types.Item) error {
+	for _, name := range slices.Sorted(maps.Keys(start)) {
+		if start[name] == nil || start[name].N == nil {
+			continue
+		}
+
+		if _, err := parseNumber(*start[name].N); err != nil {
+			return validationError(err.Error(), "attribute", name, "number", *start[name].N)
+		}
+	}
+
+	return nil
+}
+
+// checkStartKeyCondition checks that a Query's ExclusiveStartKey satisfies its key condition, as
+// an item would: it must hold the queried partition's hash key and, with a range condition, a
+// range key inside it. A Scan has no key condition. The start key is matched as an item, which
+// compares numbers by value, with the interpreter minidyn evaluates its own conditions with
+// (D6: the parse is cached).
+//
+// DynamoDB Local also rejects, on the table, a start key equal to the inclusive bound the walk
+// ends at, but never returns one. minidyn does return it when a page ends there (#153), so it
+// is accepted, and the page after it is empty.
+func (t *Table) checkStartKeyCondition(input QueryInput) error {
+	if input.Scan || input.KeyConditionExpression == "" {
+		return nil
+	}
+
+	matched, err := t.InterpreterMatch(interpreter.MatchInput{
+		TableName:      t.Name,
+		Expression:     input.KeyConditionExpression,
+		ExpressionType: interpreter.ExpressionTypeKey,
+		Item:           input.ExclusiveStartKey,
+		Aliases:        input.Aliases,
+		Attributes:     input.ExpressionAttributeValues,
+	})
+	if err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	if !matched {
+		return validationError(msgStartKeyPredicate, startKeyDetail(input.Index,
+			"key condition", input.KeyConditionExpression)...)
+	}
+
+	return nil
+}
+
 // validateFilterProjected rejects a Query on an index whose FilterExpression names attributes the
 // index does not project, as DynamoDB does, with the attributes sorted. A Scan has no such rule: its
 // filter reads the stored item.
@@ -992,17 +1171,15 @@ func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
 	return nil
 }
 
-// parseStartKey encodes the ExclusiveStartKey. A number DynamoDB rejects is a ValidationException,
-// as it is anywhere else in a request: left unreported, the empty key would restart the walk from
-// the first item, and a client paging until LastEvaluatedKey is empty would never finish. Other
-// problems with the start key keep the leniency described at checkSeek.
+// parseStartKey encodes the ExclusiveStartKey for schema. validateStartKey has already checked its
+// shape and types, so an error here is not expected.
 func (t *Table) parseStartKey(schema keySchema, startkeyAttr map[string]*types.Item) (string, error) {
 	if len(startkeyAttr) == 0 {
 		return "", nil
 	}
 
 	startKey, err := schema.GetKey(t.AttributesDef, startkeyAttr)
-	if errors.Is(err, ErrInvalidNumber) || errors.Is(err, ErrNumberOverflow) || errors.Is(err, ErrNumberUnderflow) {
+	if err != nil {
 		return "", types.NewError("ValidationException", err.Error(), nil)
 	}
 
@@ -1054,10 +1231,9 @@ func (t *Table) fetchQueryData(input QueryInput) (idx *index, keys []string, pre
 // validateKeyCondition, so this only surfaces errors that need an evaluation: in the
 // FilterExpression, or in the key condition at run time (e.g. an undefined placeholder).
 //
-// An ExclusiveStartKey outside the partition (or missing key attributes) is not rejected,
-// unlike DynamoDB: consumers' tests rely on that leniency, so validating it is a separate,
-// release-noted change. A start key outside the partition skips every key, so the page is empty
-// (see skipToStartKey). One inside it need not be an existing item (#258).
+// The ExclusiveStartKey is already validated (validateStartKey, #171): it has the key attributes,
+// in the queried partition and inside the key condition's range. It need not be an existing item
+// (#258), see skipToStartKey.
 func (t *Table) checkSeek(input QueryInput, idx *index, keys []string) error {
 	if len(keys) != 0 {
 		return nil
@@ -1133,45 +1309,42 @@ func keysWithPrefix(keys []string, prefix string) []string {
 	return keys[lo : lo+n]
 }
 
-// skipToStartKey returns how many of keys the search skips to resume after the
-// ExclusiveStartKey, whose encoded table key is startKey (#258). The start key need not
-// belong to an item: the search resumes at the first key after it, in the direction of the
-// walk. The encoded keys keep DynamoDB's order, so they are compared, never parsed.
-//
-// prefix is empty when the search is not seeked, and then matches every key. A start key
-// outside the queried partition skips every key, the empty page that checkSeek describes.
-func (t *Table) skipToStartKey(input QueryInput, idx *index, keys []string, prefix, startKey string) int {
-	forward := input.ScanIndexForward
-
-	if idx != nil {
-		startIK, ok := t.startIndexKey(idx, input.ExclusiveStartKey, startKey)
-		if !ok || !strings.HasPrefix(startIK, prefix) {
-			return len(keys)
-		}
-
-		return idx.skipPast(startKey, startIK, forward)
+// startKeySkip returns how many of keys the search skips to resume after the input's
+// ExclusiveStartKey: none without one.
+func (t *Table) startKeySkip(input QueryInput, idx *index, keys []string) (int, error) {
+	startKey, err := t.parseStartKey(t.KeySchema, input.ExclusiveStartKey)
+	if err != nil || startKey == "" {
+		return 0, err
 	}
 
-	if !strings.HasPrefix(startKey, prefix) {
-		return len(keys)
+	startIK := ""
+
+	if idx != nil {
+		startIK, err = t.parseStartKey(idx.keySchema, input.ExclusiveStartKey)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return skipToStartKey(idx, keys, startKey, startIK, input.ScanIndexForward), nil
+}
+
+// skipToStartKey returns how many of keys the search skips to resume after the
+// ExclusiveStartKey, whose encoded table key is startKey and, for an index search, whose encoded
+// index key is startIK (#258). The start key need not belong to an item: the search resumes at
+// the first key after it, in the direction of the walk. The encoded keys keep DynamoDB's order,
+// so they are compared, never parsed.
+//
+// validateStartKey has put the start key inside the queried partition, so no key is skipped for
+// being outside it.
+func skipToStartKey(idx *index, keys []string, startKey, startIK string, forward bool) int {
+	if idx != nil {
+		return idx.skipPast(startKey, startIK, forward)
 	}
 
 	pos := sort.SearchStrings(keys, startKey)
 
 	return skipped(pos, pos < len(keys) && keys[pos] == startKey, len(keys), forward)
-}
-
-// startIndexKey returns the encoded index key of an ExclusiveStartKey. A start key without
-// the index key attributes (DynamoDB rejects it, minidyn never did) takes the index key
-// of the item it names, if there is one.
-func (t *Table) startIndexKey(idx *index, start map[string]*types.Item, startKey string) (string, bool) {
-	if indexKey, err := idx.keySchema.GetKey(t.AttributesDef, start); err == nil && indexKey != "" {
-		return indexKey, true
-	}
-
-	indexKey, ok := idx.refs[startKey]
-
-	return indexKey, ok
 }
 
 func (t *Table) getMatchedItemAndCount(input *QueryInput, pk string, idx *index) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool, error) {
@@ -1278,6 +1451,12 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		return SearchResult{}, err
 	}
 
+	// DynamoDB checks the start key right after the key condition, ahead of the index's projection
+	// and Select.
+	if err := t.validateStartKey(input); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := t.validateFilterProjected(input); err != nil {
 		return SearchResult{}, err
 	}
@@ -1293,8 +1472,7 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 
 	items := []map[string]*types.Item{}
 	limit := input.Limit
-	exclusiveStartKey := input.ExclusiveStartKey
-	index, sortedKeys, prefix, seeked := t.fetchQueryData(input)
+	index, sortedKeys, _, seeked := t.fetchQueryData(input)
 
 	if seeked {
 		if err := t.checkSeek(input, index, sortedKeys); err != nil {
@@ -1302,14 +1480,9 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		}
 	}
 
-	startKey, err := t.parseStartKey(t.KeySchema, exclusiveStartKey)
+	skip, err := t.startKeySkip(input, index, sortedKeys)
 	if err != nil {
 		return SearchResult{}, err
-	}
-
-	skip := 0
-	if startKey != "" {
-		skip = t.skipToStartKey(input, index, sortedKeys, prefix, startKey)
 	}
 
 	last := map[string]*types.Item{}

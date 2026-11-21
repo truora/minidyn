@@ -630,6 +630,7 @@ func TestSearchData(t *testing.T) {
 	queryInput.ScanIndexForward = true
 
 	newIndex := index{
+		keySchema:  keySchema{HashKey: "id"},
 		sortedRefs: [][2]string{{"ref1", "ref2"}},
 		sortedKeys: []string{"ref2", "ref1"},
 		refs:       map[string]string{"ref1": "ref2"},
@@ -647,7 +648,7 @@ func TestSearchData(t *testing.T) {
 	c.Equal([]map[string]*types.Item{}, result)
 	c.Equal(map[string]*types.Item{}, lastItem)
 
-	queryInput.ExclusiveStartKey = item
+	queryInput.ExclusiveStartKey = newTable.KeySchema.getKeyItem(item)
 	result, lastItem, err = searchData(newTable, queryInput)
 	c.NoError(err)
 	c.Equal([]map[string]*types.Item{}, result)

@@ -220,10 +220,8 @@ func TestE2E_QuerySeek(t *testing.T) {
 			},
 		},
 		{
-			// minidyn returns an empty page; DynamoDB rejects the start key. Validating it
-			// breaks consumers' tests that rely on the leniency, so it ships separately.
-			name:       "ExclusiveStartKeyFromAnotherPartition",
-			knownIssue: "#171",
+			// DynamoDB rejects an ExclusiveStartKey from another partition (#171).
+			name: "ExclusiveStartKeyFromAnotherPartition",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

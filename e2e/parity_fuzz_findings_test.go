@@ -428,10 +428,8 @@ func TestE2E_FuzzFindings(t *testing.T) {
 		},
 		{
 			// DynamoDB rejects an ExclusiveStartKey outside the range key predicate
-			// ("The provided starting key does not match the range key predicate");
-			// minidyn returns an empty page.
-			knownIssue: "#171",
-			name:       "ExclusiveStartKeyOutsideRangePredicate",
+			// ("The provided starting key does not match the range key predicate", #171).
+			name: "ExclusiveStartKeyOutsideRangePredicate",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

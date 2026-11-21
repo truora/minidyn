@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand/v2"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -668,7 +669,7 @@ func (g *fuzzGen) query() fuzzOp {
 
 		// Resume after a random key of the partition (both directions); with Limit this is
 		// paging. Index queries have no Limit (ties) and so no paging.
-		g.exclusiveStartKey(in, pk)
+		g.exclusiveStartKey(in, e, pk)
 	}
 
 	g.readOptions(e, &in.FilterExpression, &in.Limit)
@@ -692,18 +693,28 @@ func (g *fuzzGen) query() fuzzOp {
 }
 
 // exclusiveStartKey sometimes resumes a table query after a key, which need not belong to an
-// item. Outside known mode, #171: DynamoDB rejects a start key outside the range key
-// predicate, minidyn returns an empty page, so there is no range condition with a start key.
-func (g *fuzzGen) exclusiveStartKey(in *dynamodb.QueryInput, pk dynamodbtypes.AttributeValue) {
+// item. With a range condition the key can fall outside it, which DynamoDB rejects (#171).
+//
+// Outside known mode it avoids a key equal to a value of the key condition: on the inclusive
+// bound a walk ends at, DynamoDB Local rejects the key where minidyn accepts it (#153, the
+// divergence that has minidyn return that key as a LastEvaluatedKey).
+func (g *fuzzGen) exclusiveStartKey(in *dynamodb.QueryInput, e *fuzzExpr, pk dynamodbtypes.AttributeValue) {
 	if !g.chance(0.4) {
 		return
 	}
 
-	if !g.known && strings.Contains(*in.KeyConditionExpression, " AND ") {
-		return
+	sk := g.skValue()
+
+	if !g.known {
+		for _, v := range e.values {
+			// By value: 0.5 and 0.50 are one number.
+			if reflect.TypeOf(v) == reflect.TypeOf(sk) && compareKeyValues(v, sk) == 0 {
+				return
+			}
+		}
 	}
 
-	in.ExclusiveStartKey = map[string]dynamodbtypes.AttributeValue{"pk": pk, "sk": g.skValue()}
+	in.ExclusiveStartKey = map[string]dynamodbtypes.AttributeValue{"pk": pk, "sk": sk}
 }
 
 func (g *fuzzGen) scan() fuzzOp {

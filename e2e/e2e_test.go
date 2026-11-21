@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -35,14 +36,27 @@ var sdkErrExprAttrValuesNullExprRE = regexp.MustCompile(
 	`(ExpressionAttributeValues can only be specified when using expressions): \w+Expression is null`,
 )
 
+// DynamoDB Local lists the attributes of "Global secondary index <name> does not project [...]"
+// in Java HashSet order (a request for b, zz reports [zz, b]); minidyn sorts them (a D1 level-3
+// choice). Sort the list on both sides so the set of names is compared, not the order. Only
+// this message is sorted: others, such as the filter one, are sorted on DynamoDB Local too.
+var sdkErrGSINotProjectedRE = regexp.MustCompile(`(Global secondary index \S+ does not project \[)([^\]]*)\]`)
+
+func sortGSINotProjectedNames(m []string) string {
+	names := strings.Split(m[2], ", ")
+	sort.Strings(names)
+
+	return m[1] + strings.Join(names, ", ") + "]"
+}
+
 // sdkErrDetailSeparator marks the start of minidyn-only debug detail (types.DetailSeparator).
 // It is stripped from the LAST occurrence because DynamoDB can echo user input, which may
 // contain " | ", earlier in the message.
 const sdkErrDetailSeparator = " | "
 
 // normalizeSDKErrorString makes minidyn and DynamoDB Local operation errors comparable by
-// stripping request IDs, minidyn-only debug detail (everything from the last " | ") and
-// DynamoDB-Local-specific validation suffixes. DynamoDB's own text, including any ";" part,
+// stripping request IDs, minidyn-only debug detail (everything from the last " | "),
+// DynamoDB-Local-specific validation suffixes and the order of the GSI not-project list. DynamoDB's own text, including any ";" part,
 // is compared in full, with one exception: the text after "Syntax error" is cut because
 // minidyn's parse errors do not report the token and context like DynamoDB yet (#188).
 func normalizeSDKErrorString(s string) string {
@@ -65,7 +79,14 @@ func normalizeSDKErrorString(s string) string {
 
 	s = sdkErrExprAttrValuesNullExprRE.ReplaceAllString(s, "$1")
 
+	s = replaceAllSubmatchFunc(sdkErrGSINotProjectedRE, s, sortGSINotProjectedNames)
+
 	return s
+}
+
+// replaceAllSubmatchFunc is re.ReplaceAllStringFunc with the submatches passed to repl.
+func replaceAllSubmatchFunc(re *regexp.Regexp, s string, repl func(m []string) string) string {
+	return re.ReplaceAllStringFunc(s, func(match string) string { return repl(re.FindStringSubmatch(match)) })
 }
 
 // assertParityEqual compares minidyn vs DynamoDB Local results. For slices it

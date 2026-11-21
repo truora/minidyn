@@ -153,3 +153,49 @@ func TestTableBatchGetItem(t *testing.T) {
 		require.ErrorContains(t, err, "ValidationException: "+syntaxMsg)
 	})
 }
+
+func listIndexTable(t *testing.T) (*Table, map[string]*types.Item) {
+	t.Helper()
+
+	table, err := createPokemonTable()
+	require.NoError(t, err)
+
+	item := createPokemon(pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"})
+	item["l"] = &types.Item{L: []*types.Item{{S: new("a")}, {S: new("b")}, {S: new("c")}}}
+
+	_, err = table.Put(&types.PutItemInput{Item: item, TableName: &table.Name})
+	require.NoError(t, err)
+
+	return table, primaryKeyFromPokemonItem(item)
+}
+
+// A projection of a list element returns a list with only the selected elements; before #262 it
+// held a nil element for the ones skipped, which the front ends could not encode.
+func TestTableGetItemListElementProjection(t *testing.T) {
+	table, key := listIndexTable(t)
+
+	str := func(v string) *types.Item { return &types.Item{S: &v} }
+
+	tests := map[string]struct {
+		projection string
+		want       map[string]*types.Item
+	}{
+		"element":       {"l[1]", map[string]*types.Item{"l": {L: []*types.Item{str("b")}}}},
+		"in list order": {"l[2], l[0]", map[string]*types.Item{"l": {L: []*types.Item{str("a"), str("c")}}}},
+		"past the end":  {"l[5]", map[string]*types.Item{}},
+		"missing list":  {"nope[1]", map[string]*types.Item{}},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := table.GetItem(key, tt.projection, nil)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.Projected)
+
+			batch, err := table.BatchGetItem([]map[string]*types.Item{key}, tt.projection, nil)
+			require.NoError(t, err)
+			require.Len(t, batch, 1)
+			require.Equal(t, tt.want, batch[0].Projected)
+		})
+	}
+}

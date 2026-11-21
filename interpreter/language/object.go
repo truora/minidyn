@@ -413,7 +413,7 @@ func (l *List) Inspect() string {
 // Remove eliminates the value form the element in the pos index
 // the element replaces with a nil value.
 func (l *List) Remove(pos int64) Object {
-	if int64(len(l.Value)) > pos {
+	if pos >= 0 && pos < int64(len(l.Value)) {
 		l.Value[pos] = nil
 		l.dirty = true
 

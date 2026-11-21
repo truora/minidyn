@@ -126,6 +126,12 @@ never goes through it.
     (`Table.BatchGetItem`);
   - the shape and types of a key condition, with BETWEEN bounds checked
     first (same type, then lower <= upper, comparing by type);
+  - the `ProjectionExpression` of a Query or Scan (its syntax, then undeclared
+    `#names`), before the key condition, and then the attributes of an index
+    Query's `FilterExpression`, which must all be projected by the index
+    (`Table.validateFilterProjected`), after the key condition and before
+    `Select`; then a GSI Query or Scan's `ProjectionExpression`, which must
+    only name attributes the GSI projects (`Table.validateIndexProjection`);
   - empty S and B values in the key attributes of the table and of every
     index (#163), with LSIs reported before GSIs;
   - `ReturnValues` and `ReturnValuesOnConditionCheckFailure`, including the

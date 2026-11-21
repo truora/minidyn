@@ -305,3 +305,64 @@ func TestRootAttributes(t *testing.T) {
 		}
 	})
 }
+
+// A projection builds lists with a nil hole for every element it did not select. DynamoDB
+// answers with only the selected elements, in list order (#262). SetProjectedPath reports the
+// lists it padded, and only those are compacted.
+func TestSetProjectedPath_reportsPaddedLists(t *testing.T) {
+	t.Parallel()
+
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+	key := func(k string) PathElement { return PathElement{Kind: PathKindMapKey, Key: k} }
+	idx := func(i int64) PathElement { return PathElement{Kind: PathKindListIndex, Index: i} }
+
+	projected := map[string]*types.Item{}
+
+	var padded []*types.Item
+
+	for _, tt := range []struct {
+		path []PathElement
+		val  string
+	}{
+		{[]PathElement{key("l"), idx(3)}, "d"},
+		{[]PathElement{key("l"), idx(1)}, "b"},
+		{[]PathElement{key("ll"), idx(1), idx(1)}, "r"},
+		{[]PathElement{key("lm"), idx(1), key("k"), idx(1)}, "v"},
+	} {
+		padded = append(padded, SetProjectedPath(projected, tt.path, *s(tt.val))...)
+	}
+
+	if got := SetProjectedPath(projected, []PathElement{key("s")}, *s("x")); len(got) != 0 {
+		t.Fatalf("a path without a list index pads nothing, got=%d", len(got))
+	}
+
+	if got := SetProjectedPath(projected, []PathElement{key("l"), idx(2)}, *s("c")); len(got) != 0 {
+		t.Fatalf("a list that is long enough is not padded, got=%d", len(got))
+	}
+
+	CompactPaddedLists(padded)
+
+	want := map[string]*types.Item{
+		"l":  {L: []*types.Item{s("b"), s("c"), s("d")}},
+		"ll": {L: []*types.Item{{L: []*types.Item{s("r")}}}},
+		"lm": {L: []*types.Item{{M: map[string]*types.Item{"k": {L: []*types.Item{s("v")}}}}}},
+		"s":  s("x"),
+	}
+	if diff := cmp.Diff(want, projected); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
+// A selected NULL element is a value, not a hole.
+func TestCompactPaddedLists_keepsNullElements(t *testing.T) {
+	t.Parallel()
+
+	null := true
+	list := &types.Item{L: []*types.Item{nil, {NULL: &null}}}
+
+	CompactPaddedLists([]*types.Item{list})
+
+	if len(list.L) != 1 || list.L[0].NULL == nil {
+		t.Fatalf("expected only the NULL element, got=%v", list.L)
+	}
+}

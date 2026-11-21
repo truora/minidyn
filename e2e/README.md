@@ -41,9 +41,10 @@ allowlist entry that names it.
 ### Intentional divergences
 
 DynamoDB Local is the parity reference, but where it disagrees with the
-documented behavior of DynamoDB, minidyn follows DynamoDB. These tests keep
-their `knownIssue` marker even though the issue is closed, so the difference
-stays visible and is checked on every run:
+documented behavior of DynamoDB, minidyn follows DynamoDB. Each divergence has
+a test that checks it on every run. Except for #153, which still carries a
+`knownIssue` marker (see the end of this section), the test asserts each
+engine's behavior separately:
 
 - **#153, `LastEvaluatedKey` at the end of the sort key range**
   (`TestE2E_FuzzFindings/QueryLimitEndsAtRangeEnd`). When a `Query` page fills
@@ -110,10 +111,16 @@ stays visible and is checked on every run:
   minidyn keeps its approximation: 2 x the write units of the key (2). The
   test asserts both numbers.
 
-The harness treats these markers like any other: a skip links to the (closed)
-issue. If one of these tests ever reports that the issue "appears FIXED", minidyn
-has stopped following DynamoDB's documented behavior: fix minidyn, don't remove
-the marker.
+A divergence test that asserts each engine passes while both engines do what
+its entry says, and fails if either changes. If one fails, minidyn has stopped
+following DynamoDB's documented behavior, or Local changed: fix minidyn, don't
+loosen the test.
+
+#153 works the other way. Its case compares the two engines and fails because
+they differ, so it keeps `knownIssue: "#153"` even though the issue is closed.
+The harness treats the marker like any other: a skip links to the issue. If that
+test ever reports that the issue "appears FIXED", minidyn has stopped following
+DynamoDB's documented behavior: fix minidyn, don't remove the marker.
 
 ## Finding new gaps
 

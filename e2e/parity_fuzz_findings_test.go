@@ -450,9 +450,8 @@ func TestE2E_FuzzFindings(t *testing.T) {
 		},
 		{
 			// An ExclusiveStartKey that is not an item in the table resumes at the next
-			// larger key on DynamoDB Local; minidyn returns nothing.
-			knownIssue: "#258",
-			name:       "ExclusiveStartKeyOfMissingItem",
+			// larger key.
+			name: "ExclusiveStartKeyOfMissingItem",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

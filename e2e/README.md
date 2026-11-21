@@ -109,6 +109,25 @@ stays visible and is checked on every run:
   item in the transaction" and does not say which a `ConditionCheck` is, so
   minidyn keeps its approximation: 2 x the write units of the key (2). The
   test asserts both numbers.
+- **A wrong-typed index key when `UpdateTable` creates an index**
+  (`TestE2E_UpdateTableCreateIndexBackfill/WrongTypeIsSkippedByMinidynOnly`).
+  DynamoDB Local fills a new index with the items the table already has, skips
+  the ones whose index key is an empty string, and indexes the ones
+  whose index key attribute has another data type than the index key schema
+  (a number under a string key). minidyn skips both, as the developer guide
+  says under
+  [Phases of index creation](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.OnlineOps.html):
+  index key violations "do not interfere with global secondary index
+  creation. However, when the index becomes ACTIVE, the violating keys are not
+  present in the index", and it lists a data type that does not match the
+  index key schema and an empty String or Binary as violations (a key size
+  over the limit is the third; minidyn enforces no key size limits). The items
+  stay in the table, `DeleteItem` of one succeeds on both engines, and
+  `UpdateItem` of another attribute of one is rejected on both (the wording of
+  the wrong-type rejection differs, see #213 and #239). The test
+  asserts each engine's index contents. The empty-value case is a parity test
+  (`EmptyValueIsSkipped`); the test covers an empty string, not an empty
+  binary.
 
 The harness treats these markers like any other: a skip links to the (closed)
 issue. If one of these tests ever reports that the issue "appears FIXED", minidyn

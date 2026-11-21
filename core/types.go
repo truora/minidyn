@@ -24,10 +24,10 @@ var (
 	ErrInvalidNumber = errors.New("A value provided cannot be converted into a number") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
 	// ErrNumberOverflow when an N value's magnitude is above 9.99...E+125.
-	ErrNumberOverflow = errors.New("Number overflow. Attempting to store a number with magnitude larger than supported range") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+	ErrNumberOverflow = types.ErrNumberOverflow
 
 	// ErrNumberUnderflow when an N value's magnitude is below 1E-130 and not zero.
-	ErrNumberUnderflow = errors.New("Number underflow. Attempting to store a number with magnitude smaller than supported range") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+	ErrNumberUnderflow = types.ErrNumberUnderflow
 
 	// ErrKeyTypeMismatch when a primary key attribute has a different type than
 	// the one declared in the table's attribute definitions. Real DynamoDB

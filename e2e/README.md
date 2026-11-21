@@ -59,6 +59,17 @@ stays visible and is checked on every run:
   caller paging until `LastEvaluatedKey` is empty would miss them. The cost is one extra, empty page when a range ends
   exactly at a page boundary. The default fuzz mode avoids the case (see
   `fuzz_gen_test.go`).
+- **Trailing zeros in numbers** (`TestE2E_NumberPrecision/TrailingZerosAreTrimmed`).
+  DynamoDB Local keeps the `BigDecimal` scale in arithmetic and the text as
+  sent in the values `UpdateItem` writes and inside lists and maps:
+  `SET n = :a + :b` with 1.1 and 1.20 stores 2.30, `ADD n :a` of 0.1 to 1.10
+  stores 1.20, `SET n = :a` with 1.50 stores 1.50, and `l = [1.0]` read back or
+  copied with `SET c = l[0]` stays 1.0. minidyn trims them (2.3, 1.2, 1.5, 1
+  and `[1]`), as the developer guide's
+  [Number type](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html#HowItWorks.DataTypes)
+  says: "Leading and trailing zeroes are trimmed". Only the form differs, the
+  value is the same. The test asserts each engine's values explicitly.
+  Verifying the behavior against real DynamoDB is tracked in #224.
 - **`ReturnConsumedCapacity` outside `INDEXES`, `TOTAL` and `NONE`**
   (`TestE2E_ConsumedCapacityInvalidMode`). DynamoDB Local accepts any value
   and answers as if it were `NONE`. minidyn rejects it with a
@@ -136,7 +147,16 @@ allowlisted gap that is now covered, so the list can't go stale.
 `TestE2E_Fuzz` (`fuzz_test.go`, generator in `fuzz_gen_test.go`) runs random
 sequences of `PutItem`, `UpdateItem`, `DeleteItem`, `GetItem`, `Query` and
 `Scan` (with conditions, filters, projections, a GSI and `ReturnValues`) against
-both engines in lockstep. It fails at the first response or final table state
+both engines in lockstep. The key layout rotates by seed, so one run covers all
+three: `sk` of type S (seed % 3 = 0), N (1) or B (2). With N and B range keys the
+GSI ranges over a separate attribute `r` of the other type (B and N), so the
+index's key types differ from the table's. Keys are drawn from values that stress
+the typed key encoding: N with negatives, `0` and `-0`, decimals, equal spellings
+(`1`, `1.0`, `01`, `1e0`) and exponents from `1E-130` to `9.99E+125` (up to 38
+digits); B with `0x00`, `0x01` and `0xFF` bytes and values that are prefixes of
+each other. `Query` uses them in `<`, `<=`, `>`, `>=`, `=`, `BETWEEN` and
+`begins_with` (S and B) conditions, in both directions, with `Limit` and
+`ExclusiveStartKey`. It fails at the first response or final table state
 that differs, printing the seed, the requests so far and a reproduce command.
 
 ```bash

@@ -25,6 +25,19 @@ func fuzzSetup(ctx context.Context, t *testing.T, client *dynamodb.Client, items
 	}
 }
 
+// fuzzSetupFor is fuzzSetup with a key layout (#225: N and B range keys).
+func fuzzSetupFor(ctx context.Context, t *testing.T, client *dynamodb.Client, schema fuzzSchema, items ...map[string]dynamodbtypes.AttributeValue) {
+	t.Helper()
+
+	require.NoError(t, fuzzCreateTableFor(ctx, client, schema))
+	parityWaitUntilGSIActive(ctx, t, client, fuzzTable, fuzzGSI)
+
+	for _, it := range items {
+		_, err := client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(fuzzTable), Item: it})
+		require.NoError(t, err)
+	}
+}
+
 func fuzzKey(pk, sk string) map[string]dynamodbtypes.AttributeValue {
 	return map[string]dynamodbtypes.AttributeValue{"pk": fzS(pk), "sk": fzS(sk)}
 }
@@ -412,6 +425,96 @@ func TestE2E_FuzzFindings(t *testing.T) {
 			// DELETE and ADD on nested document paths were silently ignored (#184).
 			name: "NestedDeleteAndAdd",
 			fn:   fuzzNestedDeleteAdd,
+		},
+		{
+			// DynamoDB rejects an ExclusiveStartKey outside the range key predicate
+			// ("The provided starting key does not match the range key predicate");
+			// minidyn returns an empty page.
+			knownIssue: "#171",
+			name:       "ExclusiveStartKeyOutsideRangePredicate",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				fuzzSetup(ctx, t, client, fuzzKey("a", "1"), fuzzKey("a", "2"), fuzzKey("a", "3"))
+
+				out, err := client.Query(ctx, &dynamodb.QueryInput{
+					TableName:                 aws.String(fuzzTable),
+					KeyConditionExpression:    aws.String("pk = :p AND sk > :s"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":p": fzS("a"), ":s": fzS("2")},
+					ExclusiveStartKey:         fuzzKey("a", "1"),
+				})
+
+				return []any{fuzzErrString(err), out != nil && len(out.Items) > 0}
+			},
+		},
+		{
+			// An ExclusiveStartKey that is not an item in the table resumes at the next
+			// larger key on DynamoDB Local; minidyn returns nothing.
+			knownIssue: "#258",
+			name:       "ExclusiveStartKeyOfMissingItem",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				fuzzSetup(ctx, t, client, fuzzKey("c", "1"), fuzzKey("c", "x.y"))
+
+				out, err := client.Query(ctx, &dynamodb.QueryInput{
+					TableName:                 aws.String(fuzzTable),
+					KeyConditionExpression:    aws.String("pk = :p"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":p": fzS("c")},
+					ExclusiveStartKey:         fuzzKey("c", "x"),
+				})
+				require.NoError(t, err)
+
+				return indexKeys(out.Items)
+			},
+		},
+		{
+			// A 38-digit N key written with PutItem reads back with 17 significant digits
+			// when projected.
+			name: "ProjectedNumberKeyKeepsPrecision",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				key := map[string]dynamodbtypes.AttributeValue{"pk": fzS("c"), "sk": fzN("12345678901234567890123456789012345678")}
+				fuzzSetupFor(ctx, t, client, fuzzSchemaN, key)
+
+				full, err := client.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(fuzzTable), Key: key})
+				require.NoError(t, err)
+
+				projected, err := client.GetItem(ctx, &dynamodb.GetItemInput{
+					TableName: aws.String(fuzzTable), Key: key, ProjectionExpression: aws.String("sk"),
+				})
+				require.NoError(t, err)
+
+				return []string{parityAttrValueString(full.Item["sk"]), parityAttrValueString(projected.Item["sk"])}
+			},
+		},
+		{
+			// UpdateItem that creates an item writes its N key with 17 significant digits.
+			name: "UpdateItemCreatedNumberKeyKeepsPrecision",
+			fn: func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				fuzzSetupFor(ctx, t, client, fuzzSchemaN)
+
+				key := map[string]dynamodbtypes.AttributeValue{"pk": fzS("a"), "sk": fzN("12345678901234567890123456789012345678")}
+				_, err := client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+					TableName:                 aws.String(fuzzTable),
+					Key:                       key,
+					UpdateExpression:          aws.String("SET s = :s"),
+					ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":s": fzS("v")},
+				})
+				require.NoError(t, err)
+
+				out, err := client.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String(fuzzTable)})
+				require.NoError(t, err)
+
+				return parityAttrValueString(out.Items[0]["sk"])
+			},
 		},
 	}
 

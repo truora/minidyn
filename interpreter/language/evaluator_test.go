@@ -3,7 +3,6 @@ package language
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -402,65 +401,65 @@ func TestEvalSetUpdate(t *testing.T) {
 	}{
 		{"SET :x = :val", ":x", &String{Value: "text"}, true},
 		{"SET :w = :val", ":w", &String{Value: "text"}, true},
-		{"SET :two = :one + :one", ":two", &Number{Value: 2}, true},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
-		{"SET :zero = :one - :one", ":zero", &Number{Value: 0}, true},
-		{"SET :newTwo = if_not_exists(not_found, :one) + :one", ":newTwo", &Number{Value: 2}, true},
-		{"SET :three = if_not_exists(:two, :one) + :one", ":three", &Number{Value: 3}, true},
-		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Value: 0}, &Number{Value: 1}}}, true},
-		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Value: 1}, &Number{Value: 1}}}, true},
+		{"SET :two = :one + :one", ":two", &Number{Text: "2"}, true},
+		{"SET :zero = :one - :one", ":zero", &Number{Text: "0"}, true},
+		{"SET :zero = :one - :one", ":zero", &Number{Text: "0"}, true},
+		{"SET :newTwo = if_not_exists(not_found, :one) + :one", ":newTwo", &Number{Text: "2"}, true},
+		{"SET :three = if_not_exists(:two, :one) + :one", ":three", &Number{Text: "3"}, true},
+		{"SET :list[1] = :one", ":list", &List{Value: []Object{&Number{Text: "0"}, &Number{Text: "1"}}}, true},
+		{"SET :list[0] = :one", ":list", &List{Value: []Object{&Number{Text: "1"}, &Number{Text: "1"}}}, true},
 		{
 			"SET :matrix[0][0] = :one",
 			":matrix",
-			&List{Value: []Object{&List{Value: []Object{&Number{Value: 1}}}}},
+			&List{Value: []Object{&List{Value: []Object{&Number{Text: "1"}}}}},
 			false,
 		},
 		{
 			"SET :hash.a = :one",
 			":hash",
-			&Map{Value: map[string]Object{"a": &Number{Value: 1}}},
+			&Map{Value: map[string]Object{"a": &Number{Text: "1"}}},
 			false,
 		},
 		{
 			"SET :two = if_not_exists(:hash.not_found, :one) + :one",
 			":two",
-			&Number{Value: 2},
+			&Number{Text: "2"},
 			false,
 		},
 		{
 			"SET :all = list_append(if_not_exists(:all, :list), :tools)",
 			":all",
-			&List{Value: []Object{&Number{Value: 0}, &String{Value: "Chisel"}, &String{Value: "Hammer"}, &String{Value: "Nails"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}},
+			&List{Value: []Object{&Number{Text: "0"}, &String{Value: "Chisel"}, &String{Value: "Hammer"}, &String{Value: "Nails"}, &String{Value: "Screwdriver"}, &String{Value: "Hacksaw"}}},
 			false,
 		},
 		{
 			"SET :nestedMap.lvl1.lvl2 = :nestedMap.lvl1.lvl2 + :one",
 			":nestedMap",
-			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 1}}}}},
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Text: "1"}}}}},
 			false,
 		},
 		{
 			"SET :nestedMap.#pos = #pos + :one",
 			":nestedMap",
-			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, ":nestedMap.lvl1.lvl2": &Number{Value: 1}}},
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Text: "0"}}}, ":nestedMap.lvl1.lvl2": &Number{Text: "1"}}},
 			false,
 		},
 		{
 			"SET :nestedMap.#secondLevel = #pos + :one",
 			":nestedMap",
-			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Value: 0}}}, "lvl1.lvl2": &Number{Value: 1}}},
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"lvl2": &Number{Text: "0"}}}, "lvl1.lvl2": &Number{Text: "1"}}},
 			false,
 		},
 		{
 			"SET :nestedMap.lvl1.#nested_map_attr = :one",
 			":nestedMap",
-			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"random_field_name": &Number{Value: 1}, "lvl2": &Number{Value: 0}}}}},
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"random_field_name": &Number{Text: "1"}, "lvl2": &Number{Text: "0"}}}}},
 			false,
 		},
 		{
 			"SET :nestedMap.lvl1.random_field_name = :one",
 			":nestedMap",
-			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"random_field_name": &Number{Value: 1}, "lvl2": &Number{Value: 0}}}}},
+			&Map{Value: map[string]Object{"lvl1": &Map{Value: map[string]Object{"random_field_name": &Number{Text: "1"}, "lvl2": &Number{Text: "0"}}}}},
 			false,
 		},
 		{"SET :x = :val REMOVE :val", ":x", &String{Value: "text"}, true},
@@ -494,11 +493,11 @@ func TestEvalAddUpdate(t *testing.T) {
 		expected Object
 		keepEnv  bool
 	}{
-		{"ADD :one :one", ":one", &Number{Value: 2}, boolFalse},
-		{"ADD :numSet :oneSet", ":numSet", &NumberSet{Value: map[float64]bool{1: boolTrue, 2: boolTrue, 4: boolTrue}}, boolFalse},
+		{"ADD :one :one", ":one", &Number{Text: "2"}, boolFalse},
+		{"ADD :numSet :oneSet", ":numSet", &NumberSet{Value: map[string]bool{"1": boolTrue, "2": boolTrue, "4": boolTrue}}, boolFalse},
 		{"ADD :binSet :binCSet", ":binSet", &BinarySet{Value: [][]byte{[]byte("a"), []byte("b"), []byte("c")}}, boolFalse},
 		{"ADD :strSet :textSet", ":strSet", &StringSet{Value: map[string]bool{"a": boolTrue, "b": boolTrue, "text": boolTrue}}, boolFalse},
-		{"ADD newVal :one", "newVal", &Number{Value: 1}, boolFalse},
+		{"ADD newVal :one", "newVal", &Number{Text: "1"}, boolFalse},
 		{"ADD newSet :textSet", "newSet", &StringSet{Value: map[string]bool{"text": boolTrue}}, boolFalse},
 	}
 
@@ -564,7 +563,7 @@ func TestEvalDELETEUpdate(t *testing.T) {
 	}{
 		{"DELETE :binSet :binASet", ":binSet", &BinarySet{Value: [][]byte{[]byte("b")}}, boolFalse},
 		{"DELETE :strSet :aSet", ":strSet", &StringSet{Value: map[string]bool{"b": boolTrue}}, boolFalse},
-		{"DELETE :numSet :twoSet", ":numSet", &NumberSet{Value: map[float64]bool{4: boolTrue}}, boolFalse},
+		{"DELETE :numSet :twoSet", ":numSet", &NumberSet{Value: map[string]bool{"4": boolTrue}}, boolFalse},
 	}
 
 	env := startEvalUpdateEnv(t)
@@ -1028,7 +1027,7 @@ func TestIsNumber(t *testing.T) {
 		t.Fatal("expected to be boolFalse")
 	}
 
-	num := Number{Value: 10}
+	num := Number{Text: "10"}
 	if !isNumber(&num) {
 		t.Fatal("expected to be boolTrue")
 	}
@@ -1302,7 +1301,7 @@ func TestIsUndefinedObject(t *testing.T) {
 }
 
 func TestEvalBooleanInfixExpressionLeftNotBoolean(t *testing.T) {
-	got := evalBooleanInfixExpression("AND", &Number{Value: 1}, TRUE)
+	got := evalBooleanInfixExpression("AND", &Number{Text: "1"}, TRUE)
 	want := newError("left operand is not boolean: N")
 	if !isError(got) || got.Inspect() != want.Inspect() {
 		t.Fatalf("got %v, want %v", got, want)
@@ -1542,14 +1541,14 @@ func nestedInspect(obj Object) string {
 	case *NumberSet:
 		members := make([]string, 0, len(o.Value))
 		for k := range o.Value {
-			members = append(members, strconv.FormatFloat(k, 'f', -1, 64))
+			members = append(members, k)
 		}
 
 		sort.Strings(members)
 
 		return "{" + strings.Join(members, ",") + "}"
 	case *Number:
-		return strconv.FormatFloat(o.Value, 'f', -1, 64)
+		return o.Text
 	case *String:
 		return o.Value
 	}

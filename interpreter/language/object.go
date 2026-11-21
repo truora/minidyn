@@ -108,14 +108,31 @@ type DetachableObject interface {
 	Delete(obj Object) Object
 }
 
-// Number is the representation of numbers
+// Number is the representation of numbers. It holds the text of the number in the form DynamoDB
+// stores (see types.NormalizeNumber), not a float64, which would round N values of more than 17
+// significant digits. Two numbers with the same text are equal; ordering and arithmetic read the
+// text as a types.Decimal.
 type Number struct {
-	Value float64
+	Text string
+}
+
+// NewNumber returns the Number for the text of an N value, or false when it is not a number.
+func NewNumber(text string) (*Number, bool) {
+	normal, ok := types.NormalizeNumber(text)
+	if !ok {
+		return nil, false
+	}
+
+	return &Number{Text: normal}, true
+}
+
+func newNumberFromInt(n int64) *Number {
+	return &Number{Text: strconv.FormatInt(n, 10)}
 }
 
 // Inspect returns the readable value of the object
 func (i *Number) Inspect() string {
-	return numToString(i.Value)
+	return i.Text
 }
 
 // Type returns the object type
@@ -125,13 +142,24 @@ func (i *Number) Type() ObjectType {
 
 // ToDynamoDB returns the types attribute value
 func (i *Number) ToDynamoDB() types.Item {
-	str := numToString(i.Value)
+	str := i.Text
 
-	return types.Item{N: new(str)}
+	return types.Item{N: &str}
 }
 
-func numToString(v float64) string {
-	return strconv.FormatFloat(v, 'f', -1, 64)
+// decimal reads the number. Text built by this package always parses.
+func (i *Number) decimal() types.Decimal {
+	d, _ := types.ParseDecimal(i.Text)
+
+	return d
+}
+
+// int64Value is the number as an integer, such as a list index. It returns false for a
+// fractional or out of range value.
+func (i *Number) int64Value() (int64, bool) {
+	n, err := strconv.ParseInt(i.Text, 10, 64)
+
+	return n, err == nil
 }
 
 // Add if the obj is an number it adds the value to the number
@@ -141,9 +169,47 @@ func (i *Number) Add(obj Object) Object {
 		return newIncorrectAddOperandError(i, obj)
 	}
 
-	i.Value += n.Value
+	sum, errObj := sumNumbers(i, n)
+	if errObj != nil {
+		return errObj
+	}
+
+	i.Text = sum.Text
 
 	return UNDEFINED
+}
+
+// precisionMessage is DynamoDB's error for an arithmetic result of more than 38 significant
+// digits.
+const precisionMessage = "DynamoDB only supports precision up to 38 digits"
+
+// sumNumbers returns a + b exactly, or DynamoDB's precision or range error.
+func sumNumbers(a, b *Number) (*Number, *Error) {
+	sum, ok := a.decimal().Add(b.decimal())
+	if !ok {
+		return nil, &Error{Message: precisionMessage}
+	}
+
+	return numberResult(sum)
+}
+
+// subtractNumbers returns a - b exactly, or DynamoDB's precision or range error.
+func subtractNumbers(a, b *Number) (*Number, *Error) {
+	diff, ok := a.decimal().Add(b.decimal().Negate())
+	if !ok {
+		return nil, &Error{Message: precisionMessage}
+	}
+
+	return numberResult(diff)
+}
+
+// numberResult is the number d, or DynamoDB's error when its magnitude is out of range.
+func numberResult(d types.Decimal) (*Number, *Error) {
+	if err := d.CheckRange(); err != nil {
+		return nil, &Error{Message: err.Error()}
+	}
+
+	return &Number{Text: d.String()}, nil
 }
 
 // Boolean is the representation of boolean
@@ -740,25 +806,28 @@ func (bs *BinarySet) Add(obj Object) Object {
 	return UNDEFINED
 }
 
-// NumberSet is the representation of a number set
+// NumberSet is the representation of a number set. Its members are the text of each number in
+// the form of Number.Text.
 type NumberSet struct {
-	Value map[float64]bool
+	Value map[string]bool
 }
 
 // Inspect returns the readable value of the object
 func (ns *NumberSet) Inspect() string {
 	var out bytes.Buffer
 
-	vals := make([]float64, 0, len(ns.Value))
+	vals := make([]string, 0, len(ns.Value))
 	for v := range ns.Value {
 		vals = append(vals, v)
 	}
 
-	sort.Float64s(vals)
+	sort.Slice(vals, func(i, j int) bool {
+		return (&Number{Text: vals[i]}).decimal().Cmp((&Number{Text: vals[j]}).decimal()) < 0
+	})
 	out.WriteString("[ ")
 
 	for _, k := range vals {
-		fmt.Fprintf(&out, "%v", k)
+		out.WriteString(k)
 		out.WriteString(" ")
 	}
 
@@ -777,9 +846,7 @@ func (ns *NumberSet) ToDynamoDB() types.Item {
 	attr := types.Item{NS: make([]*string, 0, len(ns.Value))}
 
 	for v := range ns.Value {
-		str := numToString(v)
-
-		attr.NS = append(attr.NS, new(str))
+		attr.NS = append(attr.NS, new(v))
 	}
 
 	return attr
@@ -812,7 +879,7 @@ func (ns *NumberSet) Contains(obj Object) bool {
 		return false
 	}
 
-	return ns.Value[n.Value]
+	return ns.Value[n.Text]
 }
 
 // CanContain whether or not the number set can contain the objType

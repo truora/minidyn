@@ -12,6 +12,8 @@ Other documents cover the rest:
 - [`docs/interpreter.md`](interpreter.md): the **expression grammar**.
 - [`docs/operations.md`](operations.md): **API coverage**.
 - [`e2e/README.md`](../e2e/README.md): the **parity tooling** and its commands.
+- [`docs/adr/`](adr/README.md): **why** each decision was taken, one record
+  per decision, named by creation date.
 
 How to read the entries:
 
@@ -124,6 +126,12 @@ never goes through it.
     (`Table.BatchGetItem`);
   - the shape and types of a key condition, with BETWEEN bounds checked
     first (same type, then lower <= upper, comparing by type);
+  - the `ProjectionExpression` of a Query or Scan (its syntax, then undeclared
+    `#names`), before the key condition, and then the attributes of an index
+    Query's `FilterExpression`, which must all be projected by the index
+    (`Table.validateFilterProjected`), after the key condition and before
+    `Select`; then a GSI Query or Scan's `ProjectionExpression`, which must
+    only name attributes the GSI projects (`Table.validateIndexProjection`);
   - empty S and B values in the key attributes of the table and of every
     index (#163), with LSIs reported before GSIs;
   - `ReturnValues` and `ReturnValuesOnConditionCheckFailure`, including the
@@ -232,8 +240,17 @@ never goes through it.
 - **Note:** a concrete assertion is fine where that type is the only one
   possible, such as arithmetic on `*Number`, `list_append` on `*List`, or
   `indexAccessor.Get`/`Set` on `*Map`/`*List`.
+- **Numbers are decimal text, never `float64`:** `*Number` holds the N text in
+  the form DynamoDB stores (`types.NormalizeNumber`: no leading or trailing
+  zeros, no exponent), and `*NumberSet` keys its members the same way. Equality
+  is text equality; ordering and arithmetic go through `types.Decimal`, which
+  is exact up to 38 significant digits and fails with DynamoDB's "only supports
+  precision up to 38 digits" beyond. Every item read into the interpreter is
+  written back (an update rewrites the whole item), so a `float64` anywhere on
+  that path rounds values it never meant to change (#259).
 - **Check:** does the diff add a new `switch x.(type)` over value types, or an
-  `x.(*String)` assertion, where an interface fits?
+  `x.(*String)` assertion, where an interface fits? Does a number go through
+  `float64`?
 
 ### D6. Parse and scan each expression text once
 
@@ -486,8 +503,10 @@ never goes through it.
 
 ## 4. Changing this document
 
-Add or edit a decision in the same pull request as the code that motivates it.
-Keep each entry in this shape:
+Add or edit a decision in the same pull request as the code that motivates it,
+together with an ADR in [`docs/adr/`](adr/README.md) that records the context
+and the rejected alternatives. Link the ADR from the entry. Keep each entry in
+this shape:
 
 - **Decision**, **Why** and **Check**;
 - "On `main`" when the current state needs saying;

@@ -50,3 +50,44 @@ func TestUpdateExpressionErrorsAreValidationExceptions(t *testing.T) {
 		})
 	}
 }
+
+// A placeholder as a list index is a minidyn extension (#164) and DynamoDB Local rejects it, so
+// there is no DynamoDB text for a negative one: the path is reported as invalid, with the
+// reason as detail, and the item is left as it was (#262).
+func TestTableUpdateNegativeListIndex(t *testing.T) {
+	const message = "The document path provided in the update expression is invalid for update | " +
+		"field id: l; path: -1; reason: list index must not be negative"
+
+	table, key := listIndexTable(t)
+
+	for _, expression := range []string{"SET l[:i] = :v", "ADD l[:i] :one"} {
+		_, err := table.Update(&types.UpdateItemInput{
+			TableName:        &table.Name,
+			Key:              key,
+			UpdateExpression: expression,
+			ExpressionAttributeValues: map[string]*types.Item{
+				":i":   {N: new("-1")},
+				":v":   {S: new("x")},
+				":one": {N: new("1")},
+			},
+		})
+		requireValidationError(t, err, message)
+	}
+
+	got, err := table.GetItem(key, "l", nil)
+	require.NoError(t, err)
+	require.Len(t, got.Projected["l"].L, 3)
+
+	// Removing an element that does not exist is a no-op, and a negative index never exists.
+	_, err = table.Update(&types.UpdateItemInput{
+		TableName:                 &table.Name,
+		Key:                       key,
+		UpdateExpression:          "REMOVE l[:i]",
+		ExpressionAttributeValues: map[string]*types.Item{":i": {N: new("-1")}},
+	})
+	require.NoError(t, err)
+
+	got, err = table.GetItem(key, "l", nil)
+	require.NoError(t, err)
+	require.Len(t, got.Projected["l"].L, 3)
+}

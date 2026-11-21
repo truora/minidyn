@@ -360,22 +360,22 @@ func evalNumberInfixExpression(operator string, left, right Object) Object {
 		return newError("right operand is not a number: %s", right.Type())
 	}
 
-	leftVal := leftNum.Value
-	rightVal := rightNum.Value
+	// Numbers are normalized, so equal text is equal value and only an ordering reads the digits.
+	if operator == "=" || operator == "<>" {
+		return nativeBoolToBooleanObject((leftNum.Text == rightNum.Text) == (operator == "="))
+	}
+
+	order := leftNum.decimal().Cmp(rightNum.decimal())
 
 	switch operator {
 	case "<":
-		return nativeBoolToBooleanObject(leftVal < rightVal)
+		return nativeBoolToBooleanObject(order < 0)
 	case "<=":
-		return nativeBoolToBooleanObject(leftVal <= rightVal)
+		return nativeBoolToBooleanObject(order <= 0)
 	case ">":
-		return nativeBoolToBooleanObject(leftVal > rightVal)
+		return nativeBoolToBooleanObject(order > 0)
 	case ">=":
-		return nativeBoolToBooleanObject(leftVal >= rightVal)
-	case "=":
-		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "<>":
-		return nativeBoolToBooleanObject(leftVal != rightVal)
+		return nativeBoolToBooleanObject(order >= 0)
 	default:
 		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
@@ -614,11 +614,24 @@ func setListValue(list *List, value Object, index int64) Object {
 	return UNDEFINED
 }
 
+// newNegativeListIndexError is minidyn's error for a placeholder list index below zero, which a
+// document path cannot address. DynamoDB Local rejects every placeholder index as a syntax
+// error, so there is no text of its own: the invalid document path message says what failed
+// and the detail says why.
+func newNegativeListIndexError(fieldID, path string) *Error {
+	return &Error{Message: types.WithDetail(invalidDocumentPathMessage,
+		"field id", fieldID, "path", path, "reason", "list index must not be negative")}
+}
+
 func (i indexAccessor) Set(container, val Object) Object {
 	switch c := container.(type) {
 	case *List:
 		pos, ok := i.val.(int64)
 		if i.kind == ObjectTypeList && ok {
+			if pos < 0 {
+				return newNegativeListIndexError(i.fieldID, i.pathSuffix)
+			}
+
 			return setListValue(c, val, pos)
 		}
 	case *Map:
@@ -771,7 +784,12 @@ func evalListIndexValue(node *Identifier, env *Environment) (int64, Object) {
 		return 0, newError("access index with [] only support N as index : got %q", obj.Type())
 	}
 
-	return int64(number.Value), nil
+	idx, ok := number.int64Value()
+	if !ok {
+		return 0, newError("access index with [] only support integers : got %q", number.Text)
+	}
+
+	return idx, nil
 }
 
 func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {
@@ -1169,7 +1187,7 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 			return obj
 		}
 
-		return addToTarget(obj, val, func(created Object) { env.Set(id.Value, created) })
+		return addToTarget(obj, val, func(created Object) Object { env.Set(id.Value, created); return UNDEFINED })
 	}
 
 	indexField, ok := node.Left.(*IndexExpression)
@@ -1184,22 +1202,23 @@ func evalActionAdd(node *ActionExpression, env *Environment) Object {
 			return errObj
 		}
 
-		// resolveNestedTarget only returns a target whose container matches the accessor, so
-		// Set cannot fail here.
-		return addToTarget(path.target, val, func(created Object) { _ = path.pos.Set(path.container, created) })
+		return addToTarget(path.target, val, func(created Object) Object { return path.pos.Set(path.container, created) })
 	}
 
 	return UNDEFINED
 }
 
-// addToTarget applies ADD of val to obj; create stores val when obj does not exist.
-func addToTarget(obj, val Object, create func(Object)) Object {
+// addToTarget applies ADD of val to obj; create stores val when obj does not exist and returns
+// an error object when the store is refused.
+func addToTarget(obj, val Object, create func(Object) Object) Object {
 	if obj == UNDEFINED {
 		if !isAddOperand(val) {
 			return newIncorrectAddOperandError(obj, val)
 		}
 
-		create(val)
+		if errObj := create(val); isError(errObj) {
+			return errObj
+		}
 
 		return obj
 	}
@@ -1412,17 +1431,26 @@ func evalInfixUpdate(node *InfixExpression, env *Environment) Object {
 			return errObj
 		}
 
-		return &Number{Value: augend.Value + addend.Value}
+		return resultOrError(sumNumbers(augend, addend))
 	case "-":
 		minuend, subtrahend, errObj := evalArithmeticTerms(node, env)
 		if isError(errObj) {
 			return errObj
 		}
 
-		return &Number{Value: minuend.Value - subtrahend.Value}
+		return resultOrError(subtractNumbers(minuend, subtrahend))
 	}
 
 	return newError("unknown operator: %s", node.Operator)
+}
+
+// resultOrError turns the result of an arithmetic helper into the Object evaluation returns.
+func resultOrError(n *Number, errObj *Error) Object {
+	if errObj != nil {
+		return errObj
+	}
+
+	return n
 }
 
 func evalAssignIndex(n Expression, i []int, val Object, env *Environment) Object {

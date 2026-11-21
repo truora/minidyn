@@ -132,6 +132,24 @@ func CheckProjection(expr string, aliases map[string]string) (*CheckedProjection
 	return &CheckedProjection{exprs: pp.exprs, aliases: aliases}, nil
 }
 
+// RootAttributes returns the top-level attributes the projection reads, once each, in order of
+// first appearance. It reads the parse CheckProjection kept, so it costs no new parse.
+func (c *CheckedProjection) RootAttributes() []string {
+	return language.RootAttributes(c.aliases, c.exprs...)
+}
+
+// FilterRootAttributes returns the top-level attributes a filter (or condition) expression
+// reads, once each, in order of first appearance. It reads the cached parse. An expression that
+// does not parse reads none: its syntax error is reported where the expression is evaluated.
+func FilterRootAttributes(expr string, aliases map[string]string) []string {
+	parsed := parseCondition(expr)
+	if len(parsed.errs) != 0 || parsed.conditional == nil {
+		return nil
+	}
+
+	return language.RootAttributes(aliases, parsed.conditional.Expression)
+}
+
 // Project evaluates a projection expression and returns a new attribute map containing only the requested paths.
 func (li *Language) Project(input ProjectInput) (map[string]*types.Item, error) {
 	checked, err := CheckProjection(input.Expression, input.Aliases)
@@ -160,6 +178,8 @@ func (li *Language) ProjectChecked(checked *CheckedProjection, itemIn map[string
 
 	out := map[string]*types.Item{}
 
+	var padded []*types.Item
+
 	for _, expr := range exprs {
 		result := language.Eval(expr, env)
 		if language.IsUndefinedObject(result) {
@@ -176,8 +196,10 @@ func (li *Language) ProjectChecked(checked *CheckedProjection, itemIn map[string
 		}
 
 		val := result.ToDynamoDB()
-		language.SetProjectedPath(out, path, val)
+		padded = append(padded, language.SetProjectedPath(out, path, val)...)
 	}
+
+	language.CompactPaddedLists(padded)
 
 	return out, nil
 }

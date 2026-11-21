@@ -35,7 +35,8 @@ type QueryInput struct {
 	Aliases          map[string]string
 	ScanIndexForward bool
 	Scan             bool
-	started          bool
+	// projection is ProjectionExpression, checked and parsed once by SearchData.
+	projection *interpreter.CheckedProjection
 }
 
 // Table struct to mock a dynamodb table
@@ -810,6 +811,54 @@ func (t *Table) validateKeyCondition(input QueryInput) error {
 	return nil
 }
 
+// validateFilterProjected rejects a Query on an index whose FilterExpression names attributes the
+// index does not project, as DynamoDB does, with the attributes sorted. A Scan has no such rule: its
+// filter reads the stored item.
+func (t *Table) validateFilterProjected(input QueryInput) error {
+	if input.Scan || input.FilterExpression == "" {
+		return nil
+	}
+
+	idx, ok := t.Indexes[input.Index]
+	if !ok {
+		return nil
+	}
+
+	missing := idx.unprojected(interpreter.FilterRootAttributes(input.FilterExpression, input.Aliases))
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return validationError(
+		fmt.Sprintf("One or more parameter values were invalid: Secondary index %s does not project one or more filter attributes: [%s]",
+			input.Index, strings.Join(missing, ", ")),
+		"index", input.Index,
+	)
+}
+
+// validateIndexProjection rejects a Query or Scan on a GSI whose ProjectionExpression names
+// attributes the index does not project, with the attributes sorted. A GSI cannot read the table, so
+// DynamoDB refuses the request, unlike an LSI (see index.readItem). It follows the Select checks.
+func (t *Table) validateIndexProjection(input QueryInput) error {
+	idx, ok := t.Indexes[input.Index]
+	if !ok || idx.typ != indexTypeGlobal || input.projection == nil {
+		return nil
+	}
+
+	missing := idx.unprojected(input.projection.RootAttributes())
+	if len(missing) == 0 {
+		return nil
+	}
+
+	// DynamoDB Local lists these in Java HashSet order (b, zz gives [zz, b]); minidyn sorts, a D1
+	// level-3 choice. The e2e normalizer sorts the list on both sides.
+	return validationError(
+		fmt.Sprintf("One or more parameter values were invalid: Global secondary index %s does not project [%s]",
+			input.Index, strings.Join(missing, ", ")),
+		"index", input.Index,
+	)
+}
+
 // errKeyConditionType is a key condition value whose type differs from the key attribute's.
 const errKeyConditionType = "One or more parameter values were invalid: Condition parameter type does not match schema type"
 
@@ -1007,7 +1056,8 @@ func (t *Table) fetchQueryData(input QueryInput) (idx *index, keys []string, pre
 //
 // An ExclusiveStartKey outside the partition (or missing key attributes) is not rejected,
 // unlike DynamoDB: consumers' tests rely on that leniency, so validating it is a separate,
-// release-noted change. Such a start key is never reached, so the page is empty.
+// release-noted change. A start key outside the partition skips every key, so the page is empty
+// (see skipToStartKey). One inside it need not be an existing item (#258).
 func (t *Table) checkSeek(input QueryInput, idx *index, keys []string) error {
 	if len(keys) != 0 {
 		return nil
@@ -1083,24 +1133,48 @@ func keysWithPrefix(keys []string, prefix string) []string {
 	return keys[lo : lo+n]
 }
 
-func prepareSearch(input *QueryInput, index *index, k, startKey string) (string, bool) {
-	pk, ok := getPrimaryKey(index, k)
-	if !ok {
-		return pk, ok
+// skipToStartKey returns how many of keys the search skips to resume after the
+// ExclusiveStartKey, whose encoded table key is startKey (#258). The start key need not
+// belong to an item: the search resumes at the first key after it, in the direction of the
+// walk. The encoded keys keep DynamoDB's order, so they are compared, never parsed.
+//
+// prefix is empty when the search is not seeked, and then matches every key. A start key
+// outside the queried partition skips every key, the empty page that checkSeek describes.
+func (t *Table) skipToStartKey(input QueryInput, idx *index, keys []string, prefix, startKey string) int {
+	forward := input.ScanIndexForward
+
+	if idx != nil {
+		startIK, ok := t.startIndexKey(idx, input.ExclusiveStartKey, startKey)
+		if !ok || !strings.HasPrefix(startIK, prefix) {
+			return len(keys)
+		}
+
+		return idx.skipPast(startKey, startIK, forward)
 	}
 
-	if input.started {
-		return pk, true
+	if !strings.HasPrefix(startKey, prefix) {
+		return len(keys)
 	}
 
-	if pk == startKey {
-		input.started = true
-	}
+	pos := sort.SearchStrings(keys, startKey)
 
-	return "", false
+	return skipped(pos, pos < len(keys) && keys[pos] == startKey, len(keys), forward)
 }
 
-func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string, idx *index) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool, error) {
+// startIndexKey returns the encoded index key of an ExclusiveStartKey. A start key without
+// the index key attributes (DynamoDB rejects it, minidyn never did) takes the index key
+// of the item it names, if there is one.
+func (t *Table) startIndexKey(idx *index, start map[string]*types.Item, startKey string) (string, bool) {
+	if indexKey, err := idx.keySchema.GetKey(t.AttributesDef, start); err == nil && indexKey != "" {
+		return indexKey, true
+	}
+
+	indexKey, ok := idx.refs[startKey]
+
+	return indexKey, ok
+}
+
+func (t *Table) getMatchedItemAndCount(input *QueryInput, pk string, idx *index) (map[string]*types.Item, map[string]*types.Item, interpreter.ExpressionType, bool, error) {
 	storedItem, ok := t.Data[pk]
 
 	lastMatchExpressionType, matched, err := t.matchKey(*input, storedItem)
@@ -1110,21 +1184,17 @@ func (t *Table) getMatchedItemAndCount(input *QueryInput, pk, startKey string, i
 
 	fullCopy := copyItem(storedItem)
 
-	if !ok || !input.started || !matched {
+	if !ok || !matched {
 		return fullCopy, fullCopy, lastMatchExpressionType, false, nil
 	}
 
 	baseItem := storedItem
 	if idx != nil {
-		baseItem = idx.ProjectItem(storedItem)
+		baseItem = idx.readItem(storedItem, *input)
 	}
 
-	if input.ProjectionExpression != "" {
-		projected, err := t.LangInterpreter.Project(interpreter.ProjectInput{
-			Expression: input.ProjectionExpression,
-			Item:       baseItem,
-			Aliases:    input.Aliases,
-		})
+	if input.projection != nil {
+		projected, err := t.LangInterpreter.ProjectChecked(input.projection, baseItem)
 		if err != nil {
 			return nil, nil, lastMatchExpressionType, false, err
 		}
@@ -1173,6 +1243,14 @@ type SearchResult struct {
 	ScannedCount int64
 }
 
+// checkProjection validates the ProjectionExpression and keeps its parse for the items.
+func (in *QueryInput) checkProjection() error {
+	projection, err := checkProjection(in.ProjectionExpression, in.Aliases)
+	in.projection = projection
+
+	return err
+}
+
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
 	if err := t.ValidateSearchIndex(input.Index); err != nil {
@@ -1191,19 +1269,32 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		return SearchResult{}, err
 	}
 
+	// DynamoDB checks the projection's syntax and names before the key condition.
+	if err := input.checkProjection(); err != nil {
+		return SearchResult{}, err
+	}
+
 	if err := t.validateKeyCondition(input); err != nil {
 		return SearchResult{}, err
 	}
 
-	// DynamoDB reports Select after the key condition.
+	if err := t.validateFilterProjected(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	// DynamoDB reports Select after the key condition and the filter attributes.
 	if err := t.validateSelect(input); err != nil {
+		return SearchResult{}, err
+	}
+
+	if err := t.validateIndexProjection(input); err != nil {
 		return SearchResult{}, err
 	}
 
 	items := []map[string]*types.Item{}
 	limit := input.Limit
 	exclusiveStartKey := input.ExclusiveStartKey
-	index, sortedKeys, _, seeked := t.fetchQueryData(input)
+	index, sortedKeys, prefix, seeked := t.fetchQueryData(input)
 
 	if seeked {
 		if err := t.checkSeek(input, index, sortedKeys); err != nil {
@@ -1216,7 +1307,11 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 		return SearchResult{}, err
 	}
 
-	input.started = startKey == ""
+	skip := 0
+	if startKey != "" {
+		skip = t.skipToStartKey(input, index, sortedKeys, prefix, startKey)
+	}
+
 	last := map[string]*types.Item{}
 	sortedKeysSize := int64(len(sortedKeys))
 
@@ -1224,19 +1319,19 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 
 	var (
 		count   int64
-		scanned int64
+		scanned = int64(skip)
 	)
 
-	for pos := range sortedKeys {
+	for pos := skip; pos < len(sortedKeys); pos++ {
 		k := GetKeyAt(sortedKeys, sortedKeysSize, int64(pos), forward)
 
-		pk, ok := prepareSearch(&input, index, k, startKey)
+		pk, ok := getPrimaryKey(index, k)
 		if !ok {
 			scanned++
 			continue
 		}
 
-		item, keyItem, expressionType, matched, gerr := t.getMatchedItemAndCount(&input, pk, startKey, index)
+		item, keyItem, expressionType, matched, gerr := t.getMatchedItemAndCount(&input, pk, index)
 		if gerr != nil {
 			return SearchResult{}, types.NewError("ValidationException", gerr.Error(), nil)
 		}

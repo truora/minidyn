@@ -135,7 +135,7 @@ func objectSize(args ...Object) Object {
 	path := args[0]
 
 	if sizable, ok := path.(SizableObject); ok {
-		return &Number{Value: float64(sizable.Size())}
+		return newNumberFromInt(sizable.Size())
 	}
 
 	return UNDEFINED

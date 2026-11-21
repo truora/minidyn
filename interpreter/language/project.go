@@ -2,7 +2,9 @@ package language
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/truora/minidyn/types"
 )
@@ -48,6 +50,58 @@ func ExtractPath(n Expression, env *Environment) ([]PathElement, error) {
 		return extractPathFromIndex(node, env)
 	default:
 		return nil, fmt.Errorf("projection path: unsupported expression %T", n)
+	}
+}
+
+// RootAttributes returns the top-level attribute each document path in the expressions starts
+// at, once each and in order of first appearance, with expression attribute names resolved
+// through aliases. Value placeholders and function names are not attributes. It only reads the
+// tree, so it works before any item is read.
+func RootAttributes(aliases map[string]string, exprs ...Expression) []string {
+	var roots []string
+
+	seen := map[string]bool{}
+
+	for _, e := range exprs {
+		collectRoots(e, aliases, func(name string) {
+			if !seen[name] {
+				seen[name] = true
+				roots = append(roots, name)
+			}
+		})
+	}
+
+	return roots
+}
+
+func collectRoots(e Expression, aliases map[string]string, visit func(string)) {
+	switch node := e.(type) {
+	case *Identifier:
+		if !strings.HasPrefix(node.Value, ":") {
+			visit(resolvePathName(node.Value, &Environment{Aliases: aliases}))
+		}
+	case *IndexExpression:
+		// Only the root of a path is an attribute of the item: the index is a segment.
+		collectRoots(node.Left, aliases, visit)
+	case *CallExpression:
+		for _, arg := range node.Arguments {
+			collectRoots(arg, aliases, visit)
+		}
+	case *PrefixExpression:
+		collectRoots(node.Right, aliases, visit)
+	case *InfixExpression:
+		collectRoots(node.Left, aliases, visit)
+		collectRoots(node.Right, aliases, visit)
+	case *BetweenExpression:
+		collectRoots(node.Left, aliases, visit)
+		collectRoots(node.Range[0], aliases, visit)
+		collectRoots(node.Range[1], aliases, visit)
+	case *InExpression:
+		collectRoots(node.Left, aliases, visit)
+
+		for _, r := range node.Range {
+			collectRoots(r, aliases, visit)
+		}
 	}
 }
 
@@ -109,7 +163,12 @@ func extractPathListIndex(idxExpr Expression, env *Environment) (int64, error) {
 		return 0, fmt.Errorf("projection path: list index must be a number")
 	}
 
-	return int64(number.Value), nil
+	idx, ok := number.int64Value()
+	if !ok {
+		return 0, fmt.Errorf("projection path: list index must be an integer")
+	}
+
+	return idx, nil
 }
 
 // LookupProjectedPath returns the value path resolves to in source, the read counterpart of
@@ -144,20 +203,24 @@ func LookupProjectedPath(source map[string]*types.Item, path []PathElement) (*ty
 
 // SetProjectedPath writes val into target following path, creating nested M and L containers as needed.
 // The first segment must be a map key (DynamoDB top-level attributes are maps).
-func SetProjectedPath(target map[string]*types.Item, path []PathElement, val types.Item) {
+//
+// A list index past the end of a list pads it with nil holes for the elements the projection
+// does not select. SetProjectedPath returns the list items it padded; pass them to
+// CompactPaddedLists once every path is set.
+func SetProjectedPath(target map[string]*types.Item, path []PathElement, val types.Item) []*types.Item {
 	if len(path) == 0 {
-		return
+		return nil
 	}
 
 	if path[0].Kind != PathKindMapKey {
-		return
+		return nil
 	}
 
 	if len(path) == 1 {
 		copyVal := val
 		target[path[0].Key] = &copyVal
 
-		return
+		return nil
 	}
 
 	key := path[0].Key
@@ -168,29 +231,37 @@ func SetProjectedPath(target map[string]*types.Item, path []PathElement, val typ
 		target[key] = node
 	}
 
-	setProjectedPathNested(node, path[1:], val)
+	return setProjectedPathNested(node, path[1:], val)
 }
 
-func setProjectedPathNested(cur *types.Item, path []PathElement, val types.Item) {
-	if len(path) == 0 {
-		return
-	}
-
-	switch path[0].Kind {
-	case PathKindMapKey:
-		setNestedMapSegment(cur, path, val)
-	case PathKindListIndex:
-		setNestedListSegment(cur, path, val)
+// CompactPaddedLists drops the nil holes of the lists SetProjectedPath padded, so a projection
+// holds only the selected elements, in list order, as DynamoDB returns them. The projected tree
+// is built from copies of the evaluated values, never from the stored item, so no list shares
+// memory with it. A nil element is therefore always a hole SetProjectedPath padded; a selected
+// NULL is a non-nil element. Compacting a list twice is harmless.
+func CompactPaddedLists(lists []*types.Item) {
+	for _, list := range lists {
+		list.L = slices.DeleteFunc(list.L, func(el *types.Item) bool { return el == nil })
 	}
 }
 
-func setNestedMapSegment(cur *types.Item, path []PathElement, val types.Item) {
+// setProjectedPathNested writes the rest of a path, which always has at least one segment: the
+// map and list setters stop at their last one.
+func setProjectedPathNested(cur *types.Item, path []PathElement, val types.Item) []*types.Item {
+	if path[0].Kind == PathKindListIndex {
+		return setNestedListSegment(cur, path, val)
+	}
+
+	return setNestedMapSegment(cur, path, val)
+}
+
+func setNestedMapSegment(cur *types.Item, path []PathElement, val types.Item) []*types.Item {
 	if len(path) == 1 {
 		ensureItemMap(cur)
 		copyVal := val
 		cur.M[path[0].Key] = &copyVal
 
-		return
+		return nil
 	}
 
 	ensureItemMap(cur)
@@ -201,13 +272,19 @@ func setNestedMapSegment(cur *types.Item, path []PathElement, val types.Item) {
 		cur.M[path[0].Key] = child
 	}
 
-	setProjectedPathNested(child, path[1:], val)
+	return setProjectedPathNested(child, path[1:], val)
 }
 
-func setNestedListSegment(cur *types.Item, path []PathElement, val types.Item) {
+func setNestedListSegment(cur *types.Item, path []PathElement, val types.Item) []*types.Item {
 	ensureItemList(cur)
 
 	idx := int(path[0].Index)
+
+	var padded []*types.Item
+
+	if idx > len(cur.L) {
+		padded = append(padded, cur)
+	}
 
 	for len(cur.L) <= idx {
 		cur.L = append(cur.L, nil)
@@ -221,10 +298,10 @@ func setNestedListSegment(cur *types.Item, path []PathElement, val types.Item) {
 		copyVal := val
 		cur.L[idx] = &copyVal
 
-		return
+		return padded
 	}
 
-	setProjectedPathNested(cur.L[idx], path[1:], val)
+	return append(padded, setProjectedPathNested(cur.L[idx], path[1:], val)...)
 }
 
 func ensureItemMap(cur *types.Item) {

@@ -42,4 +42,5 @@ After implementation, invoke the **qa-engineer** sub-agent (see `.agents/agents/
 - **Never** modify `e2e/` tests to make them pass — they are parity references only
 - `server/requests.go` is generated — run `go run ./tools/generate_requests` when input shapes change
 - Every package must contain a `doc.go` file
+- **Architectural changes require an ADR** in the same pull request: a new or changed decision in `docs/architecture.md`, a new package, layer or front end, a new runtime dependency, a breaking API change, or a deliberate divergence from DynamoDB. Name it `docs/adr/YYYY-MM-DD-short-title.md` using the creation date (no sequence numbers). Sections: Title, Status, Context, Decision, Consequences. See [`docs/adr/README.md`](docs/adr/README.md).
 - Error messages start with DynamoDB's exact text; minidyn-only detail goes after ` | ` via `types.WithDetail` / `types.Detail` (see D4 in [`docs/architecture.md`](docs/architecture.md)). The parity normalizer strips from the last ` | `.

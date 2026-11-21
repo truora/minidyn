@@ -359,6 +359,38 @@ func TestLanguageProject(t *testing.T) {
 	}
 }
 
+func TestFilterRootAttributes(t *testing.T) {
+	t.Parallel()
+
+	aliases := map[string]string{"#n": "real"}
+
+	if diff := cmp.Diff([]string{"real", "b"}, FilterRootAttributes("#n = :v AND b.c > :w", aliases)); diff != "" {
+		t.Fatal(diff)
+	}
+
+	// An expression that does not parse reads no attribute: the syntax error is reported elsewhere.
+	if got := FilterRootAttributes("a = ", aliases); got != nil {
+		t.Fatalf("got %v, want none", got)
+	}
+
+	if got := FilterRootAttributes("", aliases); got != nil {
+		t.Fatalf("got %v, want none", got)
+	}
+}
+
+func TestCheckedProjectionRootAttributes(t *testing.T) {
+	t.Parallel()
+
+	checked, err := CheckProjection("#n, a.b, a[0], c", map[string]string{"#n": "real"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff([]string{"real", "a", "c"}, checked.RootAttributes()); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
 func TestLanguageProject_skipsMissingPath(t *testing.T) {
 	t.Parallel()
 
@@ -443,5 +475,55 @@ func TestLanguageProject_skipsPathThroughOtherTypes(t *testing.T) {
 
 	if len(out) != 1 || out["id"] == nil {
 		t.Fatalf("expected only id, got=%v", out)
+	}
+}
+
+// Projecting a list element returns a list holding only the selected elements, in list order;
+// a path past the end of the list, or through a missing list, is left out (#262).
+func TestLanguageProject_listElements(t *testing.T) {
+	t.Parallel()
+
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+	list := func(vs ...string) *types.Item {
+		l := &types.Item{L: []*types.Item{}}
+		for _, v := range vs {
+			l.L = append(l.L, s(v))
+		}
+
+		return l
+	}
+
+	item := map[string]*types.Item{
+		"l":    list("x", "y", "z"),
+		"sh":   list("x"),
+		"nest": {L: []*types.Item{list("p"), list("q", "r")}},
+	}
+
+	tests := map[string]struct {
+		expression string
+		want       map[string]*types.Item
+	}{
+		"element":          {"l[1]", map[string]*types.Item{"l": list("y")}},
+		"in list order":    {"l[2], l[0]", map[string]*types.Item{"l": list("x", "z")}},
+		"too short":        {"sh[1]", map[string]*types.Item{}},
+		"past the end":     {"l[5]", map[string]*types.Item{}},
+		"missing list":     {"nope[1]", map[string]*types.Item{}},
+		"nested element":   {"nest[1][1]", map[string]*types.Item{"nest": {L: []*types.Item{list("r")}}}},
+		"with other paths": {"l[1], sh[0]", map[string]*types.Item{"l": list("y"), "sh": list("x")}},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := (&Language{}).Project(ProjectInput{Expression: tt.expression, Item: item})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(tt.want, out); diff != "" {
+				t.Fatal(diff)
+			}
+		})
 	}
 }

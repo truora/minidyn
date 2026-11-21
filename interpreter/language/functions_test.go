@@ -133,11 +133,11 @@ func TestBeginsWithMismatchedTypesIsFalse(t *testing.T) {
 	cases := map[string][]Object{
 		"string_path_binary_operand": {str, bin},
 		"binary_path_string_operand": {bin, str},
-		"number_path":                {&Number{Value: 5}, str},
+		"number_path":                {&Number{Text: "5"}, str},
 		"null_path":                  {&Null{}, str},
 		"missing_path":               {UNDEFINED, str},
 		"list_path":                  {&List{}, str},
-		"number_operand":             {str, &Number{Value: 5}},
+		"number_operand":             {str, &Number{Text: "5"}},
 		"missing_operand":            {str, UNDEFINED},
 	}
 
@@ -190,13 +190,13 @@ func TestContainsMismatchedTypesIsFalse(t *testing.T) {
 
 	cases := map[string][]Object{
 		"string_path_binary_operand": {str, &Binary{Value: []byte{'j'}}},
-		"string_path_number_operand": {str, &Number{Value: 1}},
-		"number_path":                {&Number{Value: 5}, str},
+		"string_path_number_operand": {str, &Number{Text: "1"}},
+		"number_path":                {&Number{Text: "5"}, str},
 		"null_path":                  {&Null{}, str},
 		"missing_path":               {UNDEFINED, str},
 		"map_path":                   {&Map{Value: map[string]Object{}}, str},
 		"bool_path":                  {TRUE, str},
-		"set_path_wrong_operand":     {&StringSet{Value: map[string]bool{"a": true}}, &Number{Value: 1}},
+		"set_path_wrong_operand":     {&StringSet{Value: map[string]bool{"a": true}}, &Number{Text: "1"}},
 	}
 
 	for name, args := range cases {
@@ -240,7 +240,7 @@ func TestObjectSize(t *testing.T) {
 		t.Fatalf("string set size expected=2, actual=%s", size.Inspect())
 	}
 
-	ns := &NumberSet{Value: map[float64]bool{1: true, 2: true}}
+	ns := &NumberSet{Value: map[string]bool{"1": true, "2": true}}
 	size = objectSize(ns)
 	if size.Inspect() != "2" {
 		t.Fatalf("number set size expected=2, actual=%s", size.Inspect())
@@ -253,7 +253,7 @@ func TestObjectSize(t *testing.T) {
 	}
 
 	// A value without size, or a missing one, has no size: comparing it is false.
-	for _, obj := range []Object{TRUE, &Null{}, UNDEFINED, &Number{Value: 1}} {
+	for _, obj := range []Object{TRUE, &Null{}, UNDEFINED, &Number{Text: "1"}} {
 		if size := objectSize(obj); !isUndefined(size) {
 			t.Fatalf("no size expected for %s, got=%s", obj.Inspect(), size.Inspect())
 		}

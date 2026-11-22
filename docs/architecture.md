@@ -64,6 +64,13 @@ types     (internal item form types.Item, errors, types.WithDetail)
 `Native` is a hook for users to override evaluation. minidyn's own behavior
 never goes through it.
 
+ADRs for the layers:
+
+- [`2021-08-02-interpret-dynamodb-expressions-with-a-hand-written-lexer-parser-and-evaluator.md`](adr/2021-08-02-interpret-dynamodb-expressions-with-a-hand-written-lexer-parser-and-evaluator.md)
+- [`2022-09-23-keep-core-and-interpreter-free-of-aws-sdk-types.md`](adr/2022-09-23-keep-core-and-interpreter-free-of-aws-sdk-types.md)
+- [`2025-12-22-expose-minidyn-as-an-http-server-for-the-dynamodb-json-api.md`](adr/2025-12-22-expose-minidyn-as-an-http-server-for-the-dynamodb-json-api.md)
+- [`2026-05-06-support-only-aws-sdk-go-v2.md`](adr/2026-05-06-support-only-aws-sdk-go-v2.md)
+
 ## 2. Decisions
 
 ### D1. DynamoDB's documented behavior is the reference
@@ -536,6 +543,7 @@ and the rejected alternatives. Link the ADR from the entry. Keep each entry in
 this shape:
 
 - **Decision**, **Why** and **Check**;
+- **ADR**, linking the record of the decision;
 - "On `main`" when the current state needs saying;
 - "**Lands with #PR**" or "**Gap (#issue)**" for what is still open.
 

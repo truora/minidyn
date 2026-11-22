@@ -92,6 +92,9 @@ type ValueError struct {
 	top       bool
 	// index is the position of a null element of a list.
 	index int
+	// numberSet and binarySet mark the duplicate of a Number or Binary Set, which Local words
+	// differently for the value of an expression.
+	numberSet, binarySet bool
 }
 
 // message is DynamoDB's text.
@@ -151,8 +154,16 @@ type expressionValueError struct {
 
 func (e *expressionValueError) Error() string {
 	text := e.value.message()
-	if e.value.kind == kindNullValue && e.value.top {
+
+	switch {
+	case e.value.kind == kindNullValue && e.value.top:
 		text = nullAttributeValueText
+	case e.value.kind == kindDuplicate && e.value.numberSet:
+		text = "Input collection contains duplicates"
+	case e.value.kind == kindDuplicate && e.value.binarySet:
+		text = "One or more parameter values were invalid: Input collection of type BS contains duplicates."
+	case e.value.kind == kindDuplicate:
+		text = strings.TrimSuffix(text, ".")
 	}
 
 	return "ExpressionAttributeValues contains invalid value: " + text + " for key " + e.key + e.value.detail()
@@ -272,7 +283,10 @@ func validateNumberSet(ns []*string) *ValueError {
 				parts[i] = StringValue(q)
 			}
 
-			return duplicateCollectionError(parts)
+			ve := duplicateCollectionError(parts)
+			ve.numberSet = true
+
+			return ve
 		}
 
 		seen[v] = struct{}{}
@@ -294,7 +308,10 @@ func validateBinarySet(bs [][]byte) *ValueError {
 	for i := range bs {
 		for j := i + 1; j < len(bs); j++ {
 			if bytes.Equal(bs[i], bs[j]) {
-				return duplicateCollectionError(parts)
+				ve := duplicateCollectionError(parts)
+				ve.binarySet = true
+
+				return ve
 			}
 		}
 	}

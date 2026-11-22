@@ -456,6 +456,7 @@ func mapDynamoToTypesQueryInput(input *dynamodb.QueryInput, indexName string) co
 	}
 
 	output.Select = string(input.Select)
+	output.ConsistentRead = aws.ToBool(input.ConsistentRead)
 
 	if input.ProjectionExpression != nil {
 		output.ProjectionExpression = aws.ToString(input.ProjectionExpression)

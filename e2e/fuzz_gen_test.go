@@ -673,6 +673,10 @@ func (g *fuzzGen) query() fuzzOp {
 
 	g.readOptions(e, &in.FilterExpression, &in.Limit)
 
+	if g.chance(0.2) {
+		in.ConsistentRead = aws.Bool(true)
+	}
+
 	if onIndex {
 		in.Limit = nil // items with equal index keys have no defined order
 	}
@@ -718,6 +722,11 @@ func (g *fuzzGen) scan() fuzzOp {
 	var noLimit *int32
 
 	g.readOptions(e, &in.FilterExpression, &noLimit)
+
+	if g.chance(0.2) {
+		in.ConsistentRead = aws.Bool(true)
+	}
+
 	in.ProjectionExpression = g.projection(e)
 	in.ExpressionAttributeNames = e.namesOrNil()
 	in.ExpressionAttributeValues = e.valuesOrNil()

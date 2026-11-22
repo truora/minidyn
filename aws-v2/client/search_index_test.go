@@ -92,3 +92,65 @@ func TestQueryAndScanMissingTableBeforeUnusedName(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "ResourceNotFoundException")
 }
+
+// ConsistentRead true on a GSI is rejected for a Query and a Scan, and the flag reaches core
+// from the front end. A Scan reports it ahead of its unused names, a Query after them.
+func TestQueryAndScanConsistentReadOnGSI(t *testing.T) {
+	c := require.New(t)
+	client := setupClient(tableName)
+	ctx := context.Background()
+
+	c.NoError(ensurePokemonTable(client))
+	c.NoError(ensurePokemonTypeIndex(client))
+	c.NoError(createPokemon(client, pokemon{ID: "001", Type: "grass", Name: "Bulbasaur"}))
+
+	const want = "Consistent reads are not supported on global secondary indexes | index: by-type"
+
+	value := func(v string) map[string]dynamodbtypes.AttributeValue {
+		return map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: v}}
+	}
+	query := func(index string, consistent *bool) *dynamodb.QueryInput {
+		in := &dynamodb.QueryInput{
+			TableName:                 aws.String(tableName),
+			KeyConditionExpression:    aws.String("id = :v"),
+			ExpressionAttributeValues: value("001"),
+			ConsistentRead:            consistent,
+		}
+
+		if index != "" {
+			in.IndexName = aws.String(index)
+			in.KeyConditionExpression = aws.String("#t = :v")
+			in.ExpressionAttributeNames = map[string]string{"#t": "type"}
+			in.ExpressionAttributeValues = value("grass")
+		}
+
+		return in
+	}
+
+	_, err := client.Query(ctx, query("by-type", aws.Bool(true)))
+	requireValidationError(t, err, want)
+
+	_, err = client.Query(ctx, query("by-type", aws.Bool(false)))
+	c.NoError(err)
+
+	_, err = client.Query(ctx, query("by-type", nil))
+	c.NoError(err)
+
+	_, err = client.Query(ctx, query("", aws.Bool(true)))
+	c.NoError(err)
+
+	_, err = client.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String(tableName), IndexName: aws.String("by-type"), ConsistentRead: aws.Bool(true)})
+	requireValidationError(t, err, want)
+
+	_, err = client.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String(tableName), IndexName: aws.String("by-type"), ConsistentRead: aws.Bool(true),
+		ExpressionAttributeNames: map[string]string{"#u": "id"},
+	})
+	requireValidationError(t, err, want)
+
+	_, err = client.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String(tableName), IndexName: aws.String("by-type"), ConsistentRead: aws.Bool(false)})
+	c.NoError(err)
+
+	_, err = client.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String(tableName), ConsistentRead: aws.Bool(true)})
+	c.NoError(err)
+}

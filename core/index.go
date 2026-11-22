@@ -23,6 +23,7 @@ const (
 	msgOneUpdatePerName   = "Only one global secondary index update per index is allowed simultaneously."
 	msgIndexExists        = "Attempting to create an index which already exists"
 	msgNoSuchIndex        = "The table does not have the specified index: "
+	msgGSIConsistentRead  = "Consistent reads are not supported on global secondary indexes"
 	msgIndexLimit         = "Subscriber limit exceeded: Only 1 online index can be created or deleted simultaneously per table"
 )
 
@@ -419,4 +420,17 @@ func (i *index) getPrimaryKey(indexKey string) (string, bool) {
 
 func (i *index) count() int64 {
 	return int64(len(i.sortedKeys))
+}
+
+// ValidateConsistentRead rejects ConsistentRead true on a GSI, which DynamoDB serves from an
+// eventually consistent copy. The table and an LSI accept it, and an unknown index is
+// ValidateSearchIndex's to report. The error comes right after the unknown index for a Scan,
+// so the front ends call it ahead of their pre-check of the expression attributes; a Query
+// reports it after the placeholders, where SearchData runs it.
+func (t *Table) ValidateConsistentRead(name string, consistentRead bool) error {
+	if _, ok := t.globalIndex(name); consistentRead && ok {
+		return validationError(msgGSIConsistentRead, "index", name)
+	}
+
+	return nil
 }

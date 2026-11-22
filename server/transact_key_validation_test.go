@@ -32,7 +32,7 @@ func TestServerTransactInvalidKeys(t *testing.T) {
 		{"ExtraAttribute", map[string]ddbtypes.AttributeValue{"id": s("1"), "x": s("2")}, "The number of conditions on the keys is invalid | expected keys: 1; got keys: 2"},
 		{"NotTheKeyAttribute", map[string]ddbtypes.AttributeValue{"zzz": s("1")}, "One of the required keys was not given a value | missing: hash key"},
 		{"WrongType", map[string]ddbtypes.AttributeValue{"id": n("1")}, "One or more parameter values were invalid: Type mismatch for key | field: id; expected: S; actual: N"},
-		{"InvalidNumber", map[string]ddbtypes.AttributeValue{"id": n("abc")}, "One or more parameter values were invalid: Type mismatch for key | field: id; expected: S; actual: N"},
+		{"InvalidNumber", map[string]ddbtypes.AttributeValue{"id": n("abc")}, "A value provided cannot be converted into a number | path: id; number: abc"},
 		{"EmptyString", map[string]ddbtypes.AttributeValue{"id": s("")}, "One or more parameter values are not valid. The AttributeValue for a key attribute cannot contain an empty string value. Key: id"},
 	}
 

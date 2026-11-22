@@ -23,6 +23,13 @@ const (
 )
 
 var (
+	// ErrInvalidNumber is DynamoDB Local's error for text that is not a number, or whose exponent
+	// text doesn't fit in 32 bits.
+	ErrInvalidNumber = errors.New("A value provided cannot be converted into a number") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
+	// ErrNumberPrecision is DynamoDB's error for a number of more than 38 significant digits.
+	ErrNumberPrecision = errors.New("DynamoDB only supports precision up to 38 digits") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
 	// ErrNumberOverflow is DynamoDB's error for a number whose magnitude is above 9.99...E+125.
 	ErrNumberOverflow = errors.New("Number overflow. Attempting to store a number with magnitude larger than supported range") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
@@ -94,6 +101,37 @@ func onlyDigits(s string) bool {
 	}
 
 	return true
+}
+
+// ParseNumber reads an N value the way DynamoDB accepts it for storage: ParseDecimal, then at
+// most MaxNumberDigits significant digits (trailing zeros don't count), then the range. The
+// error is ErrInvalidNumber, ErrNumberPrecision, ErrNumberOverflow or ErrNumberUnderflow, in
+// that order of precedence: 39 digits with an overflowing exponent is a precision error.
+func ParseNumber(s string) (Decimal, error) {
+	d, ok := ParseDecimal(s)
+	if !ok {
+		return Decimal{}, ErrInvalidNumber
+	}
+
+	if len(d.Digits) > MaxNumberDigits {
+		return Decimal{}, ErrNumberPrecision
+	}
+
+	return d, d.CheckRange()
+}
+
+// ValidateNumber returns the error ParseNumber would for s, or nil, without parsing a number
+// that is plain and short enough to be in range (the usual case).
+func ValidateNumber(s string) error {
+	// A plain number of at most MaxNumberDigits characters has at most that many digits, and
+	// its magnitude is between 1E-37 and 1E+38.
+	if len(s) <= MaxNumberDigits && isPlainNumber(s) {
+		return nil
+	}
+
+	_, err := ParseNumber(s)
+
+	return err
 }
 
 // CheckRange accepts the magnitudes DynamoDB stores, 1E-130 to 9.99...E+125, and zero. Otherwise

@@ -118,6 +118,15 @@ never goes through it.
     `ConsistentRead`, and ahead of the front ends' pre-check of the
     expression attributes (`Table.ValidateSearchIndex`). Local checks the
     Query `Limit` (#242) before the index;
+  - the N values DynamoDB cannot store (#226, #273): not a number, out of range, or
+    over 38 digits, in any item, key, set member or expression value
+    (`types.ValidateItemMap`, `types.ValidateExpressionAttributeValues`, which
+    use `types.ParseNumber`). They come before the other problems of the item or
+    key. For UpdateItem and DeleteItem the shape and type of the key come before
+    the numbers of the expression values. A transaction checks every operation
+    first (`core.ValidateWriteValues`), and a batch write every request
+    (`core.ValidateBatchWrite`). See
+    [`docs/adr/2026-11-22-validate-number-values-on-every-write.md`](adr/2026-11-22-validate-number-values-on-every-write.md);
   - undeclared `#names`, then undefined `:values` (#190). Across all of a
     request's expressions an undeclared name comes before an undefined value;
     an UpdateExpression comes before a ConditionExpression; and, for undefined

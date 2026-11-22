@@ -61,29 +61,13 @@ func appendEscaped[T ~string | ~[]byte](dst []byte, b T) []byte {
 	return append(dst, 0x00, 0x01)
 }
 
-// parseDecimal splits a number into its sign, its significant digits (no leading or trailing
-// zeros) and the exponent e such that the value is 0.digits * 10^e. No digits means zero. It
-// returns ErrInvalidNumber when s is not a number or its exponent text doesn't fit in 32 bits,
-// which is where DynamoDB stops treating it as a number.
-func parseDecimal(s string) (neg bool, digits string, exp int, err error) {
-	d, ok := types.ParseDecimal(s)
-	if !ok {
-		return false, "", 0, ErrInvalidNumber
-	}
-
-	return d.Neg, d.Digits, d.Exp, nil
-}
-
 func appendNumber(dst []byte, field, s string) ([]byte, error) {
-	neg, digits, exp, err := parseDecimal(s)
-	if err == nil {
-		err = types.Decimal{Neg: neg, Digits: digits, Exp: exp}.CheckRange()
-	}
-
+	d, err := types.ParseNumber(s)
 	if err != nil {
 		return nil, fmt.Errorf("%w%s", err, types.Detail("field", field, "number", s))
 	}
 
+	neg, digits, exp := d.Neg, d.Digits, d.Exp
 	if digits == "" {
 		return append(dst, numberZero), nil
 	}

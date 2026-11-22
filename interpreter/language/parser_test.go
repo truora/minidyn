@@ -87,7 +87,7 @@ func TestParsingIndexExpressions(t *testing.T) {
 		left     any
 		indexVal any
 	}{
-		{"a[:i]", "a", ":i"},
+		{"a[2]", "a", "2"},
 		{"#a[1]", "#a", "1"},
 		{"#a[1][2]", "(#a[1])", "2"},
 		{"a.f", "a", "f"},
@@ -579,6 +579,83 @@ func BenchmarkParser(b *testing.B) {
 
 		if len(p.errors) != 0 {
 			b.Fatal("errors found")
+		}
+	}
+}
+
+// A list index is a literal: DynamoDB rejects a placeholder or a name between the brackets as a
+// syntax error that names the token (#164). Every parser reports it at parse time, as the first
+// error, so the cached parse carries it and no expression has to be evaluated to find it.
+func TestParsingRejectsNonLiteralListIndex(t *testing.T) {
+	t.Parallel()
+
+	parsers := map[string]func(string) []string{
+		"condition": func(s string) []string {
+			p := NewParser(NewLexer(s))
+			p.ParseConditionalExpression()
+
+			return p.Errors()
+		},
+		"update": func(s string) []string {
+			p := NewUpdateParser(NewLexer(s))
+			p.ParseUpdateExpression()
+
+			return p.Errors()
+		},
+		"projection": func(s string) []string {
+			p := NewParser(NewLexer(s))
+			p.ParseProjectionExpression()
+
+			return p.Errors()
+		},
+	}
+
+	cases := []struct {
+		kinds []string
+		input string
+		token string
+	}{
+		{[]string{"condition", "projection"}, "l[:i] = :v", ":i"},
+		{[]string{"update"}, "SET l[:i] = :v", ":i"},
+		{[]string{"update"}, "SET l[#n] = :v", "#n"},
+		{[]string{"update"}, "REMOVE l[:i]", ":i"},
+		{[]string{"update"}, "SET x = l[:i]", ":i"},
+		{[]string{"update"}, "SET m.l[:i] = :v", ":i"},
+		{[]string{"update"}, "SET l[:i].m = :v", ":i"},
+		{[]string{"update"}, "SET l[0][:i] = :v", ":i"},
+		{[]string{"condition", "projection"}, "l[abc]", "abc"},
+		{[]string{"condition"}, "attribute_exists(m.l[:i])", ":i"},
+	}
+
+	for _, tt := range cases {
+		for _, kind := range tt.kinds {
+			errs := parsers[kind](tt.input)
+			want := `Syntax error; token: "` + tt.token + `", near: "[` + tt.token + `]"`
+
+			if len(errs) == 0 || errs[0] != want {
+				t.Errorf("%s parser, %q: want first error %q, got %q", kind, tt.input, want, errs)
+			}
+		}
+	}
+
+	for _, input := range []string{"l[0] = :v", "l[12][3].m = :v", "l[9223372036854775808] = :v", "#a[1] = :v"} {
+		if errs := parsers["condition"](input); len(errs) != 0 {
+			t.Errorf("%q: unexpected errors %q", input, errs)
+		}
+	}
+}
+
+func TestLocatedSyntaxError(t *testing.T) {
+	t.Parallel()
+
+	detail, ok := LocatedSyntaxError(`Syntax error; token: ":i", near: "[:i]"`)
+	if !ok || detail != `token: ":i", near: "[:i]"` {
+		t.Errorf("got %q, %v", detail, ok)
+	}
+
+	for _, msg := range []string{"Syntax error; token: <EOF>, near: \"x\"", "no prefix parse function for = found", ""} {
+		if detail, ok := LocatedSyntaxError(msg); ok {
+			t.Errorf("%q: unexpectedly located: %q", msg, detail)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package language
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Parser represent the interpreter parser
@@ -128,6 +129,51 @@ func NewUpdateParser(l *Lexer) *Parser {
 // IsUnsupportedExpression return if the parsed expression is not a supported feature
 func (p *Parser) IsUnsupportedExpression() bool {
 	return p.unsupported
+}
+
+// LocatedSyntaxError returns the detail ("token: ..., near: ...") of a parse error that names
+// the token DynamoDB would reject, as the one for a list index that is not a literal does.
+func LocatedSyntaxError(msg string) (detail string, ok bool) {
+	rest, ok := strings.CutPrefix(msg, locatedSyntaxErrorPrefix)
+	if !ok {
+		return "", false
+	}
+
+	return `token: "` + rest, true
+}
+
+// locatedSyntaxErrorPrefix starts a parse error that quotes the offending token. The EOF error
+// has the same shape but an unquoted token, so it is not one of these.
+const locatedSyntaxErrorPrefix = `Syntax error; token: "`
+
+// isListIndexLiteral reports whether literal is an integer literal as a list index must be:
+// DynamoDB takes digits only between the brackets. A value too large for an int64 is still a
+// literal; its range is checked when the path is used.
+func isListIndexLiteral(literal string) bool {
+	if literal == "" {
+		return false
+	}
+
+	for i := range len(literal) {
+		if literal[i] < '0' || literal[i] > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// invalidListIndexError records the syntax error of a token between brackets that is not an
+// integer literal, with the text DynamoDB Local reports for it: the token and the brackets
+// around it.
+func (p *Parser) invalidListIndexError(token string) {
+	p.errors = append(p.errors, "Syntax error; "+ListIndexSyntaxDetail(token))
+}
+
+// ListIndexSyntaxDetail is the detail of the syntax error for token between brackets, as
+// DynamoDB Local words it.
+func ListIndexSyntaxDetail(token string) string {
+	return fmt.Sprintf("token: %q, near: %q", token, "["+token+"]")
 }
 
 func (p *Parser) parseIdentifier() Expression {
@@ -272,6 +318,12 @@ func (p *Parser) parseIndexExpression(left Expression) Expression {
 	p.nextToken()
 
 	expression.Index = p.parseIdentifier()
+
+	// DynamoDB takes only an integer literal as a list index: a placeholder or a name is a
+	// syntax error (#164), so the parse carries it and no expression is evaluated to find it.
+	if expression.Token.Type == LBRACKET && p.curToken.Type == IDENT && !isListIndexLiteral(p.curToken.Literal) {
+		p.invalidListIndexError(p.curToken.Literal)
+	}
 
 	if expression.Token.Type == DOT {
 		expression.Type = ObjectTypeMap

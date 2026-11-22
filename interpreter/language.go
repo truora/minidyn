@@ -28,6 +28,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	conditional := parsed.conditional
 
 	if len(parsed.errs) != 0 {
+		if err := locatedParseError(matchExpressionLabel(input.ExpressionType), parsed.errs); err != nil {
+			return false, err
+		}
+
 		detail := strings.Join(parsed.errs, "; ")
 		if input.ExpressionType == ExpressionTypeKey {
 			return false, fmt.Errorf("Invalid KeyConditionExpression: %w; %s", ErrSyntaxError, detail) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
@@ -122,6 +126,10 @@ func CheckProjection(expr string, aliases map[string]string) (*CheckedProjection
 	pp := parseProjection(expr)
 
 	if len(pp.errs) != 0 {
+		if err := locatedParseError("ProjectionExpression", pp.errs); err != nil {
+			return nil, err
+		}
+
 		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(pp.errs, "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 	}
 
@@ -214,13 +222,13 @@ func buildAliases(input UpdateInput) map[string]string {
 // UpdateTargetPaths returns the document path of every attribute an update expression writes,
 // from the cached parse of expression. A blank or invalid expression has no paths: Update
 // reports the error.
-func UpdateTargetPaths(expression string, aliases map[string]string, values map[string]*types.Item) [][]language.PathElement {
+func UpdateTargetPaths(expression string, aliases map[string]string) [][]language.PathElement {
 	pu := parseUpdate(expression)
 	if len(pu.errs) != 0 {
 		return nil
 	}
 
-	return language.UpdateTargetPaths(pu.stmt, aliases, values)
+	return language.UpdateTargetPaths(pu.stmt, aliases)
 }
 
 // Update change the item with given expression and attributes
@@ -233,6 +241,10 @@ func (li *Language) Update(input UpdateInput) error {
 	env.Aliases = aliases
 
 	if len(pu.errs) != 0 {
+		if err := locatedParseError("UpdateExpression", pu.errs); err != nil {
+			return err
+		}
+
 		errType := ErrSyntaxError
 		if pu.unsupported {
 			errType = ErrUnsupportedFeature

@@ -2,6 +2,7 @@ package language
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -154,12 +155,28 @@ func (i *Number) decimal() types.Decimal {
 	return d
 }
 
-// int64Value is the number as an integer, such as a list index. It returns false for a
-// fractional or out of range value.
-func (i *Number) int64Value() (int64, bool) {
-	n, err := strconv.ParseInt(i.Text, 10, 64)
+// listIndexOutOfRangeReason is why a literal list index cannot be used, reported as error detail.
+const listIndexOutOfRangeReason = "list index is out of range"
 
-	return n, err == nil
+// listIndexNotNumberReason is why an index that is not an integer literal cannot be used. The
+// parser rejects those, so only a tree built without it can reach this.
+const listIndexNotNumberReason = "list index must be an integer literal"
+
+// listIndexLiteral converts the literal index of a path, such as the 3 of l[3], exactly: it is
+// the one place that does it, so the evaluator and ExtractPath cannot disagree. reason says why
+// the literal cannot be an index: it does not fit an int64, whatever the platform, or it is not
+// digits. The caller builds the error, as an assignment names the field and a read does not.
+func listIndexLiteral(literal string) (idx int64, reason string) {
+	n, err := strconv.ParseInt(literal, 10, 64)
+	if err == nil {
+		return n, ""
+	}
+
+	if errors.Is(err, strconv.ErrRange) {
+		return 0, listIndexOutOfRangeReason
+	}
+
+	return 0, listIndexNotNumberReason
 }
 
 // Add if the obj is an number it adds the value to the number

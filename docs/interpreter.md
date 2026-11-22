@@ -65,7 +65,7 @@ Used for `Project` (`ProjectionExpression` in DynamoDB). This is **path-only** s
 | Top-level name | `ProductId`, `#attr` | y |
 | Nested map segments | `a.b.c` | y |
 | List index (literal) | `items[0]` | y |
-| List index (dynamic) | `items[k]` | y if `k` is a placeholder or name that evaluates to a **number** at evaluation time |
+| List index (placeholder or name) | `items[:i]`, `items[#n]`, `items[k]` | **n**, a syntax error (see below) |
 | Comma-separated paths | `a, b.c, items[0]` | y |
 
 Rules:
@@ -73,6 +73,9 @@ Rules:
 - Each segment after `.` is an identifier (or `#` placeholder).
 - `[` … `]` selects a list index; map keys use `.name` rather than `[name]`.
 - If a path evaluates to a missing attribute, that path is skipped (no error); the projected map only includes paths that resolved.
+- A list index is a **literal**: only digits are allowed between `[` and `]`, in every expression (condition, filter, key condition, projection and update). A placeholder (`l[:i]`, `l[#n]`) or a plain name (`l[k]`) is rejected when the expression is parsed, as DynamoDB Local does, with `Invalid <Expression>: Syntax error; token: ":i", near: "[:i]"`. DynamoDB reports it before it compares the placeholders with the declared ones, so an undefined `:i`, an unused value or an unused name does not change the answer. minidyn used to accept a placeholder index; see [`docs/adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md`](adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md).
+  - A literal that does not fit an int64 (`9223372036854775808`) is an error on a read and on an update. This is minidyn's own choice (D1, level 3): DynamoDB Local rejects an index above 2147483647 with `List index is not within the allowable range; index: [N]`, and matching that limit is not done yet. A **reading** path gives no value, not an error, for `9223372036854775807`, because no element can be there.
+  - Reads report `invalid list index in a document path` with the path and the reason; a condition adds the usual syntax error prefix. An **update** (`SET`, `ADD`, `REMOVE`) reports the update expression's invalid document path message plus the field, the path and the reason.
 
 ---
 

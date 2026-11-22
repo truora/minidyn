@@ -95,7 +95,7 @@ func TestLanguageUpdate_parsesEachExpressionOnce(t *testing.T) {
 	first := parseUpdate(expr)
 	require.Same(t, first, parseUpdate(expr))
 	require.Equal(t, [][]language.PathElement{{{Kind: language.PathKindMapKey, Key: "cacheOnce"}}},
-		UpdateTargetPaths(expr, nil, nil))
+		UpdateTargetPaths(expr, nil))
 	require.Same(t, first, parseUpdate(expr))
 }
 
@@ -106,7 +106,7 @@ func TestLanguageUpdate_cachedSyntaxErrorIsReturnedAgain(t *testing.T) {
 	first := li.Update(input)
 	require.ErrorIs(t, first, ErrSyntaxError)
 	require.EqualError(t, li.Update(input), first.Error())
-	require.Empty(t, UpdateTargetPaths(input.Expression, nil, nil))
+	require.Empty(t, UpdateTargetPaths(input.Expression, nil))
 }
 
 func TestLanguageUpdate_cacheIsBounded(t *testing.T) {

@@ -53,6 +53,55 @@ func (e *undeclaredAttributeValueError) Error() string {
 
 func (e *undeclaredAttributeValueError) Unwrap() error { return ErrSyntaxError }
 
+// syntaxErrorAtToken reports a syntax error that names the token DynamoDB rejects, such as a
+// placeholder used as a list index. Its message is DynamoDB's, with the expression label, and it
+// unwraps to ErrSyntaxError like the other expression errors.
+type syntaxErrorAtToken struct {
+	expressionType string
+	detail         string
+}
+
+func (e *syntaxErrorAtToken) Error() string {
+	return "Invalid " + e.expressionType + ": " + ErrSyntaxError.Error() + "; " + e.detail
+}
+
+func (e *syntaxErrorAtToken) Unwrap() error { return ErrSyntaxError }
+
+// locatedParseError returns the error for a parse that failed at a token DynamoDB names, or nil
+// when the first parse error is another one. DynamoDB reports only the first error.
+func locatedParseError(expressionType string, errs []string) error {
+	if len(errs) == 0 {
+		return nil
+	}
+
+	detail, ok := language.LocatedSyntaxError(errs[0])
+	if !ok {
+		return nil
+	}
+
+	return &syntaxErrorAtToken{expressionType: expressionType, detail: detail}
+}
+
+// invalidListIndexError returns the syntax error of the first expression whose list index is
+// not an integer literal. DynamoDB finds it while parsing, before it checks any placeholder, so
+// the validators below report it first.
+func invalidListIndexError(exprs []LabeledExpression) error {
+	for _, e := range exprs {
+		if token := exprScan(e.Expression).InvalidIndex; token != "" {
+			return &syntaxErrorAtToken{expressionType: e.Label, detail: language.ListIndexSyntaxDetail(token)}
+		}
+	}
+
+	return nil
+}
+
+// HasInvalidListIndex reports whether expression has a list index that is not an integer
+// literal, such as a placeholder. Front ends use it to let that syntax error win over the
+// unused-placeholder checks, as DynamoDB does.
+func HasInvalidListIndex(expression string) bool {
+	return exprScan(expression).InvalidIndex != ""
+}
+
 // operandCountError reports a built-in function called with the wrong number of operands. Its
 // message mirrors DynamoDB's ValidationException wording; like undeclaredAttributeNameError it
 // unwraps to ErrSyntaxError so the same gating maps it to ValidationException.
@@ -93,6 +142,10 @@ type LabeledExpression struct {
 // matching DynamoDB which reports the first undeclared name in the order given. Expressions
 // are scanned once and cached.
 func ValidateExpressionAttributeNamesDeclared(aliases map[string]string, exprs ...LabeledExpression) error {
+	if err := invalidListIndexError(exprs); err != nil {
+		return err
+	}
+
 	for _, e := range exprs {
 		names, _ := exprPlaceholders(e.Expression)
 		if err := validateDeclaredNames(e.Label, names, aliases); err != nil {
@@ -108,6 +161,10 @@ func ValidateExpressionAttributeNamesDeclared(aliases map[string]string, exprs .
 // matching DynamoDB which reports the first undefined value in the order given. Expressions
 // are scanned once and cached.
 func ValidateExpressionAttributeValuesDeclared(values map[string]*types.Item, exprs ...LabeledExpression) error {
+	if err := invalidListIndexError(exprs); err != nil {
+		return err
+	}
+
 	for _, e := range exprs {
 		_, names := exprPlaceholders(e.Expression)
 		if err := validateDeclaredValues(e.Label, names, values); err != nil {

@@ -87,6 +87,29 @@ func newOperandTypeError(operand Object, detail ...string) *Error {
 	return &Error{Message: types.WithDetail(operandTypeMessage, append(detail, "operand type", string(operand.Type()))...)}
 }
 
+// listIndexReadMessage is minidyn's error for a literal list index a path cannot use when it is
+// not being assigned, such as a condition or a projection. It is minidyn's text, so the update
+// expression message is not borrowed (D4).
+const listIndexReadMessage = "invalid list index in a document path"
+
+// invalidListIndex is a list index that failed to convert, kept until the caller knows whether
+// the path is being assigned.
+type invalidListIndex struct {
+	path   string
+	reason string
+}
+
+// newListIndexUpdateError is the invalid document path error of an assignment to an index that
+// cannot be used, with the field and the reason as detail.
+func newListIndexUpdateError(fieldID, path, reason string) *Error {
+	return &Error{Message: types.WithDetail(invalidDocumentPathMessage, "field id", fieldID, "path", path, "reason", reason)}
+}
+
+// newListIndexReadError is the error of a read of an index that cannot be used.
+func newListIndexReadError(path, reason string) *Error {
+	return &Error{Message: types.WithDetail(listIndexReadMessage, "path", path, "reason", reason)}
+}
+
 func newInvalidDocumentPathError(fieldID, path string) *Error {
 	return &Error{Message: types.WithDetail(invalidDocumentPathMessage, "field id", fieldID, "path", path)}
 }
@@ -524,6 +547,7 @@ type indexAccessor struct {
 	operator   Token
 	fieldID    string
 	pathSuffix string
+	invalid    *invalidListIndex
 }
 
 func indexFieldID(id *Identifier, env *Environment) string {
@@ -614,24 +638,11 @@ func setListValue(list *List, value Object, index int64) Object {
 	return UNDEFINED
 }
 
-// newNegativeListIndexError is minidyn's error for a placeholder list index below zero, which a
-// document path cannot address. DynamoDB Local rejects every placeholder index as a syntax
-// error, so there is no text of its own: the invalid document path message says what failed
-// and the detail says why.
-func newNegativeListIndexError(fieldID, path string) *Error {
-	return &Error{Message: types.WithDetail(invalidDocumentPathMessage,
-		"field id", fieldID, "path", path, "reason", "list index must not be negative")}
-}
-
 func (i indexAccessor) Set(container, val Object) Object {
 	switch c := container.(type) {
 	case *List:
 		pos, ok := i.val.(int64)
 		if i.kind == ObjectTypeList && ok {
-			if pos < 0 {
-				return newNegativeListIndexError(i.fieldID, i.pathSuffix)
-			}
-
 			return setListValue(c, val, pos)
 		}
 	case *Map:
@@ -648,6 +659,23 @@ func (i indexAccessor) Set(container, val Object) Object {
 }
 
 func handleIndexIdentifier(n Expression, env *Environment, positions []indexAccessor, assign bool) ([]indexAccessor, Object, Object) {
+	for _, pos := range positions {
+		if pos.invalid == nil {
+			continue
+		}
+
+		if !assign {
+			return nil, nil, newListIndexReadError(pos.invalid.path, pos.invalid.reason)
+		}
+
+		fieldID := ""
+		if id, ok := n.(*Identifier); ok {
+			fieldID = indexFieldID(id, env)
+		}
+
+		return nil, nil, newListIndexUpdateError(fieldID, pos.invalid.path, pos.invalid.reason)
+	}
+
 	obj, errObj := evalIndexObj(n, env, assign)
 	if isError(errObj) {
 		if assign {
@@ -751,12 +779,9 @@ func evalIndexObj(identifierExpression Expression, env *Environment, assign bool
 func evalIndexValue(node *Identifier, indexNode *IndexExpression, env *Environment) (indexAccessor, Object) {
 	switch indexNode.Type {
 	case ObjectTypeList:
-		pos, errObj := evalListIndexValue(node, env)
-		if isError(errObj) {
-			return indexAccessor{}, errObj
-		}
+		pos, invalid := evalListIndexValue(node)
 
-		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token}, UNDEFINED
+		return indexAccessor{val: pos, kind: indexNode.Type, operator: indexNode.Token, invalid: invalid}, UNDEFINED
 	case ObjectTypeMap:
 		pos, errObj := evalMapIndexValue(node, env)
 		if isError(errObj) {
@@ -769,27 +794,16 @@ func evalIndexValue(node *Identifier, indexNode *IndexExpression, env *Environme
 	return indexAccessor{}, newError("index operator not supported: got %q", node.String())
 }
 
-func evalListIndexValue(node *Identifier, env *Environment) (int64, Object) {
-	if n, err := strconv.Atoi(node.Token.Literal); err == nil {
-		return int64(n), nil
+// evalListIndexValue reads a list index, which the parser guarantees is an integer literal. An
+// index that cannot be used is returned as invalid, not as an error, because only the caller of
+// the path knows whether to name the field.
+func evalListIndexValue(node *Identifier) (int64, *invalidListIndex) {
+	n, reason := listIndexLiteral(node.Token.Literal)
+	if reason != "" {
+		return 0, &invalidListIndex{path: node.Token.Literal, reason: reason}
 	}
 
-	obj := evalIdentifier(node, env, true)
-	if isError(obj) {
-		return 0, obj
-	}
-
-	number, ok := obj.(*Number)
-	if !ok {
-		return 0, newError("access index with [] only support N as index : got %q", obj.Type())
-	}
-
-	idx, ok := number.int64Value()
-	if !ok {
-		return 0, newError("access index with [] only support integers : got %q", number.Text)
-	}
-
-	return idx, nil
+	return n, nil
 }
 
 func evalMapIndexValue(node *Identifier, env *Environment) (string, Object) {

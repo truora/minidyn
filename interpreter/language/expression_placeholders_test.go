@@ -40,3 +40,27 @@ func TestPlaceholders(t *testing.T) {
 		})
 	}
 }
+
+func TestScanExpressionInvalidIndex(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"l[:i] = :v":              ":i",
+		"SET l[#n] = :v":          "#n",
+		"a[0] = :v AND b[:j]":     ":j",
+		"l[abc]":                  "abc",
+		"m.l[1].k[:z]":            ":z",
+		"l[0] = :v":               "",
+		"a = :i":                  "",
+		"l[12][3] = :v":           "",
+		"l[9223372036854775808]":  "",
+		"":                        "",
+		"a.b[1].c = :v, d[2] = e": "",
+	}
+
+	for expression, want := range cases {
+		if got := ScanExpression(expression).InvalidIndex; got != want {
+			t.Errorf("ScanExpression(%q).InvalidIndex = %q, want %q", expression, got, want)
+		}
+	}
+}

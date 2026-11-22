@@ -32,39 +32,43 @@ var conditionCache = struct {
 	m  map[string]*parsedCondition
 }{m: map[string]*parsedCondition{}}
 
-// placeholderCache maps expression text to its #names and :values, scanned in one lexer pass.
+// placeholderCache maps expression text to its #names and :values, scanned in one lexer pass
+// together with its first list index that is not a literal.
 // Placeholders don't depend on the expression kind, so the cache serves condition, filter, key
 // condition, projection and update expressions alike.
 var placeholderCache = struct {
 	mu sync.Mutex
-	m  map[string]scannedPlaceholders
-}{m: map[string]scannedPlaceholders{}}
+	m  map[string]language.ExpressionScan
+}{m: map[string]language.ExpressionScan{}}
 
-// scannedPlaceholders are the placeholders of one expression, in order of first appearance.
-type scannedPlaceholders struct {
-	names, values []string
-}
-
-// exprPlaceholders returns the #names and :values expr uses, lexing it only on first use. The
-// returned slices are shared and must not be modified.
-func exprPlaceholders(expr string) (names, values []string) {
+// exprScan returns what one lexer pass finds in expr: its #names and :values in order of first
+// appearance, and the first list index that is not an integer literal. It lexes expr only on
+// first use. The returned slices are shared and must not be modified.
+func exprScan(expr string) language.ExpressionScan {
 	placeholderCache.mu.Lock()
 	defer placeholderCache.mu.Unlock()
 
-	if sp, ok := placeholderCache.m[expr]; ok {
-		return sp.names, sp.values
+	if scan, ok := placeholderCache.m[expr]; ok {
+		return scan
 	}
 
-	sp := scannedPlaceholders{}
-	sp.names, sp.values = language.Placeholders(expr)
+	scan := language.ScanExpression(expr)
 
 	if len(placeholderCache.m) >= maxParsedExpressions {
 		clear(placeholderCache.m)
 	}
 
-	placeholderCache.m[expr] = sp
+	placeholderCache.m[expr] = scan
 
-	return sp.names, sp.values
+	return scan
+}
+
+// exprPlaceholders returns the #names and :values expr uses, lexing it only on first use. The
+// returned slices are shared and must not be modified.
+func exprPlaceholders(expr string) (names, values []string) {
+	scan := exprScan(expr)
+
+	return scan.Names, scan.Values
 }
 
 // cachedPlaceholders reports how many expressions have cached placeholders (for tests).

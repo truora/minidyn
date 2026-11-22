@@ -112,20 +112,56 @@ func TestServerUpdateItemUnknownTableBeforeInvalidReturnValues(t *testing.T) {
 	require.ErrorContains(t, err, "ResourceNotFoundException")
 }
 
-// A placeholder as a list index is a minidyn extension (#164), and a negative one used to panic
-// the handler.
-func TestServerUpdateItemNegativeListIndex(t *testing.T) {
+// A list index is a literal: DynamoDB Local rejects a placeholder between the brackets with a
+// syntax error that names the token, before it checks the placeholders, so an undefined value, an
+// unused value and an unused name do not change the answer (#164, #267).
+func TestServerUpdateItemPlaceholderListIndex(t *testing.T) {
 	cli := listIndexServerClient(t)
 
-	_, err := cli.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
-		TableName:        aws.String("lists"),
-		Key:              map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: "a"}},
-		UpdateExpression: aws.String("SET l[:i] = :v"),
-		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
-			":i": &ddbtypes.AttributeValueMemberN{Value: "-1"},
-			":v": &ddbtypes.AttributeValueMemberS{Value: "w"},
+	str := func(v string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueMemberS{Value: v} }
+	num := func(v string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueMemberN{Value: v} }
+
+	tests := map[string]*dynamodb.UpdateItemInput{
+		"placeholder": {
+			UpdateExpression:          aws.String("SET l[:i] = :v"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": num("1"), ":v": str("w")},
 		},
-	})
-	require.ErrorContains(t, err, "ValidationException")
-	require.ErrorContains(t, err, "The document path provided in the update expression is invalid for update")
+		"negative value": {
+			UpdateExpression:          aws.String("SET l[:i] = :v"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": num("-1"), ":v": str("w")},
+		},
+		"undefined value": {
+			UpdateExpression:          aws.String("SET l[:i] = :v"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": str("w")},
+		},
+		"unused value": {
+			UpdateExpression: aws.String("SET l[:i] = :v"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":i": num("1"), ":v": str("w"), ":z": str("unused"),
+			},
+		},
+		"unused name": {
+			UpdateExpression:          aws.String("SET l[:i] = :v"),
+			ExpressionAttributeNames:  map[string]string{"#z": "z"},
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":i": num("1"), ":v": str("w")},
+		},
+		"condition with an unused value": {
+			UpdateExpression:    aws.String("SET n = :v"),
+			ConditionExpression: aws.String("l[:i] = :v"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
+				":i": num("1"), ":v": str("w"), ":z": str("unused"),
+			},
+		},
+	}
+
+	for name, in := range tests {
+		t.Run(name, func(t *testing.T) {
+			in.TableName = aws.String("lists")
+			in.Key = map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: "a"}}
+
+			_, err := cli.UpdateItem(context.Background(), in)
+			require.ErrorContains(t, err, "ValidationException: Invalid ")
+			require.ErrorContains(t, err, `Expression: Syntax error; token: ":i", near: "[:i]"`)
+		})
+	}
 }

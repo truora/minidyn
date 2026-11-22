@@ -443,8 +443,9 @@ func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, to
 	return nil
 }
 
-// buildCreatedIndexes builds, without registering them, the indexes the changes create, so every
-// error applying them could give surfaces before the table is touched.
+// buildCreatedIndexes builds, without registering them, the indexes the changes create, and fills
+// them with the items the table holds, so every error applying them could give surfaces before
+// the table is touched.
 func (t *Table) buildCreatedIndexes(changes []*types.GlobalSecondaryIndexUpdate) (map[string]*index, error) {
 	created := map[string]*index{}
 
@@ -460,6 +461,10 @@ func (t *Table) buildCreatedIndexes(changes []*types.GlobalSecondaryIndexUpdate)
 			ProvisionedThroughput: change.Create.ProvisionedThroughput,
 		})
 		if err != nil {
+			return nil, err
+		}
+
+		if err := i.backfill(); err != nil {
 			return nil, err
 		}
 
@@ -2169,10 +2174,7 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 	t.SortedKeys = t.SortedKeys[:len(t.SortedKeys)-1]
 
 	for _, index := range t.Indexes {
-		err := index.delete(key, item)
-		if err != nil {
-			return nil, types.NewError("ValidationException", err.Error(), nil)
-		}
+		index.delete(key)
 	}
 
 	return deleteReturnAttributes(input.ReturnValues, item), nil

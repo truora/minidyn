@@ -3,7 +3,9 @@ package types
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -11,6 +13,9 @@ import (
 // entries, and returns an error when any String Set (SS), Number Set (NS), or Binary Set (BS)
 // contains duplicate members. The error message matches the DynamoDB ValidationException body:
 // Callers typically wrap the result with NewError("ValidationException", msg, nil).
+//
+// A nil av is valid at the top level, but a nil element of an L or an M is not: it fails with
+// DynamoDB's text for a null AttributeValue.
 //
 // Nil av is valid. NS duplicates are detected by exact wire string equality of each element
 // (e.g. "1" and "1.0" are not duplicates). SS uses the same string comparison as StringValue.
@@ -40,14 +45,18 @@ func validateItemScalarSets(av *Item) error {
 }
 
 func validateItemNested(av *Item) error {
-	for _, elem := range av.L {
+	for i, elem := range av.L {
+		if elem == nil {
+			return nullListElementError(i)
+		}
+
 		if err := ValidateItemAttributeValue(elem); err != nil {
 			return err
 		}
 	}
 
-	for _, v := range av.M {
-		if err := ValidateItemAttributeValue(v); err != nil {
+	for k, v := range av.M {
+		if err := validateItemMapValue(k, v); err != nil {
 			return err
 		}
 	}
@@ -55,15 +64,40 @@ func validateItemNested(av *Item) error {
 	return nil
 }
 
-// ValidateItemMap runs ValidateItemAttributeValue on every value in m.
-// Nil or empty maps are valid.
+// validateItemMapValue rejects a nil value, then validates the value under key.
+func validateItemMapValue(key string, v *Item) error {
+	if v == nil {
+		return nullAttributeValueError(key)
+	}
+
+	return ValidateItemAttributeValue(v)
+}
+
+// nullAttributeValueText is DynamoDB's text for an attribute value that is JSON null. A Go
+// caller of the aws-v2 client sends the same shape as a nil AttributeValue.
+const nullAttributeValueText = "The supplied Item contains a null AttributeValue"
+
+// nullAttributeValueError is DynamoDB's error for a nil value of a map or an item. A nil
+// that got past the validation would reach the interpreter's MapToObject (#268).
+func nullAttributeValueError(attribute string) error {
+	return errors.New(WithDetail(nullAttributeValueText+": "+attribute+" is null", "attribute", attribute))
+}
+
+// nullListElementError is DynamoDB's error for a nil element of a list; its text names no
+// attribute.
+func nullListElementError(index int) error {
+	return errors.New(WithDetail(nullAttributeValueText, "reason", "list element "+strconv.Itoa(index)+" is nil"))
+}
+
+// ValidateItemMap runs ValidateItemAttributeValue on every value in m. A nil value is
+// rejected as DynamoDB rejects a null AttributeValue. Nil or empty maps are valid.
 func ValidateItemMap(m map[string]*Item) error {
 	if m == nil {
 		return nil
 	}
 
-	for _, v := range m {
-		if err := ValidateItemAttributeValue(v); err != nil {
+	for k, v := range m {
+		if err := validateItemMapValue(k, v); err != nil {
 			return err
 		}
 	}

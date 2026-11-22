@@ -1491,14 +1491,12 @@ func (c *Client) runTransactConditionCheck(i, n int, check *ConditionCheck) erro
 
 	stored := read.Stored
 
-	matched, mErr := table.InterpreterMatch(interpreter.MatchInput{
-		TableName:      table.Name,
-		Expression:     aws.ToString(check.ConditionExpression),
-		ExpressionType: interpreter.ExpressionTypeConditional,
-		Item:           stored,
-		Aliases:        check.ExpressionAttributeNames,
-		Attributes:     mapAttributeValueMapToTypes(check.ExpressionAttributeValues),
-	})
+	matched, mErr := table.MatchConditionCheck(
+		aws.ToString(check.ConditionExpression),
+		check.ExpressionAttributeNames,
+		mapAttributeValueMapToTypes(check.ExpressionAttributeValues),
+		stored,
+	)
 	if mErr != nil {
 		return &smithy.GenericAPIError{Code: "ValidationException", Message: mErr.Error()}
 	}

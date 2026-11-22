@@ -64,6 +64,13 @@ types     (internal item form types.Item, errors, types.WithDetail)
 `Native` is a hook for users to override evaluation. minidyn's own behavior
 never goes through it.
 
+ADRs for the layers:
+
+- [`2021-08-02-interpret-dynamodb-expressions-with-a-hand-written-lexer-parser-and-evaluator.md`](adr/2021-08-02-interpret-dynamodb-expressions-with-a-hand-written-lexer-parser-and-evaluator.md)
+- [`2022-09-23-keep-core-and-interpreter-free-of-aws-sdk-types.md`](adr/2022-09-23-keep-core-and-interpreter-free-of-aws-sdk-types.md)
+- [`2025-12-22-expose-minidyn-as-an-http-server-for-the-dynamodb-json-api.md`](adr/2025-12-22-expose-minidyn-as-an-http-server-for-the-dynamodb-json-api.md)
+- [`2026-05-06-support-only-aws-sdk-go-v2.md`](adr/2026-05-06-support-only-aws-sdk-go-v2.md)
+
 ## 2. Decisions
 
 ### D1. DynamoDB's documented behavior is the reference
@@ -76,14 +83,16 @@ never goes through it.
      choice at the site and cover it with a unit test.
 
   When the docs and Local disagree, follow the docs:
-  - Write a parity test that asserts both behaviors and **keeps its
-    `knownIssue` marker**. The harness then checks the divergence on every run.
+  - Write a parity test that asserts each engine's behavior separately, so
+    the harness checks the divergence on every run. Such a test needs no
+    `knownIssue` marker. #153 is the one entry that still carries one.
   - Record it under "Intentional divergences" in `e2e/README.md`, citing the
     doc.
 - **Why:** users test code that will run against real DynamoDB. Local has
   quirks that real DynamoDB does not have (#153).
 - **Check:** does any behavior that differs from Local cite a doc and appear
   under "Intentional divergences"?
+- **ADR:** [`2026-11-07-follow-the-aws-docs-before-dynamodb-local.md`](adr/2026-11-07-follow-the-aws-docs-before-dynamodb-local.md)
 
 ### D2. Behavior lives in `core`; front ends stay thin and symmetric
 
@@ -99,6 +108,7 @@ never goes through it.
   validation and error mapping, and they have drifted apart before.
 - **Check:** does the diff touch `server/client.go` or `aws-v2/client/client.go`
   without touching both? Are there tests in both `server` and `aws-v2/client`?
+- **ADR:** [`2025-12-22-put-shared-behavior-in-core-behind-two-symmetric-front-ends.md`](adr/2025-12-22-put-shared-behavior-in-core-behind-two-symmetric-front-ends.md)
 
 ### D3. Validate the request up front, once, in DynamoDB's order
 
@@ -161,6 +171,7 @@ never goes through it.
   and fails on a full one, and the error depends on the data.
 - **Check:** is a new validation reachable on an empty table? Does a unit test
   pin the error order when a request has several problems?
+- **ADR:** [`2026-06-22-validate-a-request-once-before-reading-any-item.md`](adr/2026-06-22-validate-a-request-once-before-reading-any-item.md)
 
 ### D4. Errors: DynamoDB's exact text, then minidyn detail after ` | `
 
@@ -211,6 +222,7 @@ never goes through it.
   get a useful message when debugging their tests.
 - **Check:** is any new or changed error a bare DynamoDB message where the code
   at that site knows the path, index, attribute or type?
+- **ADR:** [`2026-11-06-append-minidyn-detail-to-dynamodb-errors-after-a-pipe.md`](adr/2026-11-06-append-minidyn-detail-to-dynamodb-errors-after-a-pipe.md)
 
 ### D5. Interpreter objects: capabilities through interfaces, missing values are `UNDEFINED`
 
@@ -251,6 +263,7 @@ never goes through it.
 - **Check:** does the diff add a new `switch x.(type)` over value types, or an
   `x.(*String)` assertion, where an interface fits? Does a number go through
   `float64`?
+- **ADR:** [`2026-11-07-dispatch-interpreter-values-through-capability-interfaces.md`](adr/2026-11-07-dispatch-interpreter-values-through-capability-interfaces.md)
 
 ### D6. Parse and scan each expression text once
 
@@ -280,6 +293,7 @@ never goes through it.
   was the largest avoidable cost in `UpdateItem`.
 - **Check:** does the diff call `language.NewLexer` or `NewParser` on a request
   path for a text the cache could hold?
+- **ADR:** [`2026-11-02-parse-each-expression-text-once-in-a-shared-cache.md`](adr/2026-11-02-parse-each-expression-text-once-in-a-shared-cache.md)
 
 ### D7. One lock per client; `core` is not safe for concurrent use
 
@@ -287,8 +301,9 @@ never goes through it.
   - Each front end's `Client` has one `sync.Mutex`. A public operation takes
     it once at the top and calls `core` directly. It does not call other locked
     public methods.
-  - `core.Table` and the interpreter do no locking. The only exception is the
-    expression cache, which has its own mutex.
+  - `core.Table` and the interpreter do no locking. The only exception is
+    `interpreter/language_cache.go`: its four expression caches (placeholders,
+    conditions, updates, projections) each have their own mutex.
 - **On `main`:**
   - Every public operation of both front ends takes the lock once at the top
     and holds it for the whole call: the table operations (`CreateTable`,
@@ -314,6 +329,7 @@ never goes through it.
   correctness, not throughput.
 - **Check:** does a new public method take the lock before it touches
   `tables`, and avoid calling another locked method?
+- **ADR:** [`2026-11-11-hold-one-client-lock-per-public-operation.md`](adr/2026-11-11-hold-one-client-lock-per-public-operation.md)
 
 ### D8. A request applies completely or not at all
 
@@ -362,6 +378,7 @@ never goes through it.
   step. Such bugs appear later as wrong query results.
 - **Check:** can any new error path return after a mutation without restoring
   it? Does a test assert the table **and its indexes** after a failure?
+- **ADR:** [`2026-11-07-apply-a-write-completely-or-not-at-all.md`](adr/2026-11-07-apply-a-write-completely-or-not-at-all.md)
 
 ### D9. Storage and keys
 
@@ -386,6 +403,7 @@ never goes through it.
   must never collide.
 - **Check:** does new code split, parse or concatenate key strings instead of
   going through the key schema?
+- **ADR:** [`2026-11-07-encode-stored-keys-by-type-as-opaque-strings.md`](adr/2026-11-07-encode-stored-keys-by-type-as-opaque-strings.md)
 
 ### D10. Reuse before adding; measure before optimizing
 
@@ -399,6 +417,11 @@ never goes through it.
     - the `capacity` functions.
   - Do not duplicate a loop or a validator with only its message changed.
     Share the logic and let each caller build its own message.
+  - Prefer a plain predicate to a callback. A validator that takes its error
+    text as a function reads across two functions (#252).
+  - Prefer separate entry points to a flag parameter that changes the order of
+    checks: `Table.GetItem` and `Table.BatchGetItem` each have a fixed order
+    (#245).
   - Put code in the file that owns its concept, not in a new file per issue
     or fix. Key validation belongs in `core/key_schema.go`, table and index
     checks in `core/table.go` or `core/index.go`, and expression behavior in
@@ -411,6 +434,7 @@ never goes through it.
 - **Check:** before adding a helper, grep for the DynamoDB message and for the
   path or key operation. If one exists, call it. Does the diff add a
   non-test file named after a fix instead of a concept?
+- **ADR:** [`2026-11-08-reuse-existing-code-and-put-it-in-the-file-that-owns-the-concept.md`](adr/2026-11-08-reuse-existing-code-and-put-it-in-the-file-that-owns-the-concept.md)
 
 ### D11. Tests are the specification
 
@@ -421,7 +445,8 @@ never goes through it.
   - Parity tests are never weakened. When an issue is fixed, remove its
     `knownIssue` markers, fuzzer restrictions (`e2e/fuzz_gen_test.go`) and
     `parity-surface` allowlist entries. The exception is an intentional
-    divergence (D1): its marker stays.
+    divergence (D1): its test asserts each engine, and the one marker
+    that is kept (#153) stays.
   - Run the differential fuzzer (see `e2e/README.md`) when request handling,
     key encoding or validation order changes. Skip it after a rebase with no
     conflicts.
@@ -429,6 +454,7 @@ never goes through it.
   and `e2e/README.md`.
 - **Check:** is there a test that failed before the change? Was any `e2e/`
   assertion edited?
+- **ADR:** [`2026-11-02-make-parity-tests-the-specification-with-known-issue-markers.md`](adr/2026-11-02-make-parity-tests-the-specification-with-known-issue-markers.md)
 
 ### D12. `ReturnValues` in `core`, consumed capacity in the front ends
 
@@ -444,6 +470,7 @@ never goes through it.
     - it never changes what `core` returns.
 - **Check:** does capacity logic appear in `core`? Does a `ReturnValues` rule
   appear in a front end?
+- **ADR:** [`2026-06-19-compute-return-values-in-core-and-consumed-capacity-in-the-front-ends.md`](adr/2026-06-19-compute-return-values-in-core-and-consumed-capacity-in-the-front-ends.md)
 
 ### D13. Test knobs are front-end state
 
@@ -454,12 +481,15 @@ never goes through it.
   - the index activation delay;
   - the native interpreter.
 
-  `core` never knows about them.
+  `core` carries no failure-injection logic. Two knobs are stored on
+  `core.Table` because the table needs them: `UseNativeInterpreter` (matching
+  and updating) and `IndexActivationDelay` (`Description`). The front ends set
+  both; `core` never reads client state.
 - **Order:** in the single-item operations, an emulated failure is checked
   after `ReturnConsumedCapacity` is parsed, and before expression validation
   and the table lookup.
-- **Gap:** the transaction operations check failures at different points in
-  each front end. A new knob should follow the single-item order.
+- **Gap (#275):** the transaction operations check failures at different
+  points in each front end. A new knob should follow the single-item order.
 - **Batches:** a table-scoped failure fails a whole batch. Unprocessed-items
   emulation is the only partial path.
 - **Indexes:** GSIs are written synchronously and are strongly consistent. The
@@ -469,11 +499,15 @@ never goes through it.
   - its data can be queried immediately.
 - **Check:** is a new knob added to both front ends, at the same point in the
   request?
+- **ADR:** [`2026-06-18-keep-test-knobs-in-the-front-end-clients.md`](adr/2026-06-18-keep-test-knobs-in-the-front-end-clients.md)
 
 ### D14. Generated files
 
 - `server/requests.go` is generated by `go run ./tools/generate_requests`. Do
   not edit it by hand. Regenerate it when DynamoDB input shapes change.
+- CI runs the generator and fails when `git diff --exit-code server/requests.go`
+  shows a change (#254), so a stale file cannot merge.
+- **ADR:** [`2025-12-22-generate-the-server-request-types-from-the-sdk.md`](adr/2025-12-22-generate-the-server-request-types-from-the-sdk.md)
 
 ## 3. Checklist for a fix or feature
 
@@ -509,6 +543,7 @@ and the rejected alternatives. Link the ADR from the entry. Keep each entry in
 this shape:
 
 - **Decision**, **Why** and **Check**;
+- **ADR**, linking the record of the decision;
 - "On `main`" when the current state needs saying;
 - "**Lands with #PR**" or "**Gap (#issue)**" for what is still open.
 

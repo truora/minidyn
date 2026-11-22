@@ -251,6 +251,14 @@ func mapDynamoToTypesSliceItem(input []dynamodbtypes.AttributeValue) []*types.It
 }
 
 func mapDynamoToTypesItem(item dynamodbtypes.AttributeValue) *types.Item {
+	// Keep a nil AttributeValue nil so the validation rejects it (#268). The real SDK never sends
+	// a JSON null for it: an untyped nil inside an L is dropped ([a, nil] is sent as [a]), and a
+	// nil anywhere else produces malformed JSON (a SerializationException). minidyn rejects it as
+	// a D1 level-3 choice, so a bug in the caller surfaces instead of being hidden.
+	if item == nil {
+		return nil
+	}
+
 	itemB, ok := item.(*dynamodbtypes.AttributeValueMemberB)
 	if ok {
 		return &types.Item{B: itemB.Value}

@@ -1393,6 +1393,23 @@ func (t *Table) InterpreterMatch(input interpreter.MatchInput) (bool, error) {
 	return matched, nil
 }
 
+// MatchConditionCheck evaluates the condition of a TransactWriteItems ConditionCheck against
+// the stored item. It rejects an attribute value DynamoDB does not accept before evaluating.
+func (t *Table) MatchConditionCheck(expression string, aliases map[string]string, values, stored map[string]*types.Item) (bool, error) {
+	if err := validateItemValues(values); err != nil {
+		return false, err
+	}
+
+	return t.InterpreterMatch(interpreter.MatchInput{
+		TableName:      t.Name,
+		Expression:     expression,
+		ExpressionType: interpreter.ExpressionTypeConditional,
+		Item:           stored,
+		Aliases:        aliases,
+		Attributes:     values,
+	})
+}
+
 func (t *Table) matchKey(input QueryInput, item map[string]*types.Item) (interpreter.ExpressionType, bool, error) { //nolint:gocognit // key, filter, and conditional expression branches
 	var lastMatchExpressionType interpreter.ExpressionType
 	matched := input.Scan

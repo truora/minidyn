@@ -12,6 +12,47 @@ func TestValidateItemAttributeValue_nil(t *testing.T) {
 	require.NoError(t, ValidateItemAttributeValue(nil))
 }
 
+func TestValidateItemAttributeValue_nilElements(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{
+			name: "nil list element",
+			run:  func() error { return ValidateItemAttributeValue(&Item{L: []*Item{{S: new("a")}, nil}}) },
+			want: "The supplied Item contains a null AttributeValue | reason: list element 1 is nil",
+		},
+		{
+			name: "nil map value",
+			run:  func() error { return ValidateItemAttributeValue(&Item{M: map[string]*Item{"k": nil}}) },
+			want: "The supplied Item contains a null AttributeValue: k is null | attribute: k",
+		},
+		{
+			name: "nil value nested in a list of maps",
+			run: func() error {
+				return ValidateItemAttributeValue(&Item{L: []*Item{{M: map[string]*Item{"k": nil}}}})
+			},
+			want: "The supplied Item contains a null AttributeValue: k is null | attribute: k",
+		},
+		{
+			name: "nil value of an item map",
+			run:  func() error { return ValidateItemMap(map[string]*Item{"x": nil}) },
+			want: "The supplied Item contains a null AttributeValue: x is null | attribute: x",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.EqualError(t, tt.run(), tt.want)
+		})
+	}
+}
+
 func TestValidateItemAttributeValue_stringSet(t *testing.T) {
 	t.Parallel()
 

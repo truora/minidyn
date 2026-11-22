@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -903,12 +904,7 @@ func batchWriteTarget(table string, req types.WriteRequest) capacity.WriteTarget
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
-	names := make([]string, 0, len(requestItems))
-	for name := range requestItems {
-		names = append(names, name)
-	}
-
-	return names
+	return slices.Sorted(maps.Keys(requestItems))
 }
 
 func batchWriteRequestKey(req types.WriteRequest) map[string]types.AttributeValue {
@@ -941,11 +937,16 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 		return nil, emulation.failErr
 	}
 
+	if err := validateBatchGetKeys(input.RequestItems); err != nil {
+		return nil, err
+	}
+
 	responses := make(map[string][]map[string]types.AttributeValue, len(input.RequestItems))
 	unprocessed := make(map[string]types.KeysAndAttributes, len(input.RequestItems))
 	unitsByTable := map[string]float64{}
 
-	for tableName, reqs := range input.RequestItems {
+	for _, tableName := range slices.Sorted(maps.Keys(input.RequestItems)) {
+		reqs := input.RequestItems[tableName]
 		unprocessedKeys := make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
 		responses[tableName] = make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
 
@@ -989,6 +990,27 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 		UnprocessedKeys:  unprocessed,
 		ConsumedCapacity: sdkConsumedSlice(mode, unitsByTable),
 	}, nil
+}
+
+// validateBatchGetKeys runs the checks DynamoDB makes on the keys of a BatchGetItem before it looks
+// at any of them (core.ValidateBatchGetKeys).
+func validateBatchGetKeys(requestItems map[string]types.KeysAndAttributes) error {
+	requests := make(map[string][]map[string]*mtypes.Item, len(requestItems))
+
+	for name, reqs := range requestItems {
+		keys := make([]map[string]*mtypes.Item, len(reqs.Keys))
+		for i, key := range reqs.Keys {
+			keys[i] = mapDynamoToTypesMapItem(key)
+		}
+
+		requests[name] = keys
+	}
+
+	if err := core.ValidateBatchGetKeys(requests); err != nil {
+		return mapKnownError(err)
+	}
+
+	return nil
 }
 
 // batchGetTable reads every key of one table of a BatchGetItem, checking all the keys, then the

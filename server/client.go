@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -950,37 +952,25 @@ func batchWriteTarget(tableName string, req WriteRequest) capacity.WriteTarget {
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
-	names := make([]string, 0, len(requestItems))
-	for name := range requestItems {
-		names = append(names, name)
-	}
-
-	return names
+	return slices.Sorted(maps.Keys(requestItems))
 }
 
-func validateBatchGetItemInput(input *BatchGetItemInput) error {
-	if input == nil {
-		return nil
-	}
+// validateBatchGetKeys runs the checks DynamoDB makes on the keys of a BatchGetItem before it looks
+// at any of them (core.ValidateBatchGetKeys).
+func validateBatchGetKeys(requestItems map[string]KeysAndAttributes) error {
+	requests := make(map[string][]map[string]*types.Item, len(requestItems))
 
-	count := 0
-
-	for _, reqs := range input.RequestItems {
-		count += len(reqs.Keys)
-	}
-
-	if count == 0 {
-		return &smithy.GenericAPIError{
-			Code:    "ValidationException",
-			Message: "1 validation error detected: Value '{}' at 'requestItems' failed to satisfy constraint: Member must have length greater than or equal to 1",
+	for name, reqs := range requestItems {
+		keys := make([]map[string]*types.Item, len(reqs.Keys))
+		for i, key := range reqs.Keys {
+			keys[i] = mapAttributeValueMapToTypes(key)
 		}
+
+		requests[name] = keys
 	}
 
-	if count > batchGetItemRequestsLimit {
-		return &smithy.GenericAPIError{
-			Code:    "ValidationException",
-			Message: "Too many items requested for the BatchGetItem call",
-		}
+	if err := core.ValidateBatchGetKeys(requests); err != nil {
+		return mapKnownError(err)
 	}
 
 	return nil
@@ -996,10 +986,6 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := validateBatchGetItemInput(input); err != nil {
-		return nil, err
-	}
-
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
@@ -1010,11 +996,17 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 		return nil, emulation.failErr
 	}
 
+	if err := validateBatchGetKeys(input.RequestItems); err != nil {
+		return nil, err
+	}
+
 	responses := map[string][]map[string]*AttributeValue{}
 	unprocessed := map[string]KeysAndAttributes{}
 	unitsByTable := map[string]float64{}
 
-	for tableName, reqs := range input.RequestItems {
+	for _, tableName := range slices.Sorted(maps.Keys(input.RequestItems)) {
+		reqs := input.RequestItems[tableName]
+
 		tableResponses, unprocessedKeys, units, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation, mode)
 		if err != nil {
 			return nil, err

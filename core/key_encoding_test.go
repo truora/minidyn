@@ -365,3 +365,48 @@ func requireValidationException(t *testing.T, err error, message string) {
 	require.Equal(t, "ValidationException", apiErr.Code())
 	require.Contains(t, apiErr.Error(), message)
 }
+
+// A key's identity is its attribute names and the type and spelling of each value, whatever the
+// value is, and it cannot collide through the characters of a name or a value.
+func TestRawKeyID(t *testing.T) {
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+	n := func(v string) *types.Item { return &types.Item{N: &v} }
+	yes := true
+
+	same := [][2]map[string]*types.Item{
+		{{"a": s("1"), "b": s("2")}, {"b": s("2"), "a": s("1")}},
+		{{}, nil},
+		{{"a": {B: []byte("x")}}, {"a": {B: []byte("x")}}},
+		{{"a": {BOOL: &yes}}, {"a": {BOOL: &yes}}},
+		{{"a": {L: []*types.Item{s("1"), n("2")}}}, {"a": {L: []*types.Item{s("1"), n("2")}}}},
+		{{"a": {M: map[string]*types.Item{"x": s("1"), "y": s("2")}}}, {"a": {M: map[string]*types.Item{"y": s("2"), "x": s("1")}}}},
+		{{"a": {SS: []*string{aws.String("x")}}}, {"a": {SS: []*string{aws.String("x")}}}},
+	}
+
+	for _, pair := range same {
+		require.Equal(t, rawKeyID(pair[0]), rawKeyID(pair[1]), "%v", pair)
+	}
+
+	different := [][2]map[string]*types.Item{
+		{{"a": n("1")}, {"a": n("1.0")}},
+		{{"a": s("1")}, {"a": n("1")}},
+		{{"a": s("1")}, {"b": s("1")}},
+		{{"a": s("1")}, {"a": s("1"), "b": s("1")}},
+		{{"a": s("")}, {}},
+		{{"a": s("")}, {"a": nil}},
+		// delimiters in names and values do not blur the parts
+		{{"a": s("b"), "c": s("d")}, {"a": s("b,c:d")}},
+		{{"a:S1": s("x")}, {"a": s("1:Sx")}},
+		{{"ab": s("c")}, {"a": s("bc")}},
+		{{"a": {B: []byte("x")}}, {"a": s("x")}},
+		{{"a": {L: []*types.Item{s("1"), s("2")}}}, {"a": {L: []*types.Item{s("12")}}}},
+		{{"a": {L: []*types.Item{s("1"), s("2")}}}, {"a": {L: []*types.Item{s("2"), s("1")}}}},
+		{{"a": {M: map[string]*types.Item{"x": s("1")}}}, {"a": {M: map[string]*types.Item{"x": n("1")}}}},
+		{{"a": {SS: []*string{aws.String("x"), aws.String("y")}}}, {"a": {SS: []*string{aws.String("x,y")}}}},
+		{{"a": {NS: []*string{nil}}}, {"a": {NS: []*string{aws.String("")}}}},
+	}
+
+	for _, pair := range different {
+		require.NotEqual(t, rawKeyID(pair[0]), rawKeyID(pair[1]), "%v", pair)
+	}
+}

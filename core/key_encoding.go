@@ -2,6 +2,9 @@ package core
 
 import (
 	"fmt"
+	"maps"
+	"slices"
+	"strconv"
 
 	"github.com/truora/minidyn/types"
 )
@@ -95,4 +98,102 @@ func appendNumber(dst []byte, field, s string) ([]byte, error) {
 	}
 
 	return dst, nil
+}
+
+// rawKeyID is an identity for a key map as a request spells it, to find a key named twice before
+// any of its values is validated (BatchGetItem, #246). Unlike the stored key it does not read a
+// number's value, so 1 and 1.0 are different keys, as on DynamoDB Local; it is not ordered and
+// never stored.
+//
+// The names are sorted, and every name and value is length-prefixed, so no delimiter inside a
+// name or value can make two different keys one. A valid key holds only S, N and B scalars, but
+// the check runs on keys that are not valid yet, so any value kind is encoded, a value of
+// several kinds included: each present field adds its tag and its payload in a fixed order.
+// Sets and lists keep the order they were sent in.
+func rawKeyID(key map[string]*types.Item) string {
+	var b []byte
+
+	for _, name := range slices.Sorted(maps.Keys(key)) {
+		b = appendPart(b, name)
+		b = appendRawItem(b, key[name])
+	}
+
+	return string(b)
+}
+
+func appendPart(b []byte, s string) []byte {
+	b = strconv.AppendInt(b, int64(len(s)), 10)
+	b = append(b, ':')
+
+	return append(b, s...)
+}
+
+func appendRawList[T any](b []byte, tag byte, list []T, add func([]byte, T) []byte) []byte {
+	if list == nil {
+		return b
+	}
+
+	b = append(b, tag)
+	b = strconv.AppendInt(b, int64(len(list)), 10)
+	b = append(b, ':')
+
+	for _, v := range list {
+		b = add(b, v)
+	}
+
+	return b
+}
+
+func appendRawBool(b []byte, tag byte, v *bool) []byte {
+	if v == nil {
+		return b
+	}
+
+	return strconv.AppendBool(append(b, tag), *v)
+}
+
+func appendRawString(b []byte, tag byte, v *string) []byte {
+	if v == nil {
+		return b
+	}
+
+	return appendPart(append(b, tag), *v)
+}
+
+func appendRawStrings(b []byte, v *string) []byte {
+	if v == nil {
+		return append(b, '~')
+	}
+
+	return appendPart(b, *v)
+}
+
+// appendRawItem ends every item with ';' and a missing one is '~', so a nested value is as
+// self-delimiting as a top-level one.
+func appendRawItem(b []byte, item *types.Item) []byte {
+	if item == nil {
+		return append(b, '~')
+	}
+
+	b = appendRawString(b, 'S', item.S)
+	b = appendRawString(b, 'N', item.N)
+
+	if item.B != nil {
+		b = appendPart(append(b, 'B'), string(item.B))
+	}
+
+	b = appendRawBool(b, 'T', item.BOOL)
+	b = appendRawBool(b, 'Z', item.NULL)
+	b = appendRawList(b, 's', item.SS, appendRawStrings)
+	b = appendRawList(b, 'n', item.NS, appendRawStrings)
+	b = appendRawList(b, 'b', item.BS, func(b []byte, v []byte) []byte { return appendPart(b, string(v)) })
+	b = appendRawList(b, 'L', item.L, appendRawItem)
+
+	if item.M != nil {
+		b = appendRawList(b, 'M', slices.Sorted(maps.Keys(item.M)), func(b []byte, name string) []byte {
+			return appendRawItem(appendPart(b, name), item.M[name])
+		})
+	}
+
+	return append(b, ';')
 }

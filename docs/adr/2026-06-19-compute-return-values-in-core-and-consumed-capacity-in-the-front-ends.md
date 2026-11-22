@@ -12,8 +12,21 @@ derives read and write units, and filled `ConsumedCapacity` in both front ends.
 
 `ReturnValues` already lived in `core`: `97e68e1` (#111, 2026-03-30) built the
 update response from a snapshot of the pre-update item in `core`, because
-minidyn "always returned the full post-update item (ALL_NEW)". The two halves
-together make the split.
+minidyn "always returned the full post-update item (ALL_NEW)". The diff adds 112
+lines to `core/table.go` and one line to `server/client.go`. Later changes stayed
+in `core`:
+
+- `8714c88` (#194, issue #180) validated `DeleteItem` `ReturnValues` in
+  `core.Table.Delete` and "Use the item core returns in both front ends instead
+  of re-checking ALL_OLD".
+- `c292abf` and `5f8ed52` (#173, issue #141) did the same for `PutItem`: the
+  first returns the replaced item only for `ALL_OLD`, the second rejects other
+  values.
+- `4dd85f9` (#252) gives each `ReturnValues` enum one predicate
+  (`isNoneOrAllOld`, `isUpdateReturnValue`). It changes no behavior and no
+  message.
+
+The two halves together make the split.
 
 Capacity could not live in `core` as such. Billing needs the item sizes before
 and after the write, and each front end reads and writes with its own request
@@ -28,6 +41,10 @@ Facts on this branch:
   import `capacity`.
 - `git grep -n 'capacity.ParseMode' -- server aws-v2 ':!*_test.go' | wc -l`
   prints `20`: the mode is parsed in the front ends, once per operation.
+- `grep -n 'ALL_OLD\|AllOld' server/client.go aws-v2/client/client.go` matches
+  only comments: two explain why capacity is measured before a delete, and two
+  are about `ReturnValuesOnConditionCheckFailure` in transactions. No front end
+  decides what a write returns.
 
 ## Decision
 
@@ -66,4 +83,4 @@ is a review finding.
 
 - `core/table.go`, `capacity/`, `server/capacity.go`, `aws-v2/client/capacity.go`
 - `docs/architecture.md` (D12), `docs/operations.md`
-- #49, #111, #136, #243
+- #49, #111, #136, #173, #194, #243, #252

@@ -45,6 +45,28 @@ current form (`git log -S'<symbol>' --format='%h %ad' --date=short | tail -1`).
 The first line of its Context says when it was written down:
 "Backfilled on YYYY-MM-DD from `<sha>` (#PR)."
 
+A backfilled ADR has the status `Accepted`. A decision that was later
+reversed gets no file of its own: it becomes the "before" in the Context of
+the ADR that replaced it.
+
+Its rejected alternatives come only from the record. Each one is one of:
+
+- **Replaced** — code that existed and was removed. Cite the commit that
+  removed it and the reason that commit gives.
+- **Recorded** — an option named in a commit, pull request, issue or
+  document. Quote it and cite it.
+- **Not recorded** — write "No alternatives were recorded when this was
+  decided (searched: `<sha>`, #PR, #issue)."
+
+While a backfill is being completed, its Context, alternatives and
+Consequences may be completed from the record; the Decision text does not
+change.
+
+Do not add options nobody wrote down. A maintainer's recollection is allowed
+when it is labelled: "Recollection (maintainer, YYYY-MM-DD); not in the
+record." Quote a number from history with its source, or measure it again and
+show the command.
+
 ## Status
 
 | Status | Meaning |

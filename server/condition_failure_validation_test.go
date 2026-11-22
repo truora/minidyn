@@ -146,7 +146,8 @@ func TestServerDeleteItemConditionMatchingOtherItemFails(t *testing.T) {
 // ReturnValues and an undeclared expression name. The mode is checked before the
 // table lookup, so it also wins on a missing table (pinned current behavior). UpdateItem
 // does not send an invalid ReturnValues here: it reports that first (see
-// TestUpdateItemInvalidReturnValues).
+// TestUpdateItemInvalidReturnValues). PutItem is not here: it reports the numbers of the item,
+// the unused values and the table before the mode, as DynamoDB Local does (#226).
 func TestServerReturnValuesOnConditionCheckFailureValidationOrder(t *testing.T) {
 	ctx := context.Background()
 	key := map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "001"}}
@@ -154,14 +155,6 @@ func TestServerReturnValuesOnConditionCheckFailureValidationOrder(t *testing.T) 
 	vals := map[string]ddbtypes.AttributeValue{":v": &ddbtypes.AttributeValueMemberS{Value: "x"}}
 
 	ops := map[string]func(cli *dynamodb.Client, table string) error{
-		"PutItem": func(cli *dynamodb.Client, table string) error {
-			_, err := cli.PutItem(ctx, &dynamodb.PutItemInput{
-				TableName: aws.String(table), Item: key, ConditionExpression: cond, ExpressionAttributeValues: vals,
-				ReturnValues: "BOGUS", ReturnValuesOnConditionCheckFailure: "BOGUS",
-			})
-
-			return err
-		},
 		"UpdateItem": func(cli *dynamodb.Client, table string) error {
 			_, err := cli.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 				TableName: aws.String(table), Key: key, ConditionExpression: cond,

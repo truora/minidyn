@@ -20,7 +20,7 @@ func TestMatchConditionCheck_rejectsNilValues(t *testing.T) {
 		values map[string]*types.Item
 		want   string
 	}{
-		{"top-level nil", map[string]*types.Item{":v": nil}, "The supplied Item contains a null AttributeValue: :v is null"},
+		{"top-level nil", map[string]*types.Item{":v": nil}, "ExpressionAttributeValues contains invalid value: The supplied Item contains a null AttributeValue for key :v"},
 		{"nested nil", map[string]*types.Item{":v": {L: []*types.Item{nil}}}, "The supplied Item contains a null AttributeValue"},
 	}
 

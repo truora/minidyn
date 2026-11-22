@@ -67,9 +67,14 @@ func NewTable(name string) *Table {
 	}
 }
 
-// ValidatePrimaryKeyMap checks that a Key map for GetItem, DeleteItem, or UpdateItem
-// contains exactly the table's primary key attribute names (hash and range when defined).
+// ValidatePrimaryKeyMap checks a Key map for GetItem, DeleteItem, or UpdateItem: first that its
+// numbers are ones DynamoDB stores, then that it contains exactly the table's primary key
+// attribute names (hash and range when defined) with values.
 func (t *Table) ValidatePrimaryKeyMap(key map[string]*types.Item) error {
+	if err := types.ValidateItemMap(key); err != nil {
+		return err
+	}
+
 	return t.KeySchema.validatePrimaryKeyMap(key)
 }
 
@@ -691,15 +696,11 @@ func buildLSI(t *Table, lsiInput *types.LocalSecondaryIndex) (*index, error) {
 }
 
 func validateSearchInputMaps(input QueryInput) error {
-	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
-		return types.NewError("ValidationException", err.Error(), nil)
+	if err := validateExpressionValues(input.ExpressionAttributeValues); err != nil {
+		return err
 	}
 
-	if err := types.ValidateItemMap(input.ExclusiveStartKey); err != nil {
-		return types.NewError("ValidationException", err.Error(), nil)
-	}
-
-	return nil
+	return validateItemValues(input.ExclusiveStartKey)
 }
 
 // validateSearchExpressionAttributeNames rejects up front any Query/Scan expression that
@@ -983,18 +984,6 @@ func compareBounds(lo, hi *types.Item) (order int, ok bool) {
 	}
 
 	return bytes.Compare(lo.B, hi.B), true
-}
-
-func validateUpdateItemInputKeysAndValues(input *types.UpdateItemInput) error {
-	if err := types.ValidateItemMap(input.Key); err != nil {
-		return types.NewError("ValidationException", err.Error(), nil)
-	}
-
-	if err := types.ValidateItemMap(input.ExpressionAttributeValues); err != nil {
-		return types.NewError("ValidationException", err.Error(), nil)
-	}
-
-	return nil
 }
 
 // parseStartKey encodes the ExclusiveStartKey. A number DynamoDB rejects is a ValidationException,
@@ -1399,9 +1388,12 @@ func (t *Table) InterpreterMatch(input interpreter.MatchInput) (bool, error) {
 }
 
 // MatchConditionCheck evaluates the condition of a TransactWriteItems ConditionCheck against
-// the stored item. It rejects an attribute value DynamoDB does not accept before evaluating.
+// the stored item. It rejects an attribute value DynamoDB does not accept before evaluating: a
+// nil value would reach the interpreter's MapToObject otherwise (#268). The front ends have
+// already run ValidateWriteValues over the request; checking again here keeps this the one safe
+// entry point and costs one walk of the condition's values.
 func (t *Table) MatchConditionCheck(expression string, aliases map[string]string, values, stored map[string]*types.Item) (bool, error) {
-	if err := validateItemValues(values); err != nil {
+	if err := validateExpressionValues(values); err != nil {
 		return false, err
 	}
 
@@ -1626,6 +1618,50 @@ type WriteRequest struct {
 	Delete map[string]*types.Item
 }
 
+// WriteValues are the attribute values of one operation of a TransactWriteItems request.
+type WriteValues struct {
+	// Expression is the operation's ExpressionAttributeValues.
+	Expression map[string]*types.Item
+	// Item is the Item of a Put and the Key of an Update, a Delete and a ConditionCheck.
+	Item map[string]*types.Item
+}
+
+// ValidateWriteValues rejects a TransactWriteItems request, before it applies anything, when a
+// number in any of its operations is one DynamoDB does not store. It reports the first operation
+// in request order, and in each the expression values before the item or key.
+func ValidateWriteValues(ops []WriteValues) error {
+	for _, op := range ops {
+		if err := validateExpressionValues(op.Expression); err != nil {
+			return err
+		}
+
+		if err := validateItemValues(op.Item); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateBatchValues rejects an invalid number anywhere in a batch write. DynamoDB Local reports
+// it before any other problem of the batch.
+func validateBatchValues(names []string, requests map[string][]WriteRequest) error {
+	for _, name := range names {
+		for _, req := range requests[name] {
+			values := req.Put
+			if values == nil {
+				values = req.Delete
+			}
+
+			if err := validateItemValues(values); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 // ValidateBatchWrite rejects a whole batch write when any of its requests is invalid, so a
 // front end can apply none of them (D8). lookup finds a table by name.
 //
@@ -1639,7 +1675,13 @@ type WriteRequest struct {
 func ValidateBatchWrite(lookup func(name string) (*Table, bool), requests map[string][]WriteRequest) error {
 	var missing error
 
-	for _, name := range slices.Sorted(maps.Keys(requests)) {
+	names := slices.Sorted(maps.Keys(requests))
+
+	if err := validateBatchValues(names, requests); err != nil {
+		return err
+	}
+
+	for _, name := range names {
 		table, ok := lookup(name)
 		if !ok {
 			if missing == nil {
@@ -1723,6 +1765,15 @@ func validateItemValues(m map[string]*types.Item) error {
 	return nil
 }
 
+// validateExpressionValues rejects an expression attribute value DynamoDB does not accept.
+func validateExpressionValues(m map[string]*types.Item) error {
+	if err := types.ValidateExpressionAttributeValues(m); err != nil {
+		return types.NewError("ValidationException", err.Error(), nil)
+	}
+
+	return nil
+}
+
 // checkItemKeyValues rejects empty values in the primary key and index key attributes of item.
 func (t *Table) checkItemKeyValues(item map[string]*types.Item) error {
 	if err := t.validateItemKeyValues(item); err != nil {
@@ -1769,15 +1820,17 @@ func (t *Table) Put(input *types.PutItemInput) (map[string]*types.Item, error) {
 		return nil, err
 	}
 
-	if err := ValidateReturnValuesOnConditionCheckFailure(input.ReturnValuesOnConditionCheckFailure); err != nil {
-		return nil, err
-	}
-
+	// DynamoDB reports the numbers of the item before RVOCCF, and RVOCCF before the numbers of the
+	// condition values.
 	if err := validateItemValues(input.Item); err != nil {
 		return nil, err
 	}
 
-	if err := validateItemValues(input.ExpressionAttributeValues); err != nil {
+	if err := ValidateReturnValuesOnConditionCheckFailure(input.ReturnValuesOnConditionCheckFailure); err != nil {
+		return nil, err
+	}
+
+	if err := validateExpressionValues(input.ExpressionAttributeValues); err != nil {
 		return nil, err
 	}
 
@@ -1932,19 +1985,21 @@ func buildUpdateItemReturnAttributes(rv *string, paths [][]language.PathElement,
 
 // Update updates an item in the table based on the input
 func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, error) { //nolint:gocognit,gocyclo // conditional writes, interpreter update, GSI updates
-	if err := validateUpdateItemInputKeysAndValues(input); err != nil {
-		return nil, err
-	}
-
-	// minidyn reports ReturnValues, then the Key, then RVOCCF, then the placeholders. DynamoDB
-	// Local reports ReturnValues and the Key first too, but puts RVOCCF after the unused names
-	// and values and the undefined placeholders; see #243.
+	// minidyn reports ReturnValues, then the Key, then the numbers of the expression values, then
+	// RVOCCF, then the placeholders. DynamoDB Local reports ReturnValues, the Key and the
+	// numbers first too, but puts RVOCCF after the unused names and values and the undefined
+	// placeholders; see #243.
 	if err := ValidateUpdateItemReturnValues(input.ReturnValues); err != nil {
 		return nil, err
 	}
 
-	if err := t.KeySchema.validatePrimaryKeyMap(input.Key); err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+	key, keyErr := t.CheckedKeyOf(input.Key)
+	if keyErr != nil {
+		return nil, keyErr
+	}
+
+	if err := validateExpressionValues(input.ExpressionAttributeValues); err != nil {
+		return nil, err
 	}
 
 	if err := ValidateReturnValuesOnConditionCheckFailure(input.ReturnValuesOnConditionCheckFailure); err != nil {
@@ -1974,11 +2029,6 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 	}
 
 	// update primary index
-	key, err := t.KeySchema.GetKey(t.AttributesDef, input.Key)
-	if err != nil {
-		return nil, types.NewError("ValidationException", err.Error(), nil)
-	}
-
 	item, ok := t.Data[key]
 	if !ok {
 		// it allow the use of attribute_exists to check if the item exists
@@ -2016,7 +2066,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 		oldItem = deepCopyItemMap(item)
 	}
 
-	err = t.interpreterUpdate(interpreter.UpdateInput{
+	err := t.interpreterUpdate(interpreter.UpdateInput{
 		TableName:  t.Name,
 		Expression: input.UpdateExpression,
 		Item:       item,
@@ -2061,24 +2111,16 @@ func (t *Table) Delete(input *types.DeleteItemInput) (map[string]*types.Item, er
 		return nil, err
 	}
 
-	if err := validateItemValues(input.Key); err != nil {
-		return nil, err
+	key, keyErr := t.CheckedKeyOf(input.Key)
+	if keyErr != nil {
+		return nil, keyErr
 	}
 
-	if err := validateItemValues(input.ExpressionAttributeValues); err != nil {
-		return nil, err
-	}
-
-	if err := t.checkPrimaryKeyShape(input.Key); err != nil {
+	if err := validateExpressionValues(input.ExpressionAttributeValues); err != nil {
 		return nil, err
 	}
 
 	if err := validateConditionExpression(deleteAliases(input.ExpressionAttributeNames), input.ExpressionAttributeValues, input.ConditionExpression); err != nil {
-		return nil, err
-	}
-
-	key, err := t.primaryKeyOf(input.Key)
-	if err != nil {
 		return nil, err
 	}
 

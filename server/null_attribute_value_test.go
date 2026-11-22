@@ -91,7 +91,7 @@ func TestServerRejectsNullAttributeValueInListOrMap(t *testing.T) {
 			target: "TransactWriteItems",
 			body: `{"TransactItems":[{"ConditionCheck":{"TableName":"tbl","Key":{"id":{"S":"a"}},` +
 				`"ConditionExpression":"x = :v","ExpressionAttributeValues":{":v":null}}}]}`,
-			want: "The supplied Item contains a null AttributeValue: :v is null",
+			want: "ExpressionAttributeValues contains invalid value: The supplied Item contains a null AttributeValue for key :v",
 		},
 	}
 

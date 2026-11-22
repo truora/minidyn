@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"maps"
 	"slices"
 	"sort"
@@ -222,25 +223,62 @@ func (i *index) putData(key string, item map[string]*types.Item) error {
 	return nil
 }
 
-func (i *index) delete(key string, item map[string]*types.Item) error {
-	delete(i.refs, key)
-	i.ordered = nil
+// backfill indexes every item of the table, as DynamoDB does when it creates an index on a
+// table that already holds items. An item is left out when:
+//   - it has no index key attribute (the index is sparse);
+//   - its index key is an empty string or binary;
+//   - its index key attribute has another data type than the attribute definition
+//     (ErrInvalidAtrributeValue);
+//   - its index key is an N that DynamoDB cannot store: not a number, or out of range
+//     (ErrInvalidNumber, ErrNumberOverflow, ErrNumberUnderflow).
+//
+// The developer guide, under "Phases of index creation", says the violating keys are not present
+// in the index and do not interfere with its creation. It lists the first three. The last one is
+// minidyn's choice: an N value DynamoDB cannot store could never have been written to DynamoDB,
+// so it violates the key the same way, and minidyn only holds it because non-key N values are
+// not validated on write.
+//
+// Any other GetKey error is an invariant failure: for a secondary schema GetKey gives no other.
+// It is returned, not skipped, so a bug cannot silently hide an item from the index. The caller
+// runs backfill while it builds the index, before the table is touched, so UpdateTable rejects
+// the request and changes nothing instead of failing half-applied.
+func (i *index) backfill() error {
+	for _, key := range i.Table.SortedKeys {
+		item := i.Table.Data[key]
 
-	indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
-	if err != nil || indexKey == "" {
-		return err
+		if attr, _ := i.keySchema.emptyKeyAttr(item); attr != "" {
+			continue
+		}
+
+		indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
+		if err != nil {
+			if isKeyViolation(err) {
+				continue
+			}
+
+			return err
+		}
+
+		i.setRef(key, indexKey)
 	}
-
-	pos := sort.SearchStrings(i.sortedKeys, indexKey)
-	if pos == len(i.sortedKeys) {
-		return err
-	}
-
-	copy(i.sortedKeys[pos:], i.sortedKeys[pos+1:])
-	i.sortedKeys[len(i.sortedKeys)-1] = ""
-	i.sortedKeys = i.sortedKeys[:len(i.sortedKeys)-1]
 
 	return nil
+}
+
+// isKeyViolation reports whether err, from GetKey on an item that is already stored, says the
+// item's index key violates the schema (see backfill).
+func isKeyViolation(err error) bool {
+	return errors.Is(err, ErrInvalidAtrributeValue) ||
+		errors.Is(err, ErrInvalidNumber) ||
+		errors.Is(err, ErrNumberOverflow) ||
+		errors.Is(err, ErrNumberUnderflow)
+}
+
+// delete drops the entry of the item with primary key key. The entry is found through refs, not
+// by encoding the stored item again: an item that violates the index key schema is not indexed
+// and has no key to encode (see backfill).
+func (i *index) delete(key string) {
+	i.setRef(key, "")
 }
 
 // setRef points the item with primary key key at indexKey, or drops it from the index

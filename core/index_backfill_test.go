@@ -183,26 +183,6 @@ func TestUpdateTableCreateIndexBackfillsNothingWhenRejected(t *testing.T) {
 	require.Equal(t, data, table.Data)
 }
 
-func TestUpdateTableCreateIndexSkipsNumbersDynamoDBCannotStore(t *testing.T) {
-	// Non-key N values are not validated on write, so the table can hold these. DynamoDB could
-	// never have stored them, which makes them index key violations too.
-	table := newBackfillTable(t,
-		&types.Item{N: new("5")},
-		&types.Item{N: new("abc")},
-		&types.Item{N: new("1e200")},
-		&types.Item{N: new("1e-200")},
-	)
-
-	_, err := table.UpdateTable(table.Name,
-		[]*types.AttributeDefinition{{AttributeName: new("gk"), AttributeType: new("N")}},
-		[]*types.GlobalSecondaryIndexUpdate{gsiCreate(new(backfillIndex), gsiHashKey(), gsiAllProjection())})
-	require.NoError(t, err)
-
-	require.Equal(t, []string{"i0"}, scanBackfillIndex(t, table))
-	require.Equal(t, int64(1), table.Indexes[backfillIndex].count())
-	require.Len(t, table.Data, 4)
-}
-
 func TestIndexBackfillReportsUnexpectedKeyErrors(t *testing.T) {
 	table := newBackfillTable(t, &types.Item{S: new("a")}, nil)
 	table.AttributesDef["gk"] = "S"

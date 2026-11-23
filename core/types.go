@@ -21,7 +21,7 @@ var (
 	ErrInvalidAtrributeValue = errors.New("Invalid attribute value type") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 
 	// ErrInvalidNumber when an N value is not a number DynamoDB can read (DynamoDB Local's text).
-	ErrInvalidNumber = errors.New("A value provided cannot be converted into a number") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+	ErrInvalidNumber = types.ErrInvalidNumber
 
 	// ErrNumberOverflow when an N value's magnitude is above 9.99...E+125.
 	ErrNumberOverflow = types.ErrNumberOverflow

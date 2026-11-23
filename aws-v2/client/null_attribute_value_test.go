@@ -77,7 +77,7 @@ func TestRejectsNilAttributeValueInListOrMap(t *testing.T) {
 		{"transact condition check nested nil", listMsg, func() error {
 			return transactConditionCheck(ctx, client, key, nilList)
 		}},
-		{"transact condition check top-level nil", listMsg + ": :v is null", func() error {
+		{"transact condition check top-level nil", "ExpressionAttributeValues contains invalid value: " + listMsg + " for key :v", func() error {
 			return transactConditionCheck(ctx, client, key, nil)
 		}},
 	}

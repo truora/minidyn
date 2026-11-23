@@ -181,7 +181,7 @@ func (i *Number) Add(obj Object) Object {
 
 // precisionMessage is DynamoDB's error for an arithmetic result of more than 38 significant
 // digits.
-const precisionMessage = "DynamoDB only supports precision up to 38 digits"
+var precisionMessage = types.ErrNumberPrecision.Error()
 
 // sumNumbers returns a + b exactly, or DynamoDB's precision or range error.
 func sumNumbers(a, b *Number) (*Number, *Error) {

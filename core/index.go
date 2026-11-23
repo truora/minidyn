@@ -228,15 +228,11 @@ func (i *index) putData(key string, item map[string]*types.Item) error {
 //   - it has no index key attribute (the index is sparse);
 //   - its index key is an empty string or binary;
 //   - its index key attribute has another data type than the attribute definition
-//     (ErrInvalidAtrributeValue);
-//   - its index key is an N that DynamoDB cannot store: not a number, or out of range
-//     (ErrInvalidNumber, ErrNumberOverflow, ErrNumberUnderflow).
+//     (ErrInvalidAtrributeValue).
 //
 // The developer guide, under "Phases of index creation", says the violating keys are not present
-// in the index and do not interfere with its creation. It lists the first three. The last one is
-// minidyn's choice: an N value DynamoDB cannot store could never have been written to DynamoDB,
-// so it violates the key the same way, and minidyn only holds it because non-key N values are
-// not validated on write.
+// in the index and do not interfere with its creation. An N value DynamoDB cannot store is not
+// among them: every write validates N values (#226), so no stored item holds one.
 //
 // Any other GetKey error is an invariant failure: for a secondary schema GetKey gives no other.
 // It is returned, not skipped, so a bug cannot silently hide an item from the index. The caller
@@ -252,7 +248,7 @@ func (i *index) backfill() error {
 
 		indexKey, err := i.keySchema.GetKey(i.Table.AttributesDef, item)
 		if err != nil {
-			if isKeyViolation(err) {
+			if errors.Is(err, ErrInvalidAtrributeValue) {
 				continue
 			}
 
@@ -263,15 +259,6 @@ func (i *index) backfill() error {
 	}
 
 	return nil
-}
-
-// isKeyViolation reports whether err, from GetKey on an item that is already stored, says the
-// item's index key violates the schema (see backfill).
-func isKeyViolation(err error) bool {
-	return errors.Is(err, ErrInvalidAtrributeValue) ||
-		errors.Is(err, ErrInvalidNumber) ||
-		errors.Is(err, ErrNumberOverflow) ||
-		errors.Is(err, ErrNumberUnderflow)
 }
 
 // delete drops the entry of the item with primary key key. The entry is found through refs, not

@@ -401,10 +401,6 @@ func (fd *Client) putItemLocked(_ context.Context, input *dynamodb.PutItemInput)
 		return nil, ferr
 	}
 
-	if err := core.ValidateReturnValuesOnConditionCheckFailure(aws.String(string(input.ReturnValuesOnConditionCheckFailure))); err != nil {
-		return nil, mapKnownError(err)
-	}
-
 	err := validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ConditionExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -1160,6 +1156,11 @@ func (fd *Client) TransactWriteItems(ctx context.Context, input *dynamodb.Transa
 		return nil, emulation.failErr
 	}
 
+	// DynamoDB Local reports an invalid number anywhere in the request before any other problem.
+	if err := core.ValidateWriteValues(transactWriteValues(input.TransactItems)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	if err := validateTransactReturnValuesOnConditionCheckFailure(input.TransactItems); err != nil {
 		return nil, err
 	}
@@ -1417,6 +1418,34 @@ func (fd *Client) runTransactUpdate(i, n int, update *types.Update) error {
 	}
 
 	return nil
+}
+
+// transactWriteValues lists the attribute values of every operation of a transaction, in order.
+func transactWriteValues(items []types.TransactWriteItem) []core.WriteValues {
+	ops := make([]core.WriteValues, 0, len(items))
+
+	for _, item := range items {
+		switch {
+		case item.Put != nil:
+			ops = append(ops, core.WriteValues{
+				Expression: mapDynamoToTypesMapItem(item.Put.ExpressionAttributeValues), Item: mapDynamoToTypesMapItem(item.Put.Item),
+			})
+		case item.Update != nil:
+			ops = append(ops, core.WriteValues{
+				Expression: mapDynamoToTypesMapItem(item.Update.ExpressionAttributeValues), Item: mapDynamoToTypesMapItem(item.Update.Key),
+			})
+		case item.Delete != nil:
+			ops = append(ops, core.WriteValues{
+				Expression: mapDynamoToTypesMapItem(item.Delete.ExpressionAttributeValues), Item: mapDynamoToTypesMapItem(item.Delete.Key),
+			})
+		case item.ConditionCheck != nil:
+			ops = append(ops, core.WriteValues{
+				Expression: mapDynamoToTypesMapItem(item.ConditionCheck.ExpressionAttributeValues), Item: mapDynamoToTypesMapItem(item.ConditionCheck.Key),
+			})
+		}
+	}
+
+	return ops
 }
 
 // validateTransactReturnValuesOnConditionCheckFailure rejects the whole transaction, before any

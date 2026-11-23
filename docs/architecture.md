@@ -497,10 +497,13 @@ ADRs for the layers:
 - **Order:** in the single-item operations, an emulated failure is checked
   after `ReturnConsumedCapacity` is parsed, and before expression validation
   and the table lookup.
-- **Gap (#275):** the transaction operations check failures at different
-  points in each front end. A new knob should follow the single-item order.
-- **Batches:** a table-scoped failure fails a whole batch. Unprocessed-items
-  emulation is the only partial path.
+- **Batches and transactions (#275):** these check, in order, the input shape,
+  `ReturnConsumedCapacity`, the emulated failure, then each request or item.
+  `TransactWriteItems` has no structural shape check yet (#291).
+  `ReturnValuesOnConditionCheckFailure` is an item-level check, so it comes
+  after the failure, as in the single-item operations. A table-scoped failure
+  fails the whole call when any table it touches is the scoped one.
+  Unprocessed-items emulation is the only partial path.
 - **Indexes:** GSIs are written synchronously and are strongly consistent. The
   only emulated delay is `Table.IndexActivationDelay`:
   - `Description` reports a new index as `CREATING` until the delay has

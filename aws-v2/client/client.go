@@ -712,6 +712,11 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		return nil, mapKnownError(err)
 	}
 
+	// Stopgap until #243: DynamoDB Local reports ConsistentRead on a GSI right after the unknown index for a Scan.
+	if err = table.ValidateConsistentRead(aws.ToString(input.IndexName), aws.ToBool(input.ConsistentRead)); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	err = validateExpressionAttributes(input.ExpressionAttributeNames, input.ExpressionAttributeValues, aws.ToString(input.ProjectionExpression), aws.ToString(input.FilterExpression))
 	if err != nil {
 		return nil, mapKnownError(err)
@@ -728,6 +733,7 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		FilterExpression:          aws.ToString(input.FilterExpression),
 		ProjectionExpression:      aws.ToString(input.ProjectionExpression),
 		Select:                    string(input.Select),
+		ConsistentRead:            aws.ToBool(input.ConsistentRead),
 		ScanIndexForward:          true,
 		Scan:                      true,
 	})

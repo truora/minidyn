@@ -382,3 +382,93 @@ func TestValidateSearchIndex(t *testing.T) {
 	err := table.ValidateSearchIndex("nope")
 	require.EqualError(t, err, "ValidationException: The table does not have the specified index: nope | table: "+table.Name)
 }
+
+const gsiConsistentReadMsg = "ValidationException: Consistent reads are not supported on global secondary indexes | index: keys"
+
+func createConsistentReadTable(t *testing.T) *Table {
+	t.Helper()
+
+	table := createSelectTable(t)
+	lsis := createLocalSecondaryIndex()
+	lsis[0].KeySchema = []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}}
+	require.NoError(t, table.AddLocalIndexes(lsis))
+
+	return table
+}
+
+// DynamoDB serves a GSI from an eventually consistent copy, so ConsistentRead true is an
+// error there, and only there: the table and an LSI take it.
+func TestValidateConsistentRead(t *testing.T) {
+	table := createConsistentReadTable(t)
+
+	require.EqualError(t, table.ValidateConsistentRead("keys", true), gsiConsistentReadMsg)
+	require.NoError(t, table.ValidateConsistentRead("keys", false))
+	require.NoError(t, table.ValidateConsistentRead("indexname", true))
+	require.NoError(t, table.ValidateConsistentRead(PrimaryIndexName, true))
+	// An unknown index is ValidateSearchIndex's to report.
+	require.NoError(t, table.ValidateConsistentRead("nope", true))
+}
+
+func TestSearchDataConsistentReadOnIndex(t *testing.T) {
+	table := createConsistentReadTable(t)
+	keyCond := "id = :id"
+	vals := map[string]*types.Item{":id": {S: new("001")}}
+
+	cases := []struct {
+		name    string
+		input   QueryInput
+		wantErr string
+	}{
+		{"query GSI", QueryInput{Index: "keys", KeyConditionExpression: keyCond, ExpressionAttributeValues: vals, ConsistentRead: true}, gsiConsistentReadMsg},
+		{"scan GSI", QueryInput{Index: "keys", Scan: true, ConsistentRead: true}, gsiConsistentReadMsg},
+		{"query GSI eventually consistent", QueryInput{Index: "keys", KeyConditionExpression: keyCond, ExpressionAttributeValues: vals}, ""},
+		{"scan GSI eventually consistent", QueryInput{Index: "keys", Scan: true}, ""},
+		{"query LSI", QueryInput{Index: "indexname", KeyConditionExpression: keyCond, ExpressionAttributeValues: vals, ConsistentRead: true}, ""},
+		{"scan LSI", QueryInput{Index: "indexname", Scan: true, ConsistentRead: true}, ""},
+		{"query table", QueryInput{KeyConditionExpression: keyCond, ExpressionAttributeValues: vals, ConsistentRead: true}, ""},
+		{"scan table", QueryInput{Scan: true, ConsistentRead: true}, ""},
+		// The unknown index comes first.
+		{
+			"query unknown index",
+			QueryInput{Index: "nope", KeyConditionExpression: keyCond, ExpressionAttributeValues: vals, ConsistentRead: true},
+			"ValidationException: The table does not have the specified index: nope | table: " + table.Name,
+		},
+		// A Query reports undefined placeholders first, and everything else of the request after.
+		{
+			"query undefined value",
+			QueryInput{Index: "keys", KeyConditionExpression: keyCond, ConsistentRead: true},
+			"ValidationException: Invalid KeyConditionExpression: An expression attribute value used in expression is not defined; attribute value: :id",
+		},
+		{
+			"query undeclared name",
+			QueryInput{Index: "keys", KeyConditionExpression: "#n = :id", ExpressionAttributeValues: vals, ConsistentRead: true},
+			"ValidationException: Invalid KeyConditionExpression: An expression attribute name used in the document path is not defined; attribute name: #n",
+		},
+		{"query empty hash value", QueryInput{Index: "keys", KeyConditionExpression: keyCond, ExpressionAttributeValues: map[string]*types.Item{":id": emptyS()}, ConsistentRead: true}, gsiConsistentReadMsg},
+		{"query key condition type mismatch", QueryInput{Index: "keys", KeyConditionExpression: keyCond, ExpressionAttributeValues: map[string]*types.Item{":id": nItem("1")}, ConsistentRead: true}, gsiConsistentReadMsg},
+		{"query key condition on a non-key", QueryInput{Index: "keys", KeyConditionExpression: "type = :id", ExpressionAttributeValues: vals, ConsistentRead: true}, gsiConsistentReadMsg},
+		{"query projection the index lacks", QueryInput{Index: "keys", KeyConditionExpression: keyCond, ExpressionAttributeValues: vals, ProjectionExpression: "type", ConsistentRead: true}, gsiConsistentReadMsg},
+		{"scan projection the index lacks", QueryInput{Index: "keys", Scan: true, ProjectionExpression: "type", ConsistentRead: true}, gsiConsistentReadMsg},
+		{"query invalid select", QueryInput{Index: "keys", KeyConditionExpression: keyCond, ExpressionAttributeValues: vals, Select: "BOGUS", ConsistentRead: true}, gsiConsistentReadMsg},
+		{"scan invalid select", QueryInput{Index: "keys", Scan: true, Select: "BOGUS", ConsistentRead: true}, gsiConsistentReadMsg},
+		{"query ALL_ATTRIBUTES on a keys-only GSI", QueryInput{Index: "keys", KeyConditionExpression: keyCond, ExpressionAttributeValues: vals, Select: "ALL_ATTRIBUTES", ConsistentRead: true}, gsiConsistentReadMsg},
+		// A Scan reports it ahead of its placeholders (DynamoDB Local does).
+		{"scan undeclared name", QueryInput{Index: "keys", Scan: true, FilterExpression: "#n = :id", ExpressionAttributeValues: vals, ConsistentRead: true}, gsiConsistentReadMsg},
+		{"scan undefined value", QueryInput{Index: "keys", Scan: true, FilterExpression: "id = :id", ConsistentRead: true}, gsiConsistentReadMsg},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.input.ScanIndexForward = true
+
+			_, err := table.SearchData(tc.input)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.EqualError(t, err, tc.wantErr)
+		})
+	}
+}

@@ -109,3 +109,87 @@ func TestServerQueryAndScanMissingTableBeforeUnusedName(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "ResourceNotFoundException")
 }
+
+// ConsistentRead true on a GSI is rejected for a Query and a Scan, and the flag reaches core
+// from the front end. A Scan reports it ahead of its unused names, a Query after them.
+func TestServerQueryAndScanConsistentReadOnGSI(t *testing.T) {
+	ts := httptest.NewServer(NewServer())
+	defer ts.Close()
+
+	cli := newTestDynamoClient(t, ts.URL)
+	ctx := context.Background()
+
+	str := func(v string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueMemberS{Value: v} }
+	hash := func(name string) ddbtypes.KeySchemaElement {
+		return ddbtypes.KeySchemaElement{AttributeName: aws.String(name), KeyType: ddbtypes.KeyTypeHash}
+	}
+	attr := func(name string) ddbtypes.AttributeDefinition {
+		return ddbtypes.AttributeDefinition{AttributeName: aws.String(name), AttributeType: ddbtypes.ScalarAttributeTypeS}
+	}
+
+	_, err := cli.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:            aws.String("orders"),
+		KeySchema:            []ddbtypes.KeySchemaElement{hash("customer")},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{attr("customer"), attr("status")},
+		BillingMode:          ddbtypes.BillingModePayPerRequest,
+		GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{{
+			IndexName:  aws.String("by-status"),
+			KeySchema:  []ddbtypes.KeySchemaElement{hash("status")},
+			Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+		}},
+	})
+	require.NoError(t, err)
+
+	_, err = cli.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("orders"),
+		Item:      map[string]ddbtypes.AttributeValue{"customer": str("alice"), "status": str("open")},
+	})
+	require.NoError(t, err)
+
+	const want = "Consistent reads are not supported on global secondary indexes | index: by-status"
+
+	query := func(index string, consistent *bool) *dynamodb.QueryInput {
+		in := &dynamodb.QueryInput{
+			TableName:                 aws.String("orders"),
+			KeyConditionExpression:    aws.String("customer = :v"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": str("alice")},
+			ConsistentRead:            consistent,
+		}
+
+		if index != "" {
+			in.IndexName = aws.String(index)
+			in.KeyConditionExpression = aws.String("#s = :v")
+			in.ExpressionAttributeNames = map[string]string{"#s": "status"}
+			in.ExpressionAttributeValues = map[string]ddbtypes.AttributeValue{":v": str("open")}
+		}
+
+		return in
+	}
+
+	_, err = cli.Query(ctx, query("by-status", aws.Bool(true)))
+	requireValidationError(t, err, want)
+
+	_, err = cli.Query(ctx, query("by-status", aws.Bool(false)))
+	require.NoError(t, err)
+
+	_, err = cli.Query(ctx, query("by-status", nil))
+	require.NoError(t, err)
+
+	_, err = cli.Query(ctx, query("", aws.Bool(true)))
+	require.NoError(t, err)
+
+	_, err = cli.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String("orders"), IndexName: aws.String("by-status"), ConsistentRead: aws.Bool(true)})
+	requireValidationError(t, err, want)
+
+	_, err = cli.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String("orders"), IndexName: aws.String("by-status"), ConsistentRead: aws.Bool(true),
+		ExpressionAttributeNames: map[string]string{"#u": "status"},
+	})
+	requireValidationError(t, err, want)
+
+	_, err = cli.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String("orders"), IndexName: aws.String("by-status"), ConsistentRead: aws.Bool(false)})
+	require.NoError(t, err)
+
+	_, err = cli.Scan(ctx, &dynamodb.ScanInput{TableName: aws.String("orders"), ConsistentRead: aws.Bool(true)})
+	require.NoError(t, err)
+}

@@ -699,6 +699,32 @@ func TestSearchData_duplicateExpressionAttributeValues(t *testing.T) {
 	c.Contains(apiErr.Message(), "contains duplicates")
 }
 
+func TestSearchData_queryDuplicateExpressionAttributeValueText(t *testing.T) {
+	c := require.New(t)
+
+	newTable, err := createPokemonTable()
+	c.NoError(err)
+
+	a, b := "d", "d"
+	values := map[string]*types.Item{":v": {SS: []*string{&a, &b}}}
+
+	// Local words the duplicate set of a Query and of a Scan alike, after the name of the value.
+	want := "ExpressionAttributeValues contains invalid value: One or more parameter values were invalid: Input collection [d, d] contains duplicates for key :v"
+
+	for _, scan := range []bool{false, true} {
+		_, err = newTable.SearchData(QueryInput{Scan: scan, ExpressionAttributeValues: values})
+		c.Equal(want, messageOf(c, err))
+	}
+}
+
+func messageOf(c *require.Assertions, err error) string {
+	var apiErr types.Error
+
+	c.True(errors.As(err, &apiErr))
+
+	return apiErr.Message()
+}
+
 func TestSearchData_undeclaredExpressionAttributeName(t *testing.T) {
 	cases := []struct {
 		name  string

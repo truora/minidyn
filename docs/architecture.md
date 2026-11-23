@@ -125,6 +125,10 @@ ADRs for the layers:
     `ConsistentRead`, and ahead of the front ends' pre-check of the
     expression attributes (`Table.ValidateSearchIndex`). Local checks the
     Query `Limit` (#242) before the index;
+  - `ConsistentRead: true` on a GSI of a Query or Scan (#247), which Local
+    rejects: a Scan right after the unknown index, ahead of its placeholders;
+    a Query after its placeholders and before the projection, key condition,
+    `Select` and start key (`Table.ValidateConsistentRead`);
   - the N values DynamoDB cannot store (#226, #273): not a number, out of range, or
     over 38 digits, in any item, key, set member or expression value
     (`types.ValidateItemMap`, `types.ValidateExpressionAttributeValues`, which
@@ -174,7 +178,9 @@ ADRs for the layers:
     key attributes) before any GSI.
 - **Gap (#243):** the front ends call `Table.ValidateSearchIndex` before their
   own pre-check of unused names and values, because Local reports a missing
-  table and an unknown index before them. This is a stopgap until #243 moves
+  table and an unknown index before them. For a Scan they also call
+  `Table.ValidateConsistentRead` before that pre-check, for the same reason:
+  Local reports ConsistentRead on a GSI right after the unknown index. This is a stopgap until #243 moves
   that pre-check into `core`, where `SearchData` already orders it.
 - **Why:** with per-item checks, the same bad request passes on an empty table
   and fails on a full one, and the error depends on the data.

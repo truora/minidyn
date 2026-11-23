@@ -124,6 +124,128 @@ func TestE2E_ListIndexSyntax(t *testing.T) {
 	}
 }
 
+// Parity for a literal list index (#164, #267). DynamoDB Local takes 0 to 2147483647: a larger
+// literal, of any size, is "Invalid <X>Expression: List index is not within the allowable range;
+// index: [N]", and a literal with a leading zero is a syntax error. Both are reported while the
+// expression is checked, before the unused and undefined placeholders. A syntax error elsewhere
+// in the same text comes before the range error, the first range error in the text is the one
+// reported, and the same holds in every kind of expression. The index that is accepted is the
+// boundary, 2147483647.
+func TestE2E_ListIndexLiteral(t *testing.T) {
+	str := fzS("x")
+	v := map[string]dynamodbtypes.AttributeValue{":v": str}
+	x := map[string]dynamodbtypes.AttributeValue{":x": str}
+	px := map[string]dynamodbtypes.AttributeValue{":p": str, ":x": str}
+	vz := map[string]dynamodbtypes.AttributeValue{":v": str, ":z": str}
+
+	// every kind of expression and position, for each index text. A key condition cannot hold a
+	// valid index, so the boundary is not tried there.
+	positions := func(index string, boundary bool) map[string]listIndexReq {
+		at := "[" + index + "]"
+		cases := map[string]listIndexReq{
+			"Set":                {kind: "update", expr: "SET l" + at + " = :v", values: v},
+			"SetRightSide":       {kind: "update", expr: "SET n = :v, x = l" + at, values: v},
+			"SetNested":          {kind: "update", expr: "SET m.l" + at + ".k = :v", values: v},
+			"SetMixed":           {kind: "update", expr: "SET l[0]" + at + " = :v", values: v},
+			"Remove":             {kind: "update", expr: "REMOVE l" + at},
+			"Add":                {kind: "update", expr: "ADD l" + at + " :v", values: map[string]dynamodbtypes.AttributeValue{":v": fzN("1")}},
+			"SecondClause":       {kind: "update", expr: "SET n = :v, l" + at + " = :v", values: v},
+			"Condition":          {kind: "update", expr: "SET n = :v", cond: "l" + at + " = :v", values: v},
+			"ConditionFn":        {kind: "update", expr: "SET n = :v", cond: "attribute_exists(l" + at + ")", values: v},
+			"PutCondition":       {kind: "put", cond: "l" + at + " = :x", values: x},
+			"DeleteCondition":    {kind: "delete", cond: "l" + at + " = :x", values: x},
+			"TransactUpdate":     {kind: "transact", expr: "SET l" + at + " = :v", values: v},
+			"TransactCheck":      {kind: "transactcheck", cond: "l" + at + " = :v", values: v},
+			"ScanFilter":         {kind: "scan", expr: "l" + at + " = :x", values: x},
+			"QueryFilter":        {kind: "query", expr: "l" + at + " = :x", values: px},
+			"GetProjection":      {kind: "get", expr: "l" + at},
+			"GetProjectionTwo":   {kind: "get", expr: "n, m.l" + at},
+			"BatchGetProjection": {kind: "batchget", expr: "l" + at},
+			"QueryProjection":    {kind: "keycond", expr: "pk = :p", cond: "l" + at, values: map[string]dynamodbtypes.AttributeValue{":p": str}},
+		}
+
+		if !boundary {
+			cases["KeyCondition"] = listIndexReq{kind: "keycond", expr: "pk = :p AND l" + at + " = :x", values: px}
+		}
+
+		return cases
+	}
+
+	tests := map[string]listIndexReq{}
+
+	for name, index := range map[string]struct {
+		text     string
+		boundary bool
+	}{
+		"Boundary":   {"2147483647", true},
+		"Above":      {"2147483648", false},
+		"Power32":    {"4294967296", false},
+		"Int64Max":   {"9223372036854775807", false},
+		"Int64Over":  {"9223372036854775808", false},
+		"Huge":       {"99999999999999999999999999", false},
+		"LeadZero":   {"007", false},
+		"DoubleZero": {"00", false},
+		"ZeroOne":    {"01", false},
+		"ZeroPadded": {"00000000002147483648", false},
+	} {
+		for position, req := range positions(index.text, index.boundary) {
+			tests[name+position] = req
+		}
+	}
+
+	// The order against the other errors, in one expression.
+	for name, req := range map[string]listIndexReq{
+		"RangeUndefinedValue":          {kind: "update", expr: "SET l[2147483648] = :v"},
+		"RangeUnusedValue":             {kind: "update", expr: "SET l[2147483648] = :v", values: vz},
+		"RangeUnusedName":              {kind: "update", expr: "SET l[2147483648] = :v", names: map[string]string{"#z": "z"}, values: v},
+		"RangeUndeclaredName":          {kind: "update", expr: "SET #q[2147483648] = :v", values: v},
+		"RangeFirstOfTwo":              {kind: "update", expr: "SET l[2147483649] = :v, m[2147483648] = :v", values: v},
+		"RangeNested":                  {kind: "update", expr: "SET l[0][2147483648].a = :v", values: v},
+		"RangeThenPlaceholder":         {kind: "update", expr: "SET l[2147483648] = :v, m[:i] = :v", values: v},
+		"PlaceholderThenRange":         {kind: "update", expr: "SET m[:i] = :v, l[2147483648] = :v", values: v},
+		"RangeThenZero":                {kind: "update", expr: "SET m[2147483648] = :v, l[007] = :v", values: v},
+		"ZeroThenRange":                {kind: "update", expr: "SET l[007] = :v, m[2147483648] = :v", values: v},
+		"ZeroUndefinedValue":           {kind: "update", expr: "SET l[007] = :v"},
+		"ZeroUnusedValue":              {kind: "update", expr: "SET l[007] = :v", values: vz},
+		"ZeroUnusedName":               {kind: "update", expr: "SET l[007] = :v", names: map[string]string{"#z": "z"}, values: v},
+		"ZeroUndeclaredName":           {kind: "update", expr: "SET #q[007] = :v", values: v},
+		"ZeroNested":                   {kind: "update", expr: "SET l[0][007].a = :v", values: v},
+		"RangeUpdateBeforeCond":        {kind: "update", expr: "SET l[2147483649] = :v", cond: "l[2147483648] = :v", values: v},
+		"RangeCondUnusedValue":         {kind: "update", expr: "SET n = :v", cond: "l[2147483648] = :v", values: vz},
+		"ZeroCondUnusedValue":          {kind: "update", expr: "SET n = :v", cond: "l[007] = :v", values: vz},
+		"ScanRangeUndefinedValue":      {kind: "scan", expr: "l[2147483648] = :q", values: x},
+		"ScanRangeUnusedValue":         {kind: "scan", expr: "l[2147483648] = :x", values: map[string]dynamodbtypes.AttributeValue{":x": str, ":z": str}},
+		"ScanZeroUnusedValue":          {kind: "scan", expr: "l[007] = :x", values: map[string]dynamodbtypes.AttributeValue{":x": str, ":z": str}},
+		"ProjectionRangeName":          {kind: "get", expr: "l[2147483648], #q"},
+		"ProjectionZeroName":           {kind: "get", expr: "l[007], #q"},
+		"ProjectionRangeUnusedName":    {kind: "get", expr: "l[2147483648]", names: map[string]string{"#z": "z"}},
+		"ProjectionZeroThenRange":      {kind: "get", expr: "l[007], l[2147483648]"},
+		"ProjectionRangeThenZero":      {kind: "get", expr: "l[2147483648], l[007]"},
+		"QueryFilterRangeUnused":       {kind: "query", expr: "l[2147483648] = :x", values: map[string]dynamodbtypes.AttributeValue{":p": str, ":x": str, ":z": str}},
+		"QueryFilterZeroUndefined":     {kind: "query", expr: "l[007] = :q", values: px},
+		"QueryProjectionRangeName":     {kind: "keycond", expr: "pk = :p", cond: "l[2147483648], #q", values: map[string]dynamodbtypes.AttributeValue{":p": str}},
+		"QueryKeyUndefinedFilterRange": {kind: "query", expr: "l[2147483648] = :x", values: px},
+	} {
+		tests[name] = req
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) string {
+				t.Helper()
+				ctx := context.Background()
+
+				item := fuzzKey("a", "1")
+				item["l"] = lpList("p", "q", "r")
+				item["n"] = fzN("1")
+				fuzzSetup(ctx, t, client, item)
+
+				return fuzzErrString(listIndexRun(ctx, client, tt))
+			})
+		})
+	}
+}
+
 // listIndexRun sends the request of tt against the item fuzzSetup stored.
 func listIndexRun(ctx context.Context, client *dynamodb.Client, tt listIndexReq) error {
 	table, key := aws.String(fuzzTable), fuzzKey("a", "1")

@@ -1,6 +1,7 @@
 package language
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -143,44 +144,47 @@ func TestAppendListIndexSegment_invalidIndexExpression(t *testing.T) {
 	}
 }
 
-// A literal list index that does not fit an int64 is an error with minidyn's own text, not an
-// update expression one, and the same on every platform (#267).
+// An index outside 0 to 2147483647 that reaches ExtractPath is an error with minidyn's own text,
+// not an update expression one, and the same on every platform (#267). The parser rejects it
+// (#164), so only a tree built without the parser, which forceListIndex stands for, gets here.
 func TestExtractPath_literalListIndexOutOfRange(t *testing.T) {
 	t.Parallel()
 
-	for _, index := range []string{"9223372036854775808", "99999999999999999999999"} {
-		p := NewParser(NewLexer("l[" + index + "]"))
+	for _, index := range []string{"2147483648", "9223372036854775808", "99999999999999999999999"} {
+		p := NewParser(NewLexer("l[0]"))
 		exprs := p.ParseProjectionExpression()
 		checkParserErrors(t, p)
+		forceListIndex(t, exprs, index)
 
 		_, err := ExtractPath(exprs[0], NewEnvironment())
 
-		want := "invalid list index in a document path | path: " + index + "; reason: list index is out of range"
+		want := "invalid list index in a document path | path: " + index + "; reason: " + fmt.Sprintf(indexRangeReason, index)
 		if err == nil || err.Error() != want {
 			t.Errorf("expected %q, got %v", want, err)
 		}
 	}
 
-	// The largest int64 is a valid index: no element can be there, but the path is addressable.
-	p := NewParser(NewLexer("l[9223372036854775807]"))
+	// The largest index is valid: no element can be there, but the path is addressable.
+	p := NewParser(NewLexer("l[2147483647]"))
 	exprs := p.ParseProjectionExpression()
 	checkParserErrors(t, p)
 
 	path, err := ExtractPath(exprs[0], NewEnvironment())
-	if err != nil || path[1].Index != 9223372036854775807 {
+	if err != nil || path[1].Index != 2147483647 {
 		t.Errorf("got %v, %v", path, err)
 	}
 }
 
 // Only a tree built without the parser can reach an index that is not an integer literal: the
-// parser rejects it (#164), so ExtractPath refuses it instead of reading a placeholder.
+// parser rejects it (#164), so ExtractPath refuses it instead of reading a placeholder. It gets
+// the range message, the one reason an index has for being refused.
 func TestExtractPathListIndex_notAnIntegerLiteral(t *testing.T) {
 	t.Parallel()
 
-	for _, literal := range []string{"OR", ":i", "1.5", ""} {
+	for _, literal := range []string{"OR", ":i", "1.5", "-1", ""} {
 		_, err := extractPathListIndex(&Identifier{Token: Token{Type: IDENT, Literal: literal}, Value: literal})
 
-		want := "invalid list index in a document path | path: " + literal + "; reason: list index must be an integer literal"
+		want := "invalid list index in a document path | path: " + literal + "; reason: " + fmt.Sprintf(indexRangeReason, literal)
 		if err == nil || err.Error() != want {
 			t.Errorf("%q: expected %q, got %v", literal, want, err)
 		}

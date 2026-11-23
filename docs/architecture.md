@@ -141,11 +141,12 @@ ADRs for the layers:
     first (`core.ValidateWriteValues`), and a batch write every request
     (`core.ValidateBatchWrite`). See
     [`docs/adr/2026-11-22-validate-number-values-on-every-write.md`](adr/2026-11-22-validate-number-values-on-every-write.md);
-  - a list index that is not a literal, such as `l[:i]` (#164): a syntax error
-    that DynamoDB reports while parsing, before it checks any placeholder, so
-    it comes ahead of the undeclared names, the undefined values and the front
-    ends' pre-check of unused names and values
-    (`interpreter.HasInvalidListIndex`). See
+  - a list index that is not a literal, such as `l[:i]`, one with a leading
+    zero, or one above 2147483647 (#164): DynamoDB reports it while it checks
+    the expression, before any placeholder, so it comes ahead of the
+    undeclared names, the undefined values and the front ends' pre-check of
+    unused names and values (`interpreter.HasInvalidListIndex`). A syntax error
+    elsewhere in the same text comes before the range error. See
     [`docs/adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md`](adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md);
   - undeclared `#names`, then undefined `:values` (#190). Across all of a
     request's expressions an undeclared name comes before an undefined value;

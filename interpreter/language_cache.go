@@ -23,6 +23,8 @@ type parsedCondition struct {
 	values []string
 	// operandErr is the first built-in call with the wrong number of operands, if any.
 	operandErr *language.OperandCountError
+	// indexRange is the error for the first literal list index above DynamoDB's range, or "".
+	indexRange string
 }
 
 // conditionCache maps expression text to its parsed form. Parsing depends only on the text,
@@ -33,7 +35,7 @@ var conditionCache = struct {
 }{m: map[string]*parsedCondition{}}
 
 // placeholderCache maps expression text to its #names and :values, scanned in one lexer pass
-// together with its first list index that is not a literal.
+// together with its first list index problems.
 // Placeholders don't depend on the expression kind, so the cache serves condition, filter, key
 // condition, projection and update expressions alike.
 var placeholderCache = struct {
@@ -93,6 +95,7 @@ func parseCondition(expr string) *parsedCondition {
 		conditional: p.ParseConditionalExpression(),
 		errs:        p.Errors(),
 	}
+	pc.indexRange = p.IndexRangeError()
 	pc.names, pc.values = exprPlaceholders(expr)
 
 	if len(pc.errs) == 0 && pc.conditional != nil {
@@ -122,6 +125,7 @@ type parsedUpdate struct {
 	errs        []string
 	unsupported bool
 	operandErr  *language.OperandCountError
+	indexRange  string
 }
 
 // updateCache maps update expression text to its parsed form, bounded by maxParsedExpressions.
@@ -141,6 +145,7 @@ func parseUpdate(expr string) *parsedUpdate {
 
 	p := language.NewUpdateParser(language.NewLexer(expr))
 	pu := &parsedUpdate{stmt: p.ParseUpdateExpression(), errs: p.Errors(), unsupported: p.IsUnsupportedExpression()}
+	pu.indexRange = p.IndexRangeError()
 
 	if len(pu.errs) == 0 && pu.stmt != nil {
 		pu.operandErr = language.FindOperandCountError(pu.stmt)
@@ -187,8 +192,9 @@ func validateDeclaredValues(expressionType string, placeholders []string, values
 
 // parsedProjection is a projection expression parsed once, like parsedCondition.
 type parsedProjection struct {
-	exprs []language.Expression
-	errs  []string
+	exprs      []language.Expression
+	errs       []string
+	indexRange string
 }
 
 // projectionCache maps projection expression text to its parsed form, bounded by
@@ -209,6 +215,7 @@ func parseProjection(expr string) *parsedProjection {
 
 	p := language.NewParser(language.NewLexer(expr))
 	pp := &parsedProjection{exprs: p.ParseProjectionExpression(), errs: p.Errors()}
+	pp.indexRange = p.IndexRangeError()
 
 	if len(projectionCache.m) >= maxParsedExpressions {
 		clear(projectionCache.m)

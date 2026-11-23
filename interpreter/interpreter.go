@@ -82,24 +82,75 @@ func locatedParseError(expressionType string, errs []string) error {
 	return &syntaxErrorAtToken{expressionType: expressionType, detail: detail}
 }
 
-// invalidListIndexError returns the syntax error of the first expression whose list index is
-// not an integer literal. DynamoDB finds it while parsing, before it checks any placeholder, so
-// the validators below report it first.
-func invalidListIndexError(exprs []LabeledExpression) error {
+// listIndexRangeError is the error for a literal list index above DynamoDB's range. It is not a
+// syntax error in DynamoDB's words, but it maps to the same ValidationException, so it unwraps
+// to ErrSyntaxError like the other expression errors.
+type listIndexRangeError struct {
+	expressionType string
+	message        string
+}
+
+func (e *listIndexRangeError) Error() string {
+	return "Invalid " + e.expressionType + ": " + e.message
+}
+
+func (e *listIndexRangeError) Unwrap() error { return ErrSyntaxError }
+
+// listIndexError returns the error of the first list index DynamoDB rejects before it checks any
+// placeholder. A syntax error (a token that is not a literal, or a leading zero) in any
+// expression comes first, as DynamoDB finds those while parsing; then a literal above the range,
+// which it reports once the expression parsed, so a syntax error elsewhere in the same text
+// wins: that text is left to the parse that reports it.
+func listIndexError(exprs []LabeledExpression) error {
 	for _, e := range exprs {
-		if token := exprScan(e.Expression).InvalidIndex; token != "" {
-			return &syntaxErrorAtToken{expressionType: e.Label, detail: language.ListIndexSyntaxDetail(token)}
+		if detail := exprScan(e.Expression).IndexSyntax; detail != "" {
+			return &syntaxErrorAtToken{expressionType: e.Label, detail: detail}
 		}
+	}
+
+	for _, e := range exprs {
+		if exprScan(e.Expression).IndexRange == "" {
+			continue
+		}
+
+		message, parses := indexRangeOf(e)
+		if !parses {
+			return nil
+		}
+
+		return &listIndexRangeError{expressionType: e.Label, message: message}
 	}
 
 	return nil
 }
 
-// HasInvalidListIndex reports whether expression has a list index that is not an integer
-// literal, such as a placeholder. Front ends use it to let that syntax error win over the
-// unused-placeholder checks, as DynamoDB does.
+// indexRangeOf returns the range error of e's literal list indexes, parsed with the grammar of
+// its kind, and whether the expression has no other syntax error. The parses are cached.
+func indexRangeOf(e LabeledExpression) (message string, parses bool) {
+	switch e.Label {
+	case "UpdateExpression":
+		pu := parseUpdate(e.Expression)
+
+		return pu.indexRange, len(pu.errs) == 0
+	case "ProjectionExpression":
+		pp := parseProjection(e.Expression)
+
+		return pp.indexRange, len(pp.errs) == 0
+	default:
+		pc := parseCondition(e.Expression)
+
+		return pc.indexRange, len(pc.errs) == 0
+	}
+}
+
+// HasInvalidListIndex reports whether expression has a list index DynamoDB rejects before it
+// checks the placeholders: a token that is not a literal, such as a placeholder, a literal with
+// a leading zero, or a literal above 2147483647. Front ends use it to let that error win over
+// the unused-placeholder checks, as DynamoDB does.
 func HasInvalidListIndex(expression string) bool {
-	return exprScan(expression).InvalidIndex != ""
+	scan := exprScan(expression)
+
+	return scan.IndexSyntax != "" || scan.IndexRange != ""
 }
 
 // operandCountError reports a built-in function called with the wrong number of operands. Its
@@ -142,7 +193,7 @@ type LabeledExpression struct {
 // matching DynamoDB which reports the first undeclared name in the order given. Expressions
 // are scanned once and cached.
 func ValidateExpressionAttributeNamesDeclared(aliases map[string]string, exprs ...LabeledExpression) error {
-	if err := invalidListIndexError(exprs); err != nil {
+	if err := listIndexError(exprs); err != nil {
 		return err
 	}
 
@@ -161,7 +212,7 @@ func ValidateExpressionAttributeNamesDeclared(aliases map[string]string, exprs .
 // matching DynamoDB which reports the first undefined value in the order given. Expressions
 // are scanned once and cached.
 func ValidateExpressionAttributeValuesDeclared(values map[string]*types.Item, exprs ...LabeledExpression) error {
-	if err := invalidListIndexError(exprs); err != nil {
+	if err := listIndexError(exprs); err != nil {
 		return err
 	}
 

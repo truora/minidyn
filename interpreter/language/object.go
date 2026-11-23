@@ -2,7 +2,6 @@ package language
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -155,28 +154,18 @@ func (i *Number) decimal() types.Decimal {
 	return d
 }
 
-// listIndexOutOfRangeReason is why a literal list index cannot be used, reported as error detail.
-const listIndexOutOfRangeReason = "list index is out of range"
-
-// listIndexNotNumberReason is why an index that is not an integer literal cannot be used. The
-// parser rejects those, so only a tree built without it can reach this.
-const listIndexNotNumberReason = "list index must be an integer literal"
-
 // listIndexLiteral converts the literal index of a path, such as the 3 of l[3], exactly: it is
-// the one place that does it, so the evaluator and ExtractPath cannot disagree. reason says why
-// the literal cannot be an index: it does not fit an int64, whatever the platform, or it is not
-// digits. The caller builds the error, as an assignment names the field and a read does not.
+// the one place that does it, so the evaluator and ExtractPath cannot disagree. DynamoDB accepts
+// 0 to 2147483647, and reason is its message for anything else. The parser already rejects an
+// index that is not a plain literal in range, so a reason can only come from a tree built
+// without it, and it is the range message whatever the text is. The caller builds the error, as
+// an assignment names the field and a read does not.
 func listIndexLiteral(literal string) (idx int64, reason string) {
-	n, err := strconv.ParseInt(literal, 10, 64)
-	if err == nil {
+	if n, err := strconv.ParseInt(literal, 10, 64); err == nil && isListIndexLiteral(literal) && n <= maxListIndex {
 		return n, ""
 	}
 
-	if errors.Is(err, strconv.ErrRange) {
-		return 0, listIndexOutOfRangeReason
-	}
-
-	return 0, listIndexNotNumberReason
+	return 0, ListIndexRangeMessage(literal)
 }
 
 // Add if the obj is an number it adds the value to the number

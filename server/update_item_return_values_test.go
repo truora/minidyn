@@ -165,3 +165,60 @@ func TestServerUpdateItemPlaceholderListIndex(t *testing.T) {
 		})
 	}
 }
+
+// A literal list index above 2147483647, and one with a leading zero, are rejected before the
+// placeholders are checked, as DynamoDB Local does (#164): an unused value, an unused name and
+// an undefined value do not change the answer, and the boundary index is accepted.
+func TestServerUpdateItemLiteralListIndexRules(t *testing.T) {
+	cli := listIndexServerClient(t)
+
+	str := func(v string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueMemberS{Value: v} }
+
+	const (
+		rangeText = "ValidationException: Invalid UpdateExpression: List index is not within the allowable range; index: [2147483648]"
+		zeroText  = `ValidationException: Invalid UpdateExpression: Syntax error; token: "0", near: "007"`
+	)
+
+	tests := map[string]struct {
+		expr   string
+		names  map[string]string
+		values map[string]ddbtypes.AttributeValue
+		want   string
+	}{
+		"range": {"SET l[2147483648] = :v", nil, map[string]ddbtypes.AttributeValue{":v": str("w")}, rangeText},
+		"range with an unused value": {
+			"SET l[2147483648] = :v", nil, map[string]ddbtypes.AttributeValue{":v": str("w"), ":z": str("unused")}, rangeText,
+		},
+		"range with an unused name": {
+			"SET l[2147483648] = :v", map[string]string{"#z": "z"}, map[string]ddbtypes.AttributeValue{":v": str("w")}, rangeText,
+		},
+		"range with an undefined value": {"SET l[2147483648] = :v", nil, nil, rangeText},
+		"huge range": {
+			"SET l[99999999999999999999] = :v", nil,
+			map[string]ddbtypes.AttributeValue{":v": str("w")},
+			"ValidationException: Invalid UpdateExpression: List index is not within the allowable range; index: [99999999999999999999]",
+		},
+		"leading zero": {"SET l[007] = :v", nil, map[string]ddbtypes.AttributeValue{":v": str("w")}, zeroText},
+		"leading zero with an unused value": {
+			"SET l[007] = :v", nil, map[string]ddbtypes.AttributeValue{":v": str("w"), ":z": str("unused")}, zeroText,
+		},
+		"leading zero with an unused name": {
+			"SET l[007] = :v", map[string]string{"#z": "z"}, map[string]ddbtypes.AttributeValue{":v": str("w")}, zeroText,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := cli.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+				TableName: aws.String("lists"), Key: map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: "a"}}, UpdateExpression: aws.String(tt.expr),
+				ExpressionAttributeNames: tt.names, ExpressionAttributeValues: tt.values,
+			})
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+
+	_, err := cli.UpdateItem(context.Background(), &dynamodb.UpdateItemInput{
+		TableName: aws.String("lists"), Key: map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: "a"}}, UpdateExpression: aws.String("REMOVE l[2147483647]"),
+	})
+	require.NoError(t, err)
+}

@@ -156,17 +156,18 @@ func TestUpdateTargetPaths(t *testing.T) {
 			name: "list index", expr: "SET l[1] = :v REMOVE m.l[0].k",
 			want: [][]PathElement{{key("l"), idx(1)}, {key("m"), key("l"), idx(0), key("k")}},
 		},
-		// A literal that does not fit an int64 cannot be extracted: the target keeps its prefix.
+		// A literal above 2147483647 cannot be extracted: the target keeps its prefix. The parser
+		// reports it as a range error, so this is the path of a tree that was not rejected.
 		{
-			name: "out of range index before another target", expr: "SET l[9223372036854775808] = :v, n = :v",
+			name: "out of range index before another target", expr: "SET l[2147483648] = :v, n = :v",
 			want: [][]PathElement{{key("l")}, {key("n")}},
 		},
 		{
-			name: "out of range index after another target", expr: "SET n = :v, l[9223372036854775808] = :v",
+			name: "out of range index after another target", expr: "SET n = :v, l[2147483648] = :v",
 			want: [][]PathElement{{key("n")}, {key("l")}},
 		},
 		{
-			name: "nested out of range index keeps prefix", expr: "SET m.l[9223372036854775808].k = :v, n = :v",
+			name: "nested out of range index keeps prefix", expr: "SET m.l[2147483648].k = :v, n = :v",
 			want: [][]PathElement{{key("m"), key("l")}, {key("n")}},
 		},
 	}

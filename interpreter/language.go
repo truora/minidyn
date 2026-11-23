@@ -40,6 +40,10 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(parsed.errs, "\n"))
 	}
 
+	if parsed.indexRange != "" {
+		return false, &listIndexRangeError{expressionType: matchExpressionLabel(input.ExpressionType), message: parsed.indexRange}
+	}
+
 	if conditional.Expression == nil {
 		if input.ExpressionType == ExpressionTypeKey {
 			return false, fmt.Errorf("Invalid KeyConditionExpression: %w; empty expression", ErrSyntaxError) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
@@ -131,6 +135,10 @@ func CheckProjection(expr string, aliases map[string]string) (*CheckedProjection
 		}
 
 		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(pp.errs, "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+	}
+
+	if pp.indexRange != "" {
+		return nil, &listIndexRangeError{expressionType: "ProjectionExpression", message: pp.indexRange}
 	}
 
 	if err := ValidateExpressionAttributeNamesDeclared(aliases, LabeledExpression{"ProjectionExpression", expr}); err != nil {
@@ -251,6 +259,10 @@ func (li *Language) Update(input UpdateInput) error {
 		}
 
 		return fmt.Errorf("%w: %s", errType, strings.Join(pu.errs, "\n"))
+	}
+
+	if pu.indexRange != "" {
+		return &listIndexRangeError{expressionType: "UpdateExpression", message: pu.indexRange}
 	}
 
 	if err := ValidateExpressionAttributeNamesDeclared(aliases, LabeledExpression{"UpdateExpression", input.Expression}); err != nil {

@@ -2,6 +2,7 @@ package language
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -1950,59 +1951,126 @@ func TestOperandText(t *testing.T) {
 	}
 }
 
-// A literal index too big for an int64 is a range error, not an attribute name (#267). An
-// assignment reports it as an invalid document path of the field; a read has no DynamoDB message
-// to borrow, so it gets minidyn's own text (D4).
-func TestEvalLiteralListIndexOutOfRange(t *testing.T) {
-	t.Parallel()
+const indexRangeReason = "List index is not within the allowable range; index: [%s]"
 
-	env := startUpdateMismatchEnv(t)
-	want := listIndexReadMsg + " | path: 9223372036854775808; reason: list index is out of range"
+// forceListIndex sets the literal of every list index in a parsed tree. The parser rejects a
+// literal outside DynamoDB's range (#164), so only a tree built without it, which this stands
+// for, reaches the evaluator with one: it must report it, not use it.
+func forceListIndex(t *testing.T, node any, literal string) {
+	t.Helper()
 
-	got := testEval(t, "l[9223372036854775808] = :val", env)
+	found := false
 
-	if errObj, ok := got.(*Error); !ok || errObj.Message != want {
-		t.Errorf("expected %q, got %s", want, got.Inspect())
-	}
+	visitValues(reflect.ValueOf(node), func(v reflect.Value) {
+		ie, ok := v.Interface().(*IndexExpression)
+		if !ok || ie.Type != ObjectTypeList {
+			return
+		}
 
-	wantAssign := updPathMsg + " | field id: l; path: 9223372036854775808; reason: list index is out of range"
+		if id, ok := ie.Index.(*Identifier); ok {
+			id.Token.Literal, found = literal, true
+		}
+	})
 
-	got = testEvalUpdate(t, "SET l[9223372036854775808] = :val", env)
-
-	if errObj, ok := got.(*Error); !ok || errObj.Message != wantAssign {
-		t.Errorf("expected %q, got %s", wantAssign, got.Inspect())
+	if !found {
+		t.Fatal("no list index in the tree")
 	}
 }
 
-// The largest int64 is a valid literal index that no element can hold: reading it gives no
-// value, so a condition on it is just false, and removing it is a no-op.
+// visitValues calls fn on every non-nil pointer and interface reachable from v through exported
+// fields and slices.
+func visitValues(v reflect.Value, fn func(reflect.Value)) {
+	switch v.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if !v.IsNil() {
+			fn(v)
+			visitValues(v.Elem(), fn)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if v.Type().Field(i).IsExported() {
+				visitValues(v.Field(i), fn)
+			}
+		}
+	case reflect.Slice:
+		for i := range v.Len() {
+			visitValues(v.Index(i), fn)
+		}
+	}
+}
+
+func parseConditionTree(t *testing.T, input string) *ConditionalExpression {
+	t.Helper()
+
+	p := NewParser(NewLexer(input))
+	conditional := p.ParseConditionalExpression()
+
+	if len(p.errors) != 0 {
+		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
+	}
+
+	return conditional
+}
+
+func parseUpdateTree(t *testing.T, input string) *UpdateStatement {
+	t.Helper()
+
+	p := NewUpdateParser(NewLexer(input))
+	update := p.ParseUpdateExpression()
+
+	if len(p.errors) != 0 {
+		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
+	}
+
+	return update
+}
+
+// An index outside 0 to 2147483647 that reaches the evaluator is an error, whatever its size:
+// an assignment reports it as an invalid document path of the field; a read has no DynamoDB
+// message to borrow, so it gets minidyn's own text (D4). The detail is the message DynamoDB
+// gives for the range.
+func TestEvalLiteralListIndexOutOfRange(t *testing.T) {
+	t.Parallel()
+
+	for _, literal := range []string{"2147483648", "9223372036854775807", "9223372036854775808", "99999999999999999999"} {
+		env := startUpdateMismatchEnv(t)
+		reason := fmt.Sprintf(indexRangeReason, literal)
+
+		cond := parseConditionTree(t, "l[0] = :val")
+		forceListIndex(t, cond, literal)
+
+		want := listIndexReadMsg + " | path: " + literal + "; reason: " + reason
+		if errObj, ok := Eval(cond, env).(*Error); !ok || errObj.Message != want {
+			t.Errorf("expected %q, got %s", want, Eval(cond, env).Inspect())
+		}
+
+		wantAssign := updPathMsg + " | field id: l; path: " + literal + "; reason: " + reason
+
+		for _, input := range []string{"SET l[0] = :val", "REMOVE l[0]", "ADD l[0] :one"} {
+			update := parseUpdateTree(t, input)
+			forceListIndex(t, update, literal)
+
+			got := EvalUpdate(update, startUpdateMismatchEnv(t))
+			if errObj, ok := got.(*Error); !ok || errObj.Message != wantAssign {
+				t.Errorf("%q with %s: expected %q, got %s", input, literal, wantAssign, got.Inspect())
+			}
+		}
+	}
+}
+
+// The largest index is a valid literal that no element can hold: reading it gives no value, so a
+// condition on it is just false, and removing it is a no-op.
 func TestEvalLiteralListIndexBeyondTheList(t *testing.T) {
 	t.Parallel()
 
 	env := startUpdateMismatchEnv(t)
 
-	if got := testEval(t, "attribute_exists(l[9223372036854775807])", env); got != FALSE {
+	if got := testEval(t, "attribute_exists(l[2147483647])", env); got != FALSE {
 		t.Errorf("expected FALSE, got %s", got.Inspect())
 	}
 
-	if got := testEvalUpdate(t, "REMOVE l[9223372036854775807]", env); isError(got) {
+	if got := testEvalUpdate(t, "REMOVE l[2147483647]", env); isError(got) {
 		t.Errorf("expected no error, got %s", got.Inspect())
-	}
-}
-
-// REMOVE and ADD report an out-of-range literal as SET does.
-func TestEvalLiteralListIndexOutOfRangeActions(t *testing.T) {
-	t.Parallel()
-
-	want := updPathMsg + " | field id: l; path: 9223372036854775808; reason: list index is out of range"
-
-	for _, input := range []string{"REMOVE l[9223372036854775808]", "ADD l[9223372036854775808] :one"} {
-		env := startUpdateMismatchEnv(t)
-
-		got := testEvalUpdate(t, input, env)
-		if errObj, ok := got.(*Error); !ok || errObj.Message != want {
-			t.Errorf("%q: expected %q, got %s", input, want, got.Inspect())
-		}
 	}
 }
 

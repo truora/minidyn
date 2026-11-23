@@ -1,6 +1,7 @@
 package language
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -41,26 +42,57 @@ func TestPlaceholders(t *testing.T) {
 	}
 }
 
-func TestScanExpressionInvalidIndex(t *testing.T) {
+// The scan finds, in the same pass as the placeholders, the first list index DynamoDB rejects
+// while parsing (a token that is not a literal, or a literal with a leading zero) and the first
+// literal above the range. The two are kept apart because a syntax error anywhere wins.
+func TestScanExpressionListIndex(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]string{
-		"l[:i] = :v":              ":i",
-		"SET l[#n] = :v":          "#n",
-		"a[0] = :v AND b[:j]":     ":j",
-		"l[abc]":                  "abc",
-		"m.l[1].k[:z]":            ":z",
-		"l[0] = :v":               "",
-		"a = :i":                  "",
-		"l[12][3] = :v":           "",
-		"l[9223372036854775808]":  "",
-		"":                        "",
-		"a.b[1].c = :v, d[2] = e": "",
+	const rangeText = "List index is not within the allowable range; index: [%s]"
+
+	cases := []struct {
+		expression string
+		syntax     string
+		rangeIdx   string
+	}{
+		{"l[:i] = :v", `token: ":i", near: "[:i]"`, ""},
+		{"SET l[#n] = :v", `token: "#n", near: "[#n]"`, ""},
+		{"a[0] = :v AND b[:j]", `token: ":j", near: "[:j]"`, ""},
+		{"l[abc]", `token: "abc", near: "[abc]"`, ""},
+		{"m.l[1].k[:z]", `token: ":z", near: "[:z]"`, ""},
+		{"l[007] = :v", `token: "0", near: "007"`, ""},
+		{"l[00]", `token: "0", near: "00]"`, ""},
+		{"l[01]", `token: "1", near: "01]"`, ""},
+		{"l[0123]", `token: "123", near: "0123]"`, ""},
+		{"m[0][007]", `token: "0", near: "007"`, ""},
+		{"l[2147483648] = :v", "", "2147483648"},
+		{"l[9223372036854775808]", "", "9223372036854775808"},
+		{"l[99999999999999999999999999]", "", "99999999999999999999999999"},
+		{"l[2147483649] = :v, m[2147483648]", "", "2147483649"},
+		{"l[2147483648], m[:i]", `token: ":i", near: "[:i]"`, "2147483648"},
+		{"m[007], l[2147483648]", `token: "0", near: "007"`, "2147483648"},
+		{"l[0] = :v", "", ""},
+		{"l[2147483647]", "", ""},
+		{"a = :i", "", ""},
+		{"l[12][3] = :v", "", ""},
+		{"", "", ""},
+		{"a.b[1].c = :v, d[2] = e", "", ""},
 	}
 
-	for expression, want := range cases {
-		if got := ScanExpression(expression).InvalidIndex; got != want {
-			t.Errorf("ScanExpression(%q).InvalidIndex = %q, want %q", expression, got, want)
+	for _, tt := range cases {
+		scan := ScanExpression(tt.expression)
+
+		if scan.IndexSyntax != tt.syntax {
+			t.Errorf("ScanExpression(%q).IndexSyntax = %q, want %q", tt.expression, scan.IndexSyntax, tt.syntax)
+		}
+
+		want := ""
+		if tt.rangeIdx != "" {
+			want = fmt.Sprintf(rangeText, tt.rangeIdx)
+		}
+
+		if scan.IndexRange != want {
+			t.Errorf("ScanExpression(%q).IndexRange = %q, want %q", tt.expression, scan.IndexRange, want)
 		}
 	}
 }

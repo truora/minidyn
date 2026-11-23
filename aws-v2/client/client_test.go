@@ -2616,34 +2616,34 @@ func TestEmulateUnprocessedItemsStickyAndClear(t *testing.T) {
 	c.Empty(out.UnprocessedItems[tableName])
 }
 
-func TestValidateTransactGetItemsInput(t *testing.T) {
+func TestValidateTransactGetItems(t *testing.T) {
 	c := require.New(t)
 	fd := NewClient()
 	id := map[string]dynamodbtypes.AttributeValue{"id": &dynamodbtypes.AttributeValueMemberS{Value: "1"}}
 
 	// nil input is a no-op.
-	c.NoError(validateTransactGetItemsInput(fd, nil))
+	c.NoError(validateTransactGetItemsShape(nil))
 
 	// empty TransactItems.
-	c.Error(validateTransactGetItemsInput(fd, &dynamodb.TransactGetItemsInput{}))
+	c.Error(validateTransactGetItemsShape(&dynamodb.TransactGetItemsInput{}))
 
 	// too many items.
-	c.Error(validateTransactGetItemsInput(fd, &dynamodb.TransactGetItemsInput{
+	c.Error(validateTransactGetItemsShape(&dynamodb.TransactGetItemsInput{
 		TransactItems: make([]dynamodbtypes.TransactGetItem, batchGetItemRequestsLimit+1),
 	}))
 
 	// missing Get.
-	c.Error(validateTransactGetItemsInput(fd, &dynamodb.TransactGetItemsInput{
+	c.Error(validateTransactGetItemsShape(&dynamodb.TransactGetItemsInput{
 		TransactItems: []dynamodbtypes.TransactGetItem{{Get: nil}},
 	}))
 
 	// empty table name.
-	c.Error(validateTransactGetItemsInput(fd, &dynamodb.TransactGetItemsInput{
+	c.Error(validateTransactGetItemsShape(&dynamodb.TransactGetItemsInput{
 		TransactItems: []dynamodbtypes.TransactGetItem{{Get: &dynamodbtypes.Get{TableName: aws.String(""), Key: id}}},
 	}))
 
 	// non-existent table.
-	c.Error(validateTransactGetItemsInput(fd, &dynamodb.TransactGetItemsInput{
+	c.Error(validateTransactGetItems(fd, &dynamodb.TransactGetItemsInput{
 		TransactItems: []dynamodbtypes.TransactGetItem{{Get: &dynamodbtypes.Get{TableName: aws.String("ghost"), Key: id}}},
 	}))
 }

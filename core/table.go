@@ -37,6 +37,10 @@ type QueryInput struct {
 	Aliases          map[string]string
 	ScanIndexForward bool
 	Scan             bool
+	// Segment and TotalSegments select one part of a parallel Scan (see segment.go). They are
+	// set together or not at all.
+	Segment       *int32
+	TotalSegments *int32
 	// projection is ProjectionExpression, checked and parsed once by SearchData.
 	projection *interpreter.CheckedProjection
 }
@@ -1299,12 +1303,12 @@ func (t *Table) partitionPrefix(input QueryInput, schema keySchema) (string, boo
 		return "", false
 	}
 
-	hash, err := keySchema{HashKey: schema.HashKey}.getKeyValue(t.AttributesDef, map[string]*types.Item{schema.HashKey: val})
+	hash, err := schema.encodeHashKey(t.AttributesDef, map[string]*types.Item{schema.HashKey: val})
 	if err != nil {
 		return "", false
 	}
 
-	return hash, true
+	return string(hash), true
 }
 
 // keysWithPrefix returns the contiguous run of sorted keys that start with prefix.
@@ -1460,41 +1464,55 @@ func (t *Table) validateSearchRequest(input QueryInput) error {
 	return nil
 }
 
-// SearchData queries the table based on the input.
-func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+// validateSearch runs the checks DynamoDB makes of a Query or Scan before it reads an item, in
+// its order. It keeps the parse of the ProjectionExpression in input and returns the segment of
+// a parallel Scan (nil for any other search).
+func (t *Table) validateSearch(input *QueryInput) (*segmentRange, error) {
 	if err := t.ValidateSearchIndex(input.Index); err != nil {
-		return SearchResult{}, err
+		return nil, err
 	}
 
-	if err := t.validateSearchRequest(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateSearchRequest(*input); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB checks the projection's syntax and names before the key condition.
 	if err := input.checkProjection(); err != nil {
-		return SearchResult{}, err
+		return nil, err
 	}
 
-	if err := t.validateKeyCondition(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateKeyCondition(*input); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB checks the start key right after the key condition, ahead of the index's projection
 	// and Select.
-	if err := t.validateStartKey(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateStartKey(*input); err != nil {
+		return nil, err
 	}
 
-	if err := t.validateFilterProjected(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateFilterProjected(*input); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB reports Select after the key condition and the filter attributes.
-	if err := t.validateSelect(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateSelect(*input); err != nil {
+		return nil, err
 	}
 
-	if err := t.validateIndexProjection(input); err != nil {
+	// DynamoDB Local checks Segment and TotalSegments (a Scan only) ahead of the index's projection.
+	segment, err := t.validateSegment(*input)
+	if err != nil {
+		return nil, err
+	}
+
+	return segment, t.validateIndexProjection(*input)
+}
+
+// SearchData queries the table based on the input.
+func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+	segment, err := t.validateSearch(&input)
+	if err != nil {
 		return SearchResult{}, err
 	}
 
@@ -1503,8 +1521,8 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 	index, sortedKeys, _, seeked := t.fetchQueryData(input)
 
 	if seeked {
-		if err := t.checkSeek(input, index, sortedKeys); err != nil {
-			return SearchResult{}, err
+		if serr := t.checkSeek(input, index, sortedKeys); serr != nil {
+			return SearchResult{}, serr
 		}
 	}
 
@@ -1528,6 +1546,13 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 
 		pk, ok := getPrimaryKey(index, k)
 		if !ok {
+			scanned++
+			continue
+		}
+
+		if t.outsideSegment(segment, pk) {
+			// Another segment's item is not read: it is not counted. scanned only decides whether
+			// a LastEvaluatedKey is returned, which needs the whole key range to be walked.
 			scanned++
 			continue
 		}

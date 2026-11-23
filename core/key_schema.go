@@ -109,23 +109,29 @@ func itemTypeName(it *types.Item) string {
 	return ""
 }
 
+// encodeHashKey returns the encoded hash key of item: the prefix shared by every key of its
+// partition.
+func (ks keySchema) encodeHashKey(attrs map[string]string, item map[string]*types.Item) ([]byte, error) {
+	val, err := ks.keyAttrValue(attrs, item, ks.HashKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return appendKeyPart(make([]byte, 0, 32), ks.HashKey, attrs[ks.HashKey], val)
+}
+
 // getKeyValue returns the encoded key of item (see key_encoding.go): the hash key part,
 // followed by the range key part when the schema has one.
 func (ks keySchema) getKeyValue(attrs map[string]string, item map[string]*types.Item) (string, error) {
-	val, err := ks.keyAttrValue(attrs, item, ks.HashKey)
-	if err != nil {
-		return "", err
-	}
-
-	key, err := appendKeyPart(make([]byte, 0, 32), ks.HashKey, attrs[ks.HashKey], val)
+	key, err := ks.encodeHashKey(attrs, item)
 	if err != nil {
 		return "", err
 	}
 
 	if ks.RangeKey != "" {
-		val, err = ks.keyAttrValue(attrs, item, ks.RangeKey)
-		if err != nil {
-			return "", err
+		val, verr := ks.keyAttrValue(attrs, item, ks.RangeKey)
+		if verr != nil {
+			return "", verr
 		}
 
 		key, err = appendKeyPart(key, ks.RangeKey, attrs[ks.RangeKey], val)

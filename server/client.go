@@ -720,6 +720,8 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		ConsistentRead:            aws.ToBool(input.ConsistentRead),
 		Limit:                     int64(aws.ToInt32(input.Limit)),
 		Scan:                      true,
+		Segment:                   input.Segment,
+		TotalSegments:             input.TotalSegments,
 		ScanIndexForward:          true,
 	})
 	if err != nil {

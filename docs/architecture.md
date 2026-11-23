@@ -167,11 +167,18 @@ ADRs for the layers:
     index (#163), with LSIs reported before GSIs;
   - `ReturnValues` and `ReturnValuesOnConditionCheckFailure`, including the
     nested shapes of `TransactWriteItems`;
-  - `Select`.
+  - `Select`;
+  - the `Segment` and `TotalSegments` of a parallel Scan (#155; a Query ignores
+    them): after the start key's own checks and `Select`, but before the projection of a GSI. Each needs the other, then `Segment` must lie in
+    `[0, TotalSegments-1]`, then `TotalSegments` is at most 1000000
+    (`Table.validateSegment`, `core/segment.go`). An item's segment is a hash of
+    the table's encoded partition key, so a partition never splits and an
+    `ExclusiveStartKey` of another segment is rejected. Local's assignment is not
+    reproducible (D1, level 3): the parity cases compare the union of the segments.
 
   The code is at `core/table.go`, in `validateSearch*`, `validateWriteExpressions`,
   `validateKeyCondition*` and `ValidateNoneOrAllOldReturnValues`, and in
-  `core/select.go`. Placeholders are checked through
+  `core/select.go` and `core/segment.go`. Placeholders are checked through
   `interpreter.ValidateExpressionPlaceholders`.
 
   For a request with several problems, the order is pinned by

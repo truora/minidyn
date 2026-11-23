@@ -641,6 +641,7 @@ func (c *Client) Query(ctx context.Context, input *QueryInput) (*QueryOutput, er
 		FilterExpression:          aws.ToString(input.FilterExpression),
 		ProjectionExpression:      aws.ToString(input.ProjectionExpression),
 		Select:                    string(input.Select),
+		ConsistentRead:            aws.ToBool(input.ConsistentRead),
 		Limit:                     int64(aws.ToInt32(input.Limit)),
 		ScanIndexForward:          aws.ToBool(input.ScanIndexForward),
 	})
@@ -694,6 +695,11 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		return nil, mapKnownError(ierr)
 	}
 
+	// Stopgap until #243: DynamoDB Local reports ConsistentRead on a GSI right after the unknown index for a Scan.
+	if ierr := table.ValidateConsistentRead(aws.ToString(input.IndexName), aws.ToBool(input.ConsistentRead)); ierr != nil {
+		return nil, mapKnownError(ierr)
+	}
+
 	if verr := validateExpressionAttributes(
 		input.ExpressionAttributeNames,
 		keysFromAttributeValueMap(input.ExpressionAttributeValues),
@@ -711,6 +717,7 @@ func (c *Client) Scan(ctx context.Context, input *ScanInput) (*ScanOutput, error
 		FilterExpression:          aws.ToString(input.FilterExpression),
 		ProjectionExpression:      aws.ToString(input.ProjectionExpression),
 		Select:                    string(input.Select),
+		ConsistentRead:            aws.ToBool(input.ConsistentRead),
 		Limit:                     int64(aws.ToInt32(input.Limit)),
 		Scan:                      true,
 		ScanIndexForward:          true,
@@ -1087,33 +1094,50 @@ func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes) ([]core
 	return read, nil
 }
 
-// prepareTransact validates a transaction and snapshots the tables it touches. Callers must
-// hold c.mu.
+// transactWriteItemTarget returns the table, the key (the whole item for a Put) and the billing
+// kind of a transaction item. ok is false when the item holds no operation.
+func transactWriteItemTarget(item TransactWriteItem) (table string, key map[string]*AttributeValue, kind capacity.WriteKind, ok bool) {
+	switch {
+	case item.Put != nil:
+		return aws.ToString(item.Put.TableName), item.Put.Item, capacity.WritePut, true
+	case item.Update != nil:
+		return aws.ToString(item.Update.TableName), item.Update.Key, capacity.WriteUpdate, true
+	case item.Delete != nil:
+		return aws.ToString(item.Delete.TableName), item.Delete.Key, capacity.WriteDelete, true
+	case item.ConditionCheck != nil:
+		return aws.ToString(item.ConditionCheck.TableName), item.ConditionCheck.Key, capacity.WriteCheck, true
+	}
+
+	return "", nil, capacity.WritePut, false
+}
+
+// transactWriteTableNames lists the table of every item of a transaction, skipping items
+// without one.
+func transactWriteTableNames(items []TransactWriteItem) []string {
+	names := make([]string, 0, len(items))
+
+	for _, item := range items {
+		name, _, _, _ := transactWriteItemTarget(item)
+
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+
+	return names
+}
+
+// prepareTransact validates the items of a transaction and snapshots the tables it touches.
+// Callers must hold c.mu.
 func (c *Client) prepareTransact(items []TransactWriteItem) (map[string]core.TableSnapshot, error) {
 	snapshots := map[string]core.TableSnapshot{}
 	seenKeys := make(map[string]struct{}, len(items))
 
 	for _, item := range items {
-		var tableName string
-		var rawKeyMap map[string]*AttributeValue
-
-		switch {
-		case item.Put != nil:
-			tableName, rawKeyMap = aws.ToString(item.Put.TableName), item.Put.Item
-		case item.Update != nil:
-			tableName, rawKeyMap = aws.ToString(item.Update.TableName), item.Update.Key
-		case item.Delete != nil:
-			tableName, rawKeyMap = aws.ToString(item.Delete.TableName), item.Delete.Key
-		case item.ConditionCheck != nil:
-			tableName, rawKeyMap = aws.ToString(item.ConditionCheck.TableName), item.ConditionCheck.Key
-		}
+		tableName, rawKeyMap, _, _ := transactWriteItemTarget(item)
 
 		if tableName == "" {
 			continue
-		}
-
-		if ferr := c.failureErrFor(tableName, ""); ferr != nil {
-			return nil, ferr
 		}
 
 		if _, alreadySnapped := snapshots[tableName]; !alreadySnapped {
@@ -1151,13 +1175,16 @@ func (c *Client) TransactWriteItems(ctx context.Context, input *TransactWriteIte
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// The order is the batches' (D13): ReturnConsumedCapacity, the emulated failure, then each
+	// item. A ReturnValuesOnConditionCheckFailure outside ALL_OLD and NONE is an item-level
+	// check, as in the single-item operations. There is no structural shape check yet (#291).
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
 	}
 
-	if c.forceFailureErr != nil {
-		return nil, c.forceFailureErr
+	if emulation := c.batchEmulationLocked(transactWriteTableNames(input.TransactItems)...); emulation.failErr != nil {
+		return nil, emulation.failErr
 	}
 
 	// DynamoDB Local reports an invalid number anywhere in the request before any other problem.
@@ -1280,31 +1307,20 @@ func transactWriteTargets(items []TransactWriteItem) []capacity.WriteTarget {
 	targets := make([]capacity.WriteTarget, 0, len(items))
 
 	for _, item := range items {
-		switch {
-		case item.Put != nil:
-			targets = append(targets, capacity.WriteTarget{
-				Table: aws.ToString(item.Put.TableName), Kind: capacity.WritePut, Key: mapAttributeValueMapToTypes(item.Put.Item),
-			})
-		case item.Update != nil:
-			targets = append(targets, capacity.WriteTarget{
-				Table: aws.ToString(item.Update.TableName), Kind: capacity.WriteUpdate, Key: mapAttributeValueMapToTypes(item.Update.Key),
-			})
-		case item.Delete != nil:
-			targets = append(targets, capacity.WriteTarget{
-				Table: aws.ToString(item.Delete.TableName), Kind: capacity.WriteDelete, Key: mapAttributeValueMapToTypes(item.Delete.Key),
-			})
-		case item.ConditionCheck != nil:
-			targets = append(targets, capacity.WriteTarget{
-				Table: aws.ToString(item.ConditionCheck.TableName), Kind: capacity.WriteCheck, Key: mapAttributeValueMapToTypes(item.ConditionCheck.Key),
-			})
+		table, key, kind, ok := transactWriteItemTarget(item)
+		if !ok {
+			continue
 		}
+
+		targets = append(targets, capacity.WriteTarget{Table: table, Kind: kind, Key: mapAttributeValueMapToTypes(key)})
 	}
 
 	return targets
 }
 
-// validateTransactGetItemsInput checks the request shape and every key. The caller must hold c.mu.
-func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) error {
+// validateTransactGetItemsShape checks the request shape: the number of items, and that each
+// has a Get with a table name.
+func validateTransactGetItemsShape(input *TransactGetItemsInput) error {
 	if input == nil {
 		return nil
 	}
@@ -1324,8 +1340,6 @@ func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) erro
 		}
 	}
 
-	seenKeys := make(map[string]struct{}, count)
-
 	for _, item := range input.TransactItems {
 		if item.Get == nil {
 			return &smithy.GenericAPIError{
@@ -1334,15 +1348,36 @@ func validateTransactGetItemsInput(c *Client, input *TransactGetItemsInput) erro
 			}
 		}
 
-		get := item.Get
-
-		tableName := aws.ToString(get.TableName)
-		if tableName == "" {
+		if aws.ToString(item.Get.TableName) == "" {
 			return &smithy.GenericAPIError{
 				Code:    "ValidationException",
 				Message: "TableName must not be null",
 			}
 		}
+	}
+
+	return nil
+}
+
+// transactGetTableNames lists the table of every item of a transaction. The shape is valid.
+func transactGetTableNames(input *TransactGetItemsInput) []string {
+	names := make([]string, 0, len(input.TransactItems))
+
+	for _, item := range input.TransactItems {
+		names = append(names, aws.ToString(item.Get.TableName))
+	}
+
+	return names
+}
+
+// validateTransactGetItems checks that every table exists and every key is valid and unique.
+// The caller must hold c.mu.
+func validateTransactGetItems(c *Client, input *TransactGetItemsInput) error {
+	seenKeys := make(map[string]struct{}, len(input.TransactItems))
+
+	for _, item := range input.TransactItems {
+		get := item.Get
+		tableName := aws.ToString(get.TableName)
 
 		table, err := c.getTable(tableName)
 		if err != nil {
@@ -1374,13 +1409,23 @@ func (c *Client) TransactGetItems(ctx context.Context, input *TransactGetItemsIn
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := validateTransactGetItemsInput(c, input); err != nil {
+	// The order is the batches' (D13): input shape, ReturnConsumedCapacity, the emulated
+	// failure, then each item.
+	if err := validateTransactGetItemsShape(input); err != nil {
 		return nil, err
 	}
 
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
+	}
+
+	if emulation := c.batchEmulationLocked(transactGetTableNames(input)...); emulation.failErr != nil {
+		return nil, emulation.failErr
+	}
+
+	if err := validateTransactGetItems(c, input); err != nil {
+		return nil, err
 	}
 
 	responses := make([]ItemResponse, 0, len(input.TransactItems))

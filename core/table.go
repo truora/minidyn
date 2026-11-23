@@ -31,7 +31,9 @@ type QueryInput struct {
 	FilterExpression          string
 	ProjectionExpression      string
 	// Select is validated against the other fields; the front ends honor COUNT.
-	Select           string
+	Select string
+	// ConsistentRead is the request's flag; a GSI rejects true (see ValidateConsistentRead).
+	ConsistentRead   bool
 	Aliases          map[string]string
 	ScanIndexForward bool
 	Scan             bool
@@ -92,6 +94,16 @@ func (t *Table) IndexKind(name string) string {
 	}
 
 	return "GSI"
+}
+
+// globalIndex returns the named global secondary index, if the table has one.
+func (t *Table) globalIndex(name string) (*index, bool) {
+	idx, ok := t.Indexes[name]
+	if !ok || idx.typ != indexTypeGlobal {
+		return nil, false
+	}
+
+	return idx, true
 }
 
 // ValidateSearchIndex rejects the IndexName of a Query or Scan when the table has no such
@@ -1025,8 +1037,8 @@ func (t *Table) validateFilterProjected(input QueryInput) error {
 // attributes the index does not project, with the attributes sorted. A GSI cannot read the table, so
 // DynamoDB refuses the request, unlike an LSI (see index.readItem). It follows the Select checks.
 func (t *Table) validateIndexProjection(input QueryInput) error {
-	idx, ok := t.Indexes[input.Index]
-	if !ok || idx.typ != indexTypeGlobal || input.projection == nil {
+	idx, ok := t.globalIndex(input.Index)
+	if !ok || input.projection == nil {
 		return nil
 	}
 
@@ -1418,21 +1430,43 @@ func (in *QueryInput) checkProjection() error {
 	return err
 }
 
+// validateSearchRequest runs the checks DynamoDB makes of a Query or Scan before anything
+// that depends on the index, in its order: the item maps, the placeholders of the expressions
+// and ConsistentRead on a GSI. Local reports the latter right after the unknown index for a
+// Scan, ahead of the placeholders, and after them for a Query.
+func (t *Table) validateSearchRequest(input QueryInput) error {
+	if input.Scan {
+		if err := t.ValidateConsistentRead(input.Index, input.ConsistentRead); err != nil {
+			return err
+		}
+	}
+
+	if err := validateSearchInputMaps(input); err != nil {
+		return err
+	}
+
+	if err := validateSearchExpressionAttributeNames(input); err != nil {
+		return err
+	}
+
+	if err := validateSearchExpressionAttributeValues(input); err != nil {
+		return err
+	}
+
+	if !input.Scan {
+		return t.ValidateConsistentRead(input.Index, input.ConsistentRead)
+	}
+
+	return nil
+}
+
 // SearchData queries the table based on the input.
 func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
 	if err := t.ValidateSearchIndex(input.Index); err != nil {
 		return SearchResult{}, err
 	}
 
-	if err := validateSearchInputMaps(input); err != nil {
-		return SearchResult{}, err
-	}
-
-	if err := validateSearchExpressionAttributeNames(input); err != nil {
-		return SearchResult{}, err
-	}
-
-	if err := validateSearchExpressionAttributeValues(input); err != nil {
+	if err := t.validateSearchRequest(input); err != nil {
 		return SearchResult{}, err
 	}
 

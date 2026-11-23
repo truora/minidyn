@@ -509,3 +509,221 @@ func TestE2E_ValidationOrder_UnknownIndex(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) { RunE2E(t, voRun(tt.fn)) })
 	}
 }
+
+// A Query or Scan of a GSI with ConsistentRead true is rejected, and only then: the table
+// and an LSI take it. The error comes after the unknown index and the placeholders and
+// before everything else of the request, which the cases below pin one by one. They use the
+// select table: gko is a keys-only GSI, lko a keys-only LSI.
+func TestE2E_ValidationOrder_GSIConsistentRead(t *testing.T) {
+	type searchFn = func(ctx context.Context, c *dynamodb.Client) string
+
+	str := func(v string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberS{Value: v} }
+
+	query := func(index, cond string, vals map[string]dynamodbtypes.AttributeValue, consistent *bool, mod func(*dynamodb.QueryInput)) searchFn {
+		return func(ctx context.Context, c *dynamodb.Client) string {
+			in := &dynamodb.QueryInput{
+				TableName: aws.String(paritySelectTableName), KeyConditionExpression: aws.String(cond),
+				ExpressionAttributeValues: vals, ConsistentRead: consistent,
+			}
+			if index != "" {
+				in.IndexName = aws.String(index)
+			}
+
+			if mod != nil {
+				mod(in)
+			}
+
+			out, err := c.Query(ctx, in)
+			if err != nil {
+				return fuzzErrString(err)
+			}
+
+			return fmt.Sprintf("ok items=%d", len(out.Items))
+		}
+	}
+	scan := func(index string, consistent *bool, mod func(*dynamodb.ScanInput)) searchFn {
+		return func(ctx context.Context, c *dynamodb.Client) string {
+			in := &dynamodb.ScanInput{TableName: aws.String(paritySelectTableName), ConsistentRead: consistent}
+			if index != "" {
+				in.IndexName = aws.String(index)
+			}
+
+			if mod != nil {
+				mod(in)
+			}
+
+			out, err := c.Scan(ctx, in)
+			if err != nil {
+				return fuzzErrString(err)
+			}
+
+			return fmt.Sprintf("ok items=%d", len(out.Items))
+		}
+	}
+	run := func(fn searchFn) func(t *testing.T, client *dynamodb.Client) string {
+		return func(t *testing.T, client *dynamodb.Client) string {
+			t.Helper()
+			ctx := context.Background()
+
+			paritySelectTable(ctx, t, client)
+
+			return fn(ctx, client)
+		}
+	}
+
+	yes, no := aws.Bool(true), aws.Bool(false)
+	gVals := map[string]dynamodbtypes.AttributeValue{":v": str("g")}
+	pVals := map[string]dynamodbtypes.AttributeValue{":v": str("p")}
+	const gCond, pCond = "g = :v", "pk = :v"
+	startKey := map[string]dynamodbtypes.AttributeValue{"pk": str("p"), "sk": str("s"), "g": str("g")}
+
+	tests := []struct {
+		name string
+		fn   searchFn
+	}{
+		{"QueryGSITrue", query("gko", gCond, gVals, yes, nil)},
+		{"QueryGSIFalse", query("gko", gCond, gVals, no, nil)},
+		{"QueryGSIUnset", query("gko", gCond, gVals, nil, nil)},
+		{"ScanGSITrue", scan("gko", yes, nil)},
+		{"ScanGSIFalse", scan("gko", no, nil)},
+		{"ScanGSIUnset", scan("gko", nil, nil)},
+		{"QueryLSITrue", query("lko", pCond, pVals, yes, nil)},
+		{"ScanLSITrue", scan("lko", yes, nil)},
+		{"QueryTableTrue", query("", pCond, pVals, yes, nil)},
+		{"ScanTableTrue", scan("", yes, nil)},
+
+		// After the unknown index and the placeholders.
+		{"QueryUnknownIndexTrue", query("nope", gCond, gVals, yes, nil)},
+		{"ScanUnknownIndexTrue", scan("nope", yes, nil)},
+		{"QueryGSITrueUnusedName", query("gko", gCond, gVals, yes, func(in *dynamodb.QueryInput) {
+			in.ExpressionAttributeNames = map[string]string{"#u": "g"}
+		})},
+		{"QueryGSITrueUnusedValue", query("gko", gCond, map[string]dynamodbtypes.AttributeValue{":v": str("g"), ":u": str("x")}, yes, nil)},
+		{"QueryGSITrueDuplicateSetValue", query("gko", gCond, map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberSS{Value: []string{"a", "a"}}}, yes, nil)},
+		{"ScanGSITrueDuplicateSetValue", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.FilterExpression = aws.String("g = :v")
+			in.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberSS{Value: []string{"a", "a"}}}
+		})},
+		{"ScanGSITrueUnusedValue", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{":u": str("x")}
+		})},
+		{"QueryGSITrueUndefinedValue", query("gko", gCond, nil, yes, nil)},
+		{"QueryGSITrueUndeclaredName", query("gko", "#n = :v", gVals, yes, nil)},
+		{"ScanGSITrueUnusedName", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.ExpressionAttributeNames = map[string]string{"#u": "g"}
+		})},
+		{"ScanGSITrueUndefinedValue", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.FilterExpression = aws.String("g = :v")
+		})},
+		{"ScanGSITrueUndeclaredName", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.FilterExpression = aws.String("#n = :v")
+			in.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{":v": str("x")}
+		})},
+
+		// Before the key condition, the projection, Select, the start key and Limit.
+		{"QueryGSITrueEmptyHash", query("gko", gCond, map[string]dynamodbtypes.AttributeValue{":v": str("")}, yes, nil)},
+		{"QueryGSITrueHashTypeMismatch", query("gko", gCond, map[string]dynamodbtypes.AttributeValue{":v": voN("1")}, yes, nil)},
+		{"QueryGSITrueNotTheKeyAttribute", query("gko", "pk = :v", gVals, yes, nil)},
+		{"QueryGSITrueNonProjectedProjection", query("gko", gCond, gVals, yes, func(in *dynamodb.QueryInput) {
+			in.ProjectionExpression = aws.String("b")
+		})},
+		{"ScanGSITrueNonProjectedProjection", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.ProjectionExpression = aws.String("b")
+		})},
+		{"QueryGSITrueNonProjectedFilter", query("gko", gCond, gVals, yes, func(in *dynamodb.QueryInput) {
+			in.FilterExpression = aws.String("b = :b")
+			in.ExpressionAttributeValues = map[string]dynamodbtypes.AttributeValue{":v": str("g"), ":b": str("b")}
+		})},
+		{"QueryGSITrueInvalidSelect", query("gko", gCond, gVals, yes, func(in *dynamodb.QueryInput) {
+			in.Select = dynamodbtypes.Select("BOGUS")
+		})},
+		{"ScanGSITrueInvalidSelect", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.Select = dynamodbtypes.Select("BOGUS")
+		})},
+		{"QueryGSITrueSpecificWithoutProjection", query("gko", gCond, gVals, yes, func(in *dynamodb.QueryInput) {
+			in.Select = dynamodbtypes.SelectSpecificAttributes
+		})},
+		{"QueryGSITrueInvalidStartKey", query("gko", gCond, gVals, yes, func(in *dynamodb.QueryInput) {
+			in.ExclusiveStartKey = map[string]dynamodbtypes.AttributeValue{"pk": str("p")}
+		})},
+		{"ScanGSITrueInvalidStartKey", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.ExclusiveStartKey = map[string]dynamodbtypes.AttributeValue{"pk": str("p")}
+		})},
+		{"QueryGSITrueValidStartKey", query("gko", gCond, gVals, yes, func(in *dynamodb.QueryInput) {
+			in.ExclusiveStartKey = startKey
+		})},
+		// Local reports an invalid Limit of a Query ahead of this error (minidyn does not
+		// validate Limit yet, #242), so only the Scan is pinned here.
+		{"ScanGSITrueNegativeLimit", scan("gko", yes, func(in *dynamodb.ScanInput) {
+			in.Limit = aws.Int32(-1)
+		})},
+		// Without ConsistentRead the same requests report their own error.
+		{"QueryGSIFalseEmptyHash", query("gko", gCond, map[string]dynamodbtypes.AttributeValue{":v": str("")}, no, nil)},
+		{"ScanGSIFalseNonProjectedProjection", scan("gko", no, func(in *dynamodb.ScanInput) {
+			in.ProjectionExpression = aws.String("b")
+		})},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { RunE2E(t, run(tt.fn)) })
+	}
+}
+
+// Local words an invalid ExpressionAttributeValues entry of a Query and of a Scan alike, after the
+// name of the value, and by the type of a duplicate set (#247). A set with no member is not
+// covered: minidyn accepts it everywhere.
+func TestE2E_ValidationOrder_SearchValueErrors(t *testing.T) {
+	type searchFn func(ctx context.Context, c *dynamodb.Client, vals map[string]dynamodbtypes.AttributeValue) string
+
+	query := func(ctx context.Context, c *dynamodb.Client, vals map[string]dynamodbtypes.AttributeValue) string {
+		_, err := c.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String(paritySelectTableName),
+			KeyConditionExpression:    aws.String("pk = :p"),
+			FilterExpression:          aws.String("x = :v"),
+			ExpressionAttributeValues: vals,
+		})
+
+		return fuzzErrString(err)
+	}
+	scan := func(ctx context.Context, c *dynamodb.Client, vals map[string]dynamodbtypes.AttributeValue) string {
+		_, err := c.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 aws.String(paritySelectTableName),
+			FilterExpression:          aws.String("x = :v"),
+			ExpressionAttributeValues: vals,
+		})
+
+		return fuzzErrString(err)
+	}
+
+	bad := map[string]dynamodbtypes.AttributeValue{
+		"DuplicateSet":    &dynamodbtypes.AttributeValueMemberSS{Value: []string{"a", "a"}},
+		"InvalidNumber":   &dynamodbtypes.AttributeValueMemberN{Value: "abc"},
+		"NumberOverflow":  &dynamodbtypes.AttributeValueMemberN{Value: "1e126"},
+		"DuplicateNumSet": &dynamodbtypes.AttributeValueMemberNS{Value: []string{"1", "1"}},
+		"NestedDuplicate": &dynamodbtypes.AttributeValueMemberL{Value: []dynamodbtypes.AttributeValue{&dynamodbtypes.AttributeValueMemberSS{Value: []string{"a", "a"}}}},
+		"DuplicateBinSet": &dynamodbtypes.AttributeValueMemberBS{Value: [][]byte{{1}, {1}}},
+	}
+
+	for name, v := range bad {
+		for _, search := range []struct {
+			kind string
+			fn   searchFn
+		}{{"Query", query}, {"Scan", scan}} {
+			vals := map[string]dynamodbtypes.AttributeValue{":v": v}
+			if search.kind == "Query" {
+				vals[":p"] = fzS("p")
+			}
+
+			t.Run(search.kind+name, func(t *testing.T) {
+				RunE2E(t, func(t *testing.T, client *dynamodb.Client) string {
+					t.Helper()
+					ctx := context.Background()
+
+					paritySelectTable(ctx, t, client)
+
+					return search.fn(ctx, client, vals)
+				})
+			})
+		}
+	}
+}

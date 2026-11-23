@@ -55,8 +55,8 @@ func (t *Table) validateSelectAll(input QueryInput) error {
 		return nil
 	}
 
-	idx, ok := t.Indexes[input.Index]
-	if !ok || idx.typ != indexTypeGlobal || idx.projection == nil {
+	idx, ok := t.globalIndex(input.Index)
+	if !ok || idx.projection == nil {
 		return nil
 	}
 

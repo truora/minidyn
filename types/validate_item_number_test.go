@@ -167,7 +167,7 @@ func TestValidateExpressionAttributeValues(t *testing.T) {
 		vals map[string]*Item
 		want string
 	}{
-		{"duplicate set", map[string]*Item{":v": {NS: []*string{new("1"), new("1")}}}, prefix + textDuplicates},
+		{"duplicate set", map[string]*Item{":v": {SS: []*string{new("a"), new("a")}}}, prefix + textDuplicates},
 		{"null", map[string]*Item{":v": nil}, prefix + nullAttributeValueText + " for key :v"},
 		{
 			"null nested in a map",
@@ -185,6 +185,35 @@ func TestValidateExpressionAttributeValues(t *testing.T) {
 			require.Error(t, err)
 			require.True(t, strings.HasPrefix(err.Error(), tt.want), err.Error())
 			require.Contains(t, err.Error(), " for key :v")
+		})
+	}
+}
+
+// Local words the duplicate set of an expression value by the type of the set: a String Set
+// without the closing period, a Number Set without the members, a Binary Set by its type.
+func TestValidateExpressionAttributeValues_duplicateText(t *testing.T) {
+	t.Parallel()
+
+	const prefix = "ExpressionAttributeValues contains invalid value: "
+
+	tests := []struct {
+		name string
+		av   *Item
+		want string
+	}{
+		{"SS", &Item{SS: []*string{new("a"), new("a")}}, prefix + "One or more parameter values were invalid: Input collection [a, a] contains duplicates for key :v"},
+		{"BS", &Item{BS: [][]byte{{1}, {1}}}, prefix + "One or more parameter values were invalid: Input collection of type BS contains duplicates. for key :v"},
+		{"NS", &Item{NS: []*string{new("1"), new("1")}}, prefix + "Input collection contains duplicates for key :v"},
+		{"nested SS", &Item{L: []*Item{{SS: []*string{new("a"), new("a")}}}}, prefix + "One or more parameter values were invalid: Input collection [a, a] contains duplicates for key :v"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := ValidateExpressionAttributeValues(map[string]*Item{":v": tt.av})
+			require.Error(t, err)
+			require.True(t, strings.HasPrefix(err.Error(), tt.want), err.Error())
 		})
 	}
 }

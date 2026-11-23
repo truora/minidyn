@@ -240,34 +240,6 @@ func TestSearchData_exclusiveStartKeyOfMissingItemOnIndexes(t *testing.T) {
 	}
 }
 
-// A start key outside the queried partition, or lacking the index key, stays as lenient as
-// before (#171): it is not rejected and the page is what it was.
-func TestSearchData_exclusiveStartKeyStaysLenient(t *testing.T) {
-	table := startKeyTestTable(t, "S", []string{"b", "a", "c"}, []string{"1", "3", "5"})
-
-	lsi := QueryInput{
-		Index:                     "by-l",
-		KeyConditionExpression:    "pk = :p",
-		ExpressionAttributeValues: map[string]*types.Item{":p": {S: aws.String("p")}},
-	}
-	// The index key is missing: the table key finds the entry, as it always did.
-	start := map[string]*types.Item{"pk": {S: aws.String("p")}, "sk": {S: aws.String("a")}}
-	require.Equal(t, []string{"c"}, startKeySearch(t, table, lsi, start, true))
-
-	// An item that does not exist and has no index key: nothing to resume from.
-	start = map[string]*types.Item{"pk": {S: aws.String("p")}, "sk": {S: aws.String("zz")}}
-	require.Empty(t, startKeySearch(t, table, lsi, start, true))
-
-	// Another partition.
-	q := QueryInput{
-		KeyConditionExpression:    "pk = :p",
-		ExpressionAttributeValues: map[string]*types.Item{":p": {S: aws.String("p")}},
-	}
-	start = map[string]*types.Item{"pk": {S: aws.String("a")}, "sk": {S: aws.String("1")}}
-	require.Empty(t, startKeySearch(t, table, q, start, true))
-	require.Empty(t, startKeySearch(t, table, q, start, false))
-}
-
 // Entries sharing an index key are ordered by primary key: minidyn's own tie order (D1
 // level 3). The LastEvaluatedKey it hands out then resumes the same walk even when its item
 // is deleted before the next page, with no entry repeated or lost.

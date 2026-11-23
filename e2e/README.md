@@ -60,6 +60,10 @@ engine's behavior separately:
   caller paging until `LastEvaluatedKey` is empty would miss them. The cost is one extra, empty page when a range ends
   exactly at a page boundary. The default fuzz mode avoids the case (see
   `fuzz_gen_test.go`).
+  The same key is rejected by Local when used as an `ExclusiveStartKey` on a
+  table (`TestE2E_StartKeyValidation/TableRangePredicateAtBound`), but Local
+  never hands it out. minidyn accepts it and returns an empty page, so a paging
+  loop never fails on a key minidyn returned.
 - **Trailing zeros in numbers** (`TestE2E_NumberPrecision/TrailingZerosAreTrimmed`).
   DynamoDB Local keeps the `BigDecimal` scale in arithmetic and the text as
   sent in the values `UpdateItem` writes and inside lists and maps:

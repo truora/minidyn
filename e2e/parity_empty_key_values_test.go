@@ -318,10 +318,10 @@ func TestE2E_EmptyKeyValues_Operations(t *testing.T) {
 
 			return err
 		}},
-		{name: "QueryExclusiveStartKeyEmptyRangeKey", knownIssue: "#171", fn: query("", ekItem{":p": ekS("a")}, emptySK)},
-		{name: "QueryGSIExclusiveStartKeyEmptyIndexKey", knownIssue: "#171", fn: query("by-g", ekItem{":p": ekS("g1")},
+		{name: "QueryExclusiveStartKeyEmptyRangeKey", fn: query("", ekItem{":p": ekS("a")}, emptySK)},
+		{name: "QueryGSIExclusiveStartKeyEmptyIndexKey", fn: query("by-g", ekItem{":p": ekS("g1")},
 			ekItem{"pk": ekS("a"), "sk": ekS("1"), "g": ekS("g1"), "gs": e})},
-		{name: "ScanExclusiveStartKeyEmptyRangeKey", knownIssue: "#171", fn: func(ctx context.Context, c *dynamodb.Client) error {
+		{name: "ScanExclusiveStartKeyEmptyRangeKey", fn: func(ctx context.Context, c *dynamodb.Client) error {
 			_, err := c.Scan(ctx, &dynamodb.ScanInput{TableName: tbl, ExclusiveStartKey: emptySK})
 
 			return err

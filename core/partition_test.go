@@ -134,17 +134,14 @@ func TestSearchData_invalidKeyConditionOnEmptyPartition(t *testing.T) {
 }
 
 func TestSearchData_exclusiveStartKeyFromAnotherPartition(t *testing.T) {
-	// DynamoDB rejects this start key; minidyn stays lenient (consumers' tests rely on it)
-	// and returns an empty page, since the start key is never reached.
+	// DynamoDB rejects this start key (#171), see start_key_validation_test.go for the rest.
 	table := seekTestTable(t, true, seekItem("a", "1"), seekItem("b", "1"))
 
-	items, last, err := searchData(table, QueryInput{
+	_, _, err := searchData(table, QueryInput{
 		KeyConditionExpression:    "pk = :p",
 		ExpressionAttributeValues: map[string]*types.Item{":p": {S: aws.String("b")}},
 		ExclusiveStartKey:         map[string]*types.Item{"pk": {S: aws.String("a")}, "sk": {S: aws.String("1")}},
 		ScanIndexForward:          true,
 	})
-	require.NoError(t, err)
-	require.Empty(t, items)
-	require.Empty(t, last)
+	require.ErrorContains(t, err, "The provided starting key does not match the range key predicate")
 }

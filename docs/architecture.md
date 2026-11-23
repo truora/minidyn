@@ -149,6 +149,14 @@ ADRs for the layers:
     (`Table.BatchGetItem`);
   - the shape and types of a key condition, with BETWEEN bounds checked
     first (same type, then lower <= upper, comparing by type);
+  - the `ExclusiveStartKey` of a Query or Scan (`Table.validateStartKey`, #171,
+    [ADR](adr/2026-11-21-reject-invalid-exclusive-start-keys.md)), right after the
+    key condition and before the index checks below and `Select`: a number it
+    cannot store, then its size, each key attribute (present and of the declared
+    type, the table's first), empty values and, for a Query, the key condition.
+    It need not name an existing item (#258) and may sit on the inclusive bound
+    the walk ends at, which Local rejects but minidyn hands out (#153). An empty map
+    counts as none in `core/table.go` (#277);
   - the `ProjectionExpression` of a Query or Scan (its syntax, then undeclared
     `#names`), before the key condition, and then the attributes of an index
     Query's `FilterExpression`, which must all be projected by the index

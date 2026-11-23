@@ -53,7 +53,7 @@ func putBackfill(t *testing.T, table *Table, item map[string]*types.Item) {
 }
 
 func createBackfillIndex(table *Table, projection *types.Projection) error {
-	_, err := table.UpdateTable(table.Name,
+	_, err := updateIndexes(table, table.Name,
 		[]*types.AttributeDefinition{{AttributeName: new("gk"), AttributeType: new("S")}},
 		[]*types.GlobalSecondaryIndexUpdate{gsiCreate(new(backfillIndex), gsiHashKey(), projection)})
 
@@ -173,7 +173,7 @@ func TestUpdateTableCreateIndexBackfillsNothingWhenRejected(t *testing.T) {
 	data := maps.Clone(table.Data)
 
 	// the definitions are set, then the index is rejected: gk, its key attribute, is not defined
-	_, err := table.UpdateTable(table.Name,
+	_, err := updateIndexes(table, table.Name,
 		[]*types.AttributeDefinition{{AttributeName: new("other"), AttributeType: new("S")}},
 		[]*types.GlobalSecondaryIndexUpdate{gsiCreate(new(backfillIndex), gsiHashKey(), gsiAllProjection())})
 	requireValidation(t, err, "ValidationException",

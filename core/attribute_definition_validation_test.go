@@ -41,7 +41,7 @@ func TestUpdateTableKeepsAttributeDefinitionsWhenRejected(t *testing.T) {
 	table := newTableWithExistingIndex(t)
 	before := len(table.AttributesDef)
 
-	desc, err := table.UpdateTable("described",
+	desc, err := updateIndexes(table, "described",
 		[]*types.AttributeDefinition{{AttributeName: new("extra"), AttributeType: new("S")}},
 		[]*types.GlobalSecondaryIndexUpdate{gsiDelete(nil)})
 	requireValidation(t, err, "ValidationException", msgInvalidGSIName)
@@ -50,7 +50,7 @@ func TestUpdateTableKeepsAttributeDefinitionsWhenRejected(t *testing.T) {
 	require.NotContains(t, table.AttributesDef, "extra")
 
 	// a bad attribute definition stops the request before any index change
-	_, err = table.UpdateTable("described",
+	_, err = updateIndexes(table, "described",
 		[]*types.AttributeDefinition{{}},
 		[]*types.GlobalSecondaryIndexUpdate{gsiDelete(new("existing"))})
 	requireValidation(t, err, "ValidationException", types.WithDetail(msgNoKeyAttribute, "table", "described"))
@@ -60,7 +60,7 @@ func TestUpdateTableKeepsAttributeDefinitionsWhenRejected(t *testing.T) {
 func TestUpdateTableAppliesAttributeDefinitionsAndChanges(t *testing.T) {
 	table := newDescribedTable(t, "PAY_PER_REQUEST", nil)
 
-	_, err := table.UpdateTable("described",
+	_, err := updateIndexes(table, "described",
 		[]*types.AttributeDefinition{{AttributeName: new("other"), AttributeType: new("S")}},
 		[]*types.GlobalSecondaryIndexUpdate{
 			gsiCreate(new("by-other"), []*types.KeySchemaElement{{AttributeName: "other", KeyType: "HASH"}}, gsiAllProjection()),
@@ -102,7 +102,7 @@ func TestUpdateTableChecksIndexChangesBeforeAttributeDefinitions(t *testing.T) {
 			table := newDescribedTable(t, "PAY_PER_REQUEST", nil)
 			before := maps.Clone(table.AttributesDef)
 
-			_, err := table.UpdateTable("described", badAttrs, tt.changes)
+			_, err := updateIndexes(table, "described", badAttrs, tt.changes)
 			requireValidation(t, err, tt.code, tt.message)
 			require.Equal(t, before, table.AttributesDef)
 		})
@@ -113,7 +113,7 @@ func TestUpdateTableChecksIndexAttributesAfterAttributeDefinitions(t *testing.T)
 	table := newDescribedTable(t, "PAY_PER_REQUEST", nil)
 	before := maps.Clone(table.AttributesDef)
 
-	_, err := table.UpdateTable("described",
+	_, err := updateIndexes(table, "described",
 		[]*types.AttributeDefinition{{AttributeName: new("extra"), AttributeType: new("S")}},
 		[]*types.GlobalSecondaryIndexUpdate{
 			gsiCreate(new("a"), []*types.KeySchemaElement{{AttributeName: "undefined", KeyType: "HASH"}}, gsiAllProjection()),

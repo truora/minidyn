@@ -53,6 +53,14 @@ types     (internal item form types.Item, errors, types.WithDetail)
 | `capacity` | Capacity-unit math from item sizes | Depend on the SDK |
 | `types` | `types.Item`, `types.Error`, `types.WithDetail`/`types.Detail`, `types.ValidateItemMap` | — |
 
+**Supported API.** The supported public API is the two front ends: users import
+`aws-v2/client` or `server`. `core`, `interpreter`, `capacity`, `types`,
+`calculate-size` and every other package that is not a front end are not a
+supported public API: their exported identifiers exist so the front ends can use
+them, and they may change without notice, in any release. A change to them is
+not a breaking change in the sense of the ADR rule. See
+[`docs/adr/2026-11-23-treat-core-and-internal-packages-as-unsupported-api.md`](adr/2026-11-23-treat-core-and-internal-packages-as-unsupported-api.md).
+
 `core` uses the interpreter through two methods:
 
 - **`Table.InterpreterMatch`:** with `UseNativeInterpreter`, it tries the
@@ -217,9 +225,14 @@ ADRs for the layers:
   `PutItem`, `UpdateItem` and `DeleteItem` report key problems before
   placeholder problems.
 - **Table and index definitions** (#200) follow Local's order too:
-  - `UpdateTable` checks the GSI updates (null action, name, one update per
-    index, the online-index limit, exists or missing, projection, key schema),
-    then the attribute definitions, then builds the created index;
+  - `UpdateTable` (#199) first checks that there is something to update, then
+    the billing mode enum, then the GSI updates (null action, name, one update
+    per index, the online-index limit, exists or missing, projection, key
+    schema, the capacity of an index update), then the capacity of the table
+    (at least 1, different from the current one, present when going back to
+    provisioned), then the attribute definitions, then builds the created
+    index. A problem with an index change is reported ahead of one with the
+    table settings, as Local does;
   - `CreateTable` (`Table.AddIndexes`) checks each LSI completely (name, shape,
     key attributes) before any GSI.
 - **Gap (#243):** the front ends call `Table.ValidateSearchIndex` before their
@@ -415,9 +428,10 @@ ADRs for the layers:
   leaves the table and its indexes untouched. `Update` restores the item it
   changed in place when evaluation or index validation fails (#163).
 - **On `main`, table definitions:**
-  - `Table.UpdateTable` validates every GSI change and builds any created
-    index before it changes anything, and restores the attribute definitions
-    if the build fails.
+  - `Table.UpdateTable` validates every GSI change and the table settings
+    (billing mode, capacity, on-demand limits, deletion protection) and builds
+    any created index before it changes anything, and restores the attribute
+    definitions and the settings if the build fails.
   - `CreateTable` registers the table only after `Table.AddIndexes` has built
     every index, so a rejected request leaves no table behind.
 - **On `main`, transactions:**

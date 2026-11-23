@@ -282,7 +282,10 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 		return nil, mapKnownError(err)
 	}
 
-	newTable.BillingMode = aws.String(string(input.BillingMode))
+	if input.BillingMode != "" {
+		newTable.BillingMode = aws.String(string(input.BillingMode))
+	}
+
 	newTable.NativeInterpreter = fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
 	newTable.LangInterpreter = fd.langInterpreter
@@ -318,6 +321,10 @@ func (fd *Client) DeleteTable(ctx context.Context, input *dynamodb.DeleteTableIn
 		return nil, mapKnownError(err)
 	}
 
+	if err := table.CheckDeletable(); err != nil {
+		return nil, mapKnownError(err)
+	}
+
 	desc := mapTypesToDynamoTableDescription(table.Description(tableName))
 
 	delete(fd.tables, tableName)
@@ -339,12 +346,7 @@ func (fd *Client) UpdateTable(ctx context.Context, input *dynamodb.UpdateTableIn
 		return nil, &types.ResourceNotFoundException{Message: aws.String("Cannot do operations on a non-existent table")}
 	}
 
-	changes := make([]*mtypes.GlobalSecondaryIndexUpdate, 0, len(input.GlobalSecondaryIndexUpdates))
-	for _, change := range input.GlobalSecondaryIndexUpdates {
-		changes = append(changes, mapDynamoTotypesGlobalSecondaryIndexUpdate(change))
-	}
-
-	desc, err := table.UpdateTable(tableName, mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions), changes)
+	desc, err := table.UpdateTable(tableName, mapDynamoToTypesUpdateTableInput(input))
 
 	return &dynamodb.UpdateTableOutput{
 		TableDescription: mapTypesToDynamoTableDescription(desc),

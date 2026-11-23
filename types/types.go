@@ -1,7 +1,10 @@
 // Package types contains general types to use in core and interpreter
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // Item describes the DynamoDB item structure
 type Item struct {
@@ -104,8 +107,54 @@ type BillingModeSummary struct {
 
 // CreateTableInput input to create a table
 type CreateTableInput struct {
-	ProvisionedThroughput *ProvisionedThroughput `type:"structure"`
-	KeySchema             []*KeySchemaElement    `min:"1" type:"list" required:"true"`
+	ProvisionedThroughput     *ProvisionedThroughput `type:"structure"`
+	KeySchema                 []*KeySchemaElement    `min:"1" type:"list" required:"true"`
+	DeletionProtectionEnabled *bool                  `type:"boolean"`
+	OnDemandThroughput        *OnDemandThroughput    `type:"structure"`
+}
+
+// UpdateTableInput is the part of an UpdateTable request that minidyn models. A nil field is not
+// part of the request.
+type UpdateTableInput struct {
+	AttributeDefinitions        []*AttributeDefinition
+	BillingMode                 *string
+	DeletionProtectionEnabled   *bool
+	GlobalSecondaryIndexUpdates []*GlobalSecondaryIndexUpdate
+	OnDemandThroughput          *OnDemandThroughput
+	ProvisionedThroughput       *ProvisionedThroughput
+	// UnsupportedChanges is set by a front end when the request carries a setting minidyn
+	// accepts and ignores (for example TableClass), so that it is not "Nothing to update".
+	UnsupportedChanges bool
+}
+
+// modelledUpdateTableFields lists the fields of a front end's UpdateTable request type that
+// UpdateTableInput models, TableName included. Add a field here when UpdateTableInput gains it.
+var modelledUpdateTableFields = []string{
+	"TableName", "AttributeDefinitions", "BillingMode", "DeletionProtectionEnabled",
+	"GlobalSecondaryIndexUpdates", "OnDemandThroughput", "ProvisionedThroughput",
+}
+
+// HasUnsupportedUpdateTableChanges reports whether a front end's UpdateTable request (a pointer to
+// a struct) carries a setting minidyn accepts and ignores (TableClass, StreamSpecification and so
+// on), which keeps a request with only those from being "Nothing to update". It is whatever is
+// left once the modelled fields are cleared, so a setting that is added to the request type later
+// counts too.
+func HasUnsupportedUpdateTableChanges(request any) bool {
+	v := reflect.ValueOf(request)
+	if v.Kind() != reflect.Pointer || v.IsNil() {
+		return false
+	}
+
+	rest := reflect.New(v.Elem().Type()).Elem()
+	rest.Set(v.Elem())
+
+	for _, name := range modelledUpdateTableFields {
+		if field := rest.FieldByName(name); field.IsValid() {
+			field.Set(reflect.Zero(field.Type()))
+		}
+	}
+
+	return !rest.IsZero()
 }
 
 // Projection represents attributes that are copied (projected) from the table into an index
@@ -323,6 +372,7 @@ type TableDescription struct {
 	AttributeDefinitions      []AttributeDefinition             `type:"list"`
 	BillingModeSummary        *BillingModeSummary               `type:"structure"`
 	DeletionProtectionEnabled *bool                             `type:"boolean"`
+	OnDemandThroughput        *OnDemandThroughput               `type:"structure"`
 	ProvisionedThroughput     *ProvisionedThroughput            `type:"structure"`
 	GlobalSecondaryIndexes    []GlobalSecondaryIndexDescription `type:"list"`
 	GlobalTableVersion        string                            `type:"string"`

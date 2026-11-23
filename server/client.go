@@ -208,8 +208,10 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 	table.IndexActivationDelay = c.indexActivationDelay
 
 	if err := table.CreatePrimaryIndex(&types.CreateTableInput{
-		KeySchema:             mapKeySchema(input.KeySchema),
-		ProvisionedThroughput: mapProvisionedThroughput(input.ProvisionedThroughput),
+		KeySchema:                 mapKeySchema(input.KeySchema),
+		ProvisionedThroughput:     mapProvisionedThroughput(input.ProvisionedThroughput),
+		DeletionProtectionEnabled: input.DeletionProtectionEnabled,
+		OnDemandThroughput:        mapOnDemandThroughput(input.OnDemandThroughput),
 	}); err != nil {
 		return nil, mapKnownError(err)
 	}
@@ -235,7 +237,15 @@ func (c *Client) UpdateTable(ctx context.Context, input *UpdateTableInput) (*Upd
 		return nil, &ddbtypes.ResourceNotFoundException{Message: aws.String("Cannot do operations on a non-existent table")}
 	}
 
-	desc, err := table.UpdateTable(tableName, mapAttributeDefinitions(input.AttributeDefinitions), mapGSIUpdate(input.GlobalSecondaryIndexUpdates))
+	desc, err := table.UpdateTable(tableName, &types.UpdateTableInput{
+		AttributeDefinitions:        mapAttributeDefinitions(input.AttributeDefinitions),
+		BillingMode:                 toStringPtr(string(input.BillingMode)),
+		DeletionProtectionEnabled:   input.DeletionProtectionEnabled,
+		GlobalSecondaryIndexUpdates: mapGSIUpdate(input.GlobalSecondaryIndexUpdates),
+		OnDemandThroughput:          mapOnDemandThroughput(input.OnDemandThroughput),
+		ProvisionedThroughput:       mapProvisionedThroughput(input.ProvisionedThroughput),
+		UnsupportedChanges:          types.HasUnsupportedUpdateTableChanges(input),
+	})
 
 	return &UpdateTableOutput{TableDescription: describeTableJSON(desc)}, mapKnownError(err)
 }
@@ -250,6 +260,10 @@ func (c *Client) DeleteTable(ctx context.Context, input *DeleteTableInput) (*Del
 	table, err := c.getTable(tableName)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := table.CheckDeletable(); err != nil {
+		return nil, mapKnownError(err)
 	}
 
 	desc := describeTableJSON(table.Description(tableName))

@@ -68,10 +68,17 @@ type Table struct {
 	KeySchema             keySchema
 	BillingMode           *string
 	ProvisionedThroughput *types.ProvisionedThroughput
-	UseNativeInterpreter  bool
-	NativeInterpreter     *interpreter.Native
-	LangInterpreter       *interpreter.Language
-	IndexActivationDelay  time.Duration
+	// deletionProtected makes DeleteTable fail until an UpdateTable clears it.
+	deletionProtected bool
+	// onDemandThroughput holds the limits of an on-demand table, nil when it has none.
+	onDemandThroughput *types.OnDemandThroughput
+	// wasPayPerRequest is set once the table has been on demand: DynamoDB keeps reporting a
+	// billing mode summary after the table goes back to provisioned.
+	wasPayPerRequest     bool
+	UseNativeInterpreter bool
+	NativeInterpreter    *interpreter.Native
+	LangInterpreter      *interpreter.Language
+	IndexActivationDelay time.Duration
 }
 
 // NewTable creates a new Table
@@ -436,32 +443,274 @@ func validationError(message string, detail ...string) types.Error {
 	return types.NewError("ValidationException", types.WithDetail(message, detail...), nil)
 }
 
-// UpdateTable applies the attribute definitions and global secondary index changes of an
-// UpdateTable request, or none of them: when any part is rejected the table is left as it was.
-// The description of the table is returned either way.
+func validBillingMode(mode string) bool {
+	return mode == billingPayPerRequest || mode == billingProvisioned
+}
+
+// noLimit is the on-demand limit that means "none".
+const noLimit int64 = -1
+
+// UpdateTable applies an UpdateTable request, or none of it: the billing mode, the capacity, the
+// deletion protection, the attribute definitions and the global secondary index changes all
+// apply, or, when any part is rejected, the table is left as it was. The description of the
+// table is returned either way.
 //
-// The request is checked in the order DynamoDB Local reports it: the structure of every index
-// change, then the attribute definitions, then what depends on them (the key attributes of an
-// index to create must be defined, by the table or by this request).
-func (t *Table) UpdateTable(name string, attrs []*types.AttributeDefinition, changes []*types.GlobalSecondaryIndexUpdate) (*types.TableDescription, error) {
-	if err := t.validateIndexChanges(changes); err != nil {
+// The request is checked in the order DynamoDB Local reports it: that there is something to
+// update, the structure and capacity of every index change, then the settings of the table (the
+// capacity, then the on-demand limits), then the attribute definitions and what depends on them
+// (the key attributes of an index to create must be defined, by the table or by this request).
+func (t *Table) UpdateTable(name string, in *types.UpdateTableInput) (*types.TableDescription, error) {
+	if err := t.validateTableUpdate(in); err != nil {
 		return t.Description(name), err
 	}
 
 	previous := maps.Clone(t.AttributesDef)
 
-	if err := t.SetAttributeDefinition(attrs); err != nil {
+	if err := t.SetAttributeDefinition(in.AttributeDefinitions); err != nil {
 		return t.Description(name), err
 	}
 
-	created, err := t.buildCreatedIndexes(changes)
+	settings := t.settings()
+	t.applySettings(in)
+
+	created, err := t.buildCreatedIndexes(in.GlobalSecondaryIndexUpdates)
 	if err != nil {
 		t.AttributesDef = previous
+		t.restoreSettings(settings)
 
 		return t.Description(name), err
 	}
 
-	return t.applyIndexChanges(name, changes, created), nil
+	return t.applyIndexChanges(name, in.GlobalSecondaryIndexUpdates, created), nil
+}
+
+// validateTableUpdate checks everything of an UpdateTable request that does not need the indexes
+// to be built.
+func (t *Table) validateTableUpdate(in *types.UpdateTableInput) error {
+	if len(in.GlobalSecondaryIndexUpdates) == 0 && in.BillingMode == nil && in.ProvisionedThroughput == nil &&
+		in.OnDemandThroughput == nil && in.DeletionProtectionEnabled == nil && !in.UnsupportedChanges {
+		return validationError(msgNothingToUpdate)
+	}
+
+	onDemand := t.isOnDemand()
+
+	if in.BillingMode != nil {
+		if !validBillingMode(*in.BillingMode) {
+			return validationError(fmt.Sprintf(msgBadBillingMode, *in.BillingMode))
+		}
+
+		onDemand = *in.BillingMode == billingPayPerRequest
+	}
+
+	if err := t.validateIndexChanges(in.GlobalSecondaryIndexUpdates, onDemand); err != nil {
+		return err
+	}
+
+	if err := t.validateTableThroughput(in, onDemand); err != nil {
+		return err
+	}
+
+	if in.OnDemandThroughput != nil && onDemand {
+		return validateLimits(in.OnDemandThroughput)
+	}
+
+	return nil
+}
+
+// validateTableThroughput checks the capacity of an UpdateTable request. The capacity is checked
+// whatever the billing mode, and it must differ from the one the table has.
+func (t *Table) validateTableThroughput(in *types.UpdateTableInput, onDemand bool) error {
+	if pt := in.ProvisionedThroughput; pt != nil {
+		if pt.ReadCapacityUnits < 1 || pt.WriteCapacityUnits < 1 {
+			return validationError(msgTableThroughput)
+		}
+
+		if sameThroughput(pt, t.ProvisionedThroughput) {
+			return validationError(msgSameThroughput)
+		}
+	} else if !onDemand && t.isOnDemand() {
+		return validationError(msgNoTableThroughput)
+	}
+
+	if onDemand || !t.isOnDemand() {
+		return nil
+	}
+
+	// back to provisioned: every index that stays needs capacity. Local answers with a 500, so
+	// the text is borrowed from CreateTable and the reason says what happened here. The indexes
+	// are checked in name order so the one named does not vary.
+	names := make([]string, 0, len(t.Indexes))
+	for indexName := range t.Indexes {
+		names = append(names, indexName)
+	}
+
+	sort.Strings(names)
+
+	for _, indexName := range names {
+		idx := t.Indexes[indexName]
+		if idx.typ != indexTypeGlobal || idx.provisionedThroughput != nil {
+			continue
+		}
+
+		if !gainsThroughput(indexName, in.GlobalSecondaryIndexUpdates) {
+			return validationError(msgNoGSIThroughput, "reason", "the table goes back to provisioned and the index has no capacity",
+				"index", indexName, "table", t.Name)
+		}
+	}
+
+	return nil
+}
+
+// gainsThroughput reports whether the changes give the index capacity, or drop it.
+func gainsThroughput(indexName string, changes []*types.GlobalSecondaryIndexUpdate) bool {
+	for _, change := range changes {
+		switch {
+		case change.Update != nil && types.StringValue(change.Update.IndexName) == indexName:
+			return change.Update.ProvisionedThroughput != nil
+		case change.Delete != nil && types.StringValue(change.Delete.IndexName) == indexName:
+			return true
+		}
+	}
+
+	return false
+}
+
+func sameThroughput(a, b *types.ProvisionedThroughput) bool {
+	return a != nil && b != nil && a.ReadCapacityUnits == b.ReadCapacityUnits && a.WriteCapacityUnits == b.WriteCapacityUnits
+}
+
+// validateLimits checks the on-demand limits of a request that carries them for an on-demand
+// table. The API reference says "you must specify MaxReadRequestUnits, MaxWriteRequestUnits, or
+// both", and that a limit is at least 1, or -1 to remove it. DynamoDB Local differs: it rejects
+// one side on CreateTable, answers a 500 on UpdateTable, and takes 0 and lower values as "no
+// limit" on UpdateTable (see e2e/README.md).
+func validateLimits(odt *types.OnDemandThroughput) error {
+	if odt.MaxReadRequestUnits == nil && odt.MaxWriteRequestUnits == nil {
+		return validationError(msgTableThroughput, "reason", "OnDemandThroughput has neither MaxReadRequestUnits nor MaxWriteRequestUnits")
+	}
+
+	for _, limit := range []struct {
+		name  string
+		value *int64
+	}{{"MaxReadRequestUnits", odt.MaxReadRequestUnits}, {"MaxWriteRequestUnits", odt.MaxWriteRequestUnits}} {
+		if limit.value != nil && (*limit.value == 0 || *limit.value < -1) {
+			return validationError(fmt.Sprintf(msgLimitOutsideRange, limit.name))
+		}
+	}
+
+	return nil
+}
+
+// mergeLimits applies the limits of a request to the ones a table has: a side the request gives
+// replaces the current one, and -1 removes it; a side it does not give stays. A nil result means
+// no limit at all.
+func mergeLimits(current, given *types.OnDemandThroughput) *types.OnDemandThroughput {
+	merged := &types.OnDemandThroughput{}
+
+	if current != nil {
+		merged.MaxReadRequestUnits, merged.MaxWriteRequestUnits = current.MaxReadRequestUnits, current.MaxWriteRequestUnits
+	}
+
+	if given != nil {
+		if given.MaxReadRequestUnits != nil {
+			merged.MaxReadRequestUnits = limitOrNil(given.MaxReadRequestUnits)
+		}
+
+		if given.MaxWriteRequestUnits != nil {
+			merged.MaxWriteRequestUnits = limitOrNil(given.MaxWriteRequestUnits)
+		}
+	}
+
+	if merged.MaxReadRequestUnits == nil && merged.MaxWriteRequestUnits == nil {
+		return nil
+	}
+
+	return merged
+}
+
+// limitOrNil copies a limit, or gives nil for -1 (no limit).
+func limitOrNil(v *int64) *int64 {
+	if *v == noLimit {
+		return nil
+	}
+
+	return new(*v)
+}
+
+// tableSettings is what UpdateTable changes on the table itself, to put it back when the request
+// fails after the settings applied.
+type tableSettings struct {
+	billingMode        *string
+	throughput         *types.ProvisionedThroughput
+	onDemandThroughput *types.OnDemandThroughput
+	deletionProtected  bool
+	wasPayPerRequest   bool
+}
+
+func (t *Table) settings() tableSettings {
+	return tableSettings{t.BillingMode, t.ProvisionedThroughput, t.onDemandThroughput, t.deletionProtected, t.wasPayPerRequest}
+}
+
+func (t *Table) restoreSettings(s tableSettings) {
+	t.BillingMode, t.ProvisionedThroughput, t.onDemandThroughput = s.billingMode, s.throughput, s.onDemandThroughput
+	t.deletionProtected, t.wasPayPerRequest = s.deletionProtected, s.wasPayPerRequest
+}
+
+// applySettings applies the settings of a request that validateTableUpdate accepted. What a
+// request does not mention stays as it is. The capacity belongs to a provisioned table and the
+// on-demand limits to an on-demand one, so each goes when the mode changes away from it.
+func (t *Table) applySettings(in *types.UpdateTableInput) {
+	if in.BillingMode != nil {
+		t.BillingMode = new(*in.BillingMode)
+	}
+
+	if t.isOnDemand() {
+		t.wasPayPerRequest = true
+		t.ProvisionedThroughput = nil
+
+		if in.OnDemandThroughput != nil {
+			t.onDemandThroughput = mergeLimits(t.onDemandThroughput, in.OnDemandThroughput)
+		}
+	} else {
+		t.onDemandThroughput = nil
+
+		if in.ProvisionedThroughput != nil {
+			t.ProvisionedThroughput = new(*in.ProvisionedThroughput)
+		}
+	}
+
+	if in.DeletionProtectionEnabled != nil {
+		t.deletionProtected = *in.DeletionProtectionEnabled
+	}
+}
+
+// describeLimits reports the limits a table keeps as DynamoDB does: a side without a limit is -1,
+// and a table without any has none.
+func describeLimits(odt *types.OnDemandThroughput) *types.OnDemandThroughput {
+	if odt == nil {
+		return nil
+	}
+
+	described := &types.OnDemandThroughput{MaxReadRequestUnits: new(noLimit), MaxWriteRequestUnits: new(noLimit)}
+	if odt.MaxReadRequestUnits != nil {
+		described.MaxReadRequestUnits = new(*odt.MaxReadRequestUnits)
+	}
+
+	if odt.MaxWriteRequestUnits != nil {
+		described.MaxWriteRequestUnits = new(*odt.MaxWriteRequestUnits)
+	}
+
+	return described
+}
+
+// CheckDeletable rejects the deletion of a table that has deletion protection. The front ends call
+// it before they drop the table.
+func (t *Table) CheckDeletable() error {
+	if t.deletionProtected {
+		return validationError(msgDeletionProtected)
+	}
+
+	return nil
 }
 
 // validateIndexChanges checks the structure of every entry of an UpdateTable request before any
@@ -469,7 +718,7 @@ func (t *Table) UpdateTable(name string, attrs []*types.AttributeDefinition, cha
 //
 // DynamoDB allows one index to be created or deleted per request and counts that first, so the
 // limit is reported ahead of any problem with an entry. The entries are then checked in order.
-func (t *Table) validateIndexChanges(changes []*types.GlobalSecondaryIndexUpdate) error {
+func (t *Table) validateIndexChanges(changes []*types.GlobalSecondaryIndexUpdate, onDemand bool) error {
 	onlineChanges := 0
 
 	for _, change := range changes {
@@ -493,7 +742,7 @@ func (t *Table) validateIndexChanges(changes []*types.GlobalSecondaryIndexUpdate
 	touched := map[string]struct{}{}
 
 	for _, change := range changes {
-		if err := t.validateIndexChange(change, touched); err != nil {
+		if err := t.validateIndexChange(change, touched, onDemand); err != nil {
 			return err
 		}
 	}
@@ -501,23 +750,24 @@ func (t *Table) validateIndexChanges(changes []*types.GlobalSecondaryIndexUpdate
 	return nil
 }
 
-func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, touched map[string]struct{}) error {
+// changedIndexName is the name of the index a change that has an action refers to.
+func changedIndexName(change *types.GlobalSecondaryIndexUpdate) string {
+	switch {
+	case change.Create != nil:
+		return types.StringValue(change.Create.IndexName)
+	case change.Delete != nil:
+		return types.StringValue(change.Delete.IndexName)
+	default:
+		return types.StringValue(change.Update.IndexName)
+	}
+}
+
+func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, touched map[string]struct{}, onDemand bool) error {
 	if change == nil || (change.Create == nil && change.Delete == nil && change.Update == nil) {
 		return validationError(msgNullGSIAction)
 	}
 
-	var name *string
-
-	switch {
-	case change.Create != nil:
-		name = change.Create.IndexName
-	case change.Delete != nil:
-		name = change.Delete.IndexName
-	default:
-		name = change.Update.IndexName
-	}
-
-	indexName := types.StringValue(name)
+	indexName := changedIndexName(change)
 
 	// Local accepts or fails with a 500 on these combinations, the message is minidyn's pick
 	if (change.Create != nil && change.Update != nil) || (change.Delete != nil && change.Update != nil) {
@@ -550,6 +800,28 @@ func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, to
 		return types.NewError("ResourceNotFoundException", types.WithDetail("Requested resource not found", "index", indexName, "table", t.Name), nil)
 	case change.Update != nil && !exists:
 		return validationError(msgInvalidGSIName, "index", indexName, "table", t.Name)
+	case change.Update != nil:
+		return t.validateIndexThroughput(indexName, change.Update.ProvisionedThroughput, onDemand)
+	}
+
+	return nil
+}
+
+// validateIndexThroughput checks the capacity an UpdateTable request gives an index, for the
+// billing mode the table has once the request applies. An on-demand table has no capacity to
+// change: DynamoDB Local fails with a 500 when it is given one, so the error is minidyn's.
+func (t *Table) validateIndexThroughput(indexName string, pt *types.ProvisionedThroughput, onDemand bool) error {
+	switch {
+	case pt == nil && onDemand:
+		return nil
+	case pt == nil:
+		return validationError(msgNoGSIThroughput, "reason", "the table is provisioned and the index update has no capacity", "index", indexName, "table", t.Name)
+	case onDemand:
+		return validationError(fmt.Sprintf(msgIndexOnDemand, indexName), "reason", "the table is on demand after this request, so an index has no capacity to change", "index", indexName, "table", t.Name)
+	case pt.ReadCapacityUnits < 1 || pt.WriteCapacityUnits < 1:
+		return validationError(msgGSIThroughput, "index", indexName, "table", t.Name)
+	case sameThroughput(pt, t.Indexes[indexName].provisionedThroughput):
+		return validationError(msgSameThroughput, "index", indexName, "table", t.Name)
 	}
 
 	return nil
@@ -607,6 +879,12 @@ func parseKeySchema(schema []*types.KeySchemaElement) (keySchema, error) {
 
 // CreatePrimaryIndex creates the primary index of a table
 func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
+	// DynamoDB Local answers a BillingMode outside the enum with a 500; the check is the one of
+	// UpdateTable
+	if t.BillingMode != nil && !validBillingMode(*t.BillingMode) {
+		return validationError(fmt.Sprintf(msgBadBillingMode, *t.BillingMode))
+	}
+
 	ks, err := parseKeySchema(input.KeySchema)
 	if err != nil {
 		return err
@@ -618,17 +896,41 @@ func (t *Table) CreatePrimaryIndex(input *types.CreateTableInput) error {
 	}
 
 	// types-local check this after validate the key schema
-	if t.BillingMode == nil || types.StringValue(t.BillingMode) != "PAY_PER_REQUEST" {
+	if t.isOnDemand() {
+		if input.OnDemandThroughput != nil {
+			if err := validateLimits(input.OnDemandThroughput); err != nil {
+				return err
+			}
+		}
+	} else {
 		if input.ProvisionedThroughput == nil {
 			// https://github.com/aws/aws-sdk-go/issues/3140
-			return types.NewError("ValidationException", "No provisioned throughput specified for the table", nil)
+			return validationError(msgNoTableThroughput)
+		}
+
+		if input.ProvisionedThroughput.ReadCapacityUnits < 1 || input.ProvisionedThroughput.WriteCapacityUnits < 1 {
+			return validationError(msgTableThroughput)
 		}
 	}
 
 	t.KeySchema = ks
-	t.ProvisionedThroughput = input.ProvisionedThroughput
+	t.deletionProtected = input.DeletionProtectionEnabled != nil && *input.DeletionProtectionEnabled
+	t.applyCreateSettings(input)
 
 	return nil
+}
+
+// applyCreateSettings stores the capacity of a CreateTable request, or the limits when the table
+// is on demand: the request may carry either, and the table keeps the ones of its billing mode.
+func (t *Table) applyCreateSettings(input *types.CreateTableInput) {
+	if t.isOnDemand() {
+		t.wasPayPerRequest = true
+		t.onDemandThroughput = mergeLimits(nil, input.OnDemandThroughput)
+
+		return
+	}
+
+	t.ProvisionedThroughput = input.ProvisionedThroughput
 }
 
 func isValidKeyAttributeType(typ string) bool {
@@ -671,10 +973,10 @@ func (t *Table) validateAttributeDefinition(ks keySchema, message string) error 
 }
 
 func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
-	if t.BillingMode == nil || types.StringValue(t.BillingMode) != "PAY_PER_REQUEST" {
+	if !t.isOnDemand() {
 		if gsiInput.ProvisionedThroughput == nil {
 			// https://github.com/aws/aws-sdk-go/issues/3140
-			return nil, types.NewError("ValidationException", "No provisioned throughput specified for the global secondary index", nil)
+			return nil, validationError(msgNoGSIThroughput)
 		}
 	}
 
@@ -2557,14 +2859,15 @@ func deleteReturnAttributes(rv *string, old map[string]*types.Item) map[string]*
 func (t *Table) Description(name string) *types.TableDescription {
 	gsi, lsi := t.IndexesDescription()
 
-	// minidyn tables are always ready, and deletion protection is not supported.
+	// minidyn tables are always ready.
 	return &types.TableDescription{
 		TableName:                 name,
 		TableStatus:               "ACTIVE",
 		AttributeDefinitions:      t.attributeDefinitionsDescription(),
 		BillingModeSummary:        t.billingModeSummary(),
 		ProvisionedThroughput:     t.provisionedThroughputDescription(),
-		DeletionProtectionEnabled: new(false),
+		DeletionProtectionEnabled: new(t.deletionProtected),
+		OnDemandThroughput:        t.onDemandThroughputDescription(),
 		ItemCount:                 int64(len(t.SortedKeys)),
 		KeySchema:                 t.KeySchema.describe(),
 		GlobalSecondaryIndexes:    gsi,
@@ -2573,7 +2876,7 @@ func (t *Table) Description(name string) *types.TableDescription {
 }
 
 func (t *Table) isOnDemand() bool {
-	return types.StringValue(t.BillingMode) == "PAY_PER_REQUEST"
+	return types.StringValue(t.BillingMode) == billingPayPerRequest
 }
 
 // attributeDefinitionsDescription lists the attributes used by the key schemas of the table
@@ -2615,12 +2918,24 @@ func (t *Table) attributeDefinitionsDescription() []types.AttributeDefinition {
 	return defs
 }
 
+// billingModeSummary is reported once the table has been on demand, as DynamoDB Local does.
 func (t *Table) billingModeSummary() *types.BillingModeSummary {
+	switch {
+	case t.isOnDemand():
+		return &types.BillingModeSummary{BillingMode: billingPayPerRequest}
+	case t.wasPayPerRequest:
+		return &types.BillingModeSummary{BillingMode: billingProvisioned}
+	}
+
+	return nil
+}
+
+func (t *Table) onDemandThroughputDescription() *types.OnDemandThroughput {
 	if !t.isOnDemand() {
 		return nil
 	}
 
-	return &types.BillingModeSummary{BillingMode: "PAY_PER_REQUEST"}
+	return describeLimits(t.onDemandThroughput)
 }
 
 // provisionedThroughputDescription reports the requested capacity, or 0/0 for on-demand tables
@@ -2678,7 +2993,7 @@ func (t *Table) globalIndexDescription(indexName string, index *index) types.Glo
 // carry their creation markers and deleted ones are still listed, as DELETING. On error the
 // description of the table is still returned.
 func (t *Table) ApplyIndexChanges(name string, changes []*types.GlobalSecondaryIndexUpdate) (*types.TableDescription, error) {
-	return t.UpdateTable(name, nil, changes)
+	return t.UpdateTable(name, &types.UpdateTableInput{GlobalSecondaryIndexUpdates: changes})
 }
 
 // applyIndexChanges applies changes that validateIndexChanges accepted, registering the indexes
@@ -2705,6 +3020,8 @@ func (t *Table) applyIndexChanges(name string, changes []*types.GlobalSecondaryI
 			dropped = append(dropped, d)
 
 			delete(t.Indexes, indexName)
+		case change.Update != nil && change.Update.ProvisionedThroughput != nil && !t.isOnDemand():
+			t.Indexes[*change.Update.IndexName].provisionedThroughput = new(*change.Update.ProvisionedThroughput)
 		}
 	}
 
@@ -2726,8 +3043,8 @@ func (t *Table) markIndexCreating(g *types.GlobalSecondaryIndexDescription) {
 
 	if t.isOnDemand() {
 		g.OnDemandThroughput = &types.OnDemandThroughput{
-			MaxReadRequestUnits:  new(int64(-1)),
-			MaxWriteRequestUnits: new(int64(-1)),
+			MaxReadRequestUnits:  new(noLimit),
+			MaxWriteRequestUnits: new(noLimit),
 		}
 	}
 }

@@ -44,3 +44,23 @@ func TestToStringAndStringValue(t *testing.T) {
 	require.Equal(t, "x", StringValue(p))
 	require.Equal(t, "", StringValue(nil))
 }
+
+func TestHasUnsupportedUpdateTableChanges(t *testing.T) {
+	type request struct {
+		TableName                   *string
+		AttributeDefinitions        []int
+		BillingMode                 string
+		DeletionProtectionEnabled   *bool
+		GlobalSecondaryIndexUpdates []int
+		OnDemandThroughput          *int
+		ProvisionedThroughput       *int
+		TableClass                  string
+	}
+
+	one := 1
+
+	require.False(t, HasUnsupportedUpdateTableChanges(&request{}))
+	require.False(t, HasUnsupportedUpdateTableChanges(&request{BillingMode: "PROVISIONED", OnDemandThroughput: &one, AttributeDefinitions: []int{1}}))
+	require.True(t, HasUnsupportedUpdateTableChanges(&request{TableClass: "STANDARD"}))
+	require.False(t, HasUnsupportedUpdateTableChanges(nil))
+}

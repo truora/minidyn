@@ -28,6 +28,8 @@ import "github.com/truora/minidyn/aws-v2/client" // in-memory AWS SDK v2 client
 import miniserver "github.com/truora/minidyn/server" // optional: HTTP DynamoDB API
 ```
 
+The supported packages are `aws-v2/client` and `server`. `core`, `interpreter`, `capacity`, `types`, `calculate-size` and the other packages are internal to minidyn: they are not a supported API and their exported identifiers may change without notice.
+
 ### From a clone of this repository
 
 To work on minidyn itself, clone the repo, then build or test from the root (no separate install step):

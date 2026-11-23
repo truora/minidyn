@@ -149,7 +149,16 @@ func dropAllTables(t *testing.T, client *dynamodb.Client) {
 		}
 
 		for _, name := range out.TableNames {
-			_, err := client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(name)})
+			// a test may leave a table with deletion protection, which DeleteTable refuses
+			described, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(name)})
+			require.NoError(t, err, "describe table %q", name)
+
+			if aws.ToBool(described.Table.DeletionProtectionEnabled) {
+				_, err = client.UpdateTable(ctx, &dynamodb.UpdateTableInput{TableName: aws.String(name), DeletionProtectionEnabled: aws.Bool(false)})
+				require.NoError(t, err, "unprotect table %q", name)
+			}
+
+			_, err = client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(name)})
 			require.NoError(t, err, "delete table %q", name)
 		}
 	}

@@ -134,6 +134,66 @@ engine's behavior separately:
   (`EmptyValueIsSkipped`); the test covers an empty string, not an empty
   binary.
 
+- **The on-demand limits of a table in an `UpdateTable` that does not mention
+  them** (`TestE2E_UpdateTableKeepsOnDemandThroughput`). DynamoDB Local removes
+  the `OnDemandThroughput` of a table in any `UpdateTable` that does not carry
+  it (setting the deletion protection or the capacity alone is enough).
+  minidyn keeps the limits. The
+  [UpdateTable reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)
+  describes `OnDemandThroughput` as "Updates the maximum number of read and
+  write units for the specified table in on-demand capacity mode" and every
+  setting of the request as "Required: No", so a request that does not name it
+  does not update it. The page states the rule outright for one parameter only:
+  of `DisassociationProtectionEnabled`, "If you omit this parameter, the
+  existing setting is unchanged". A caller that turns on deletion protection
+  does not expect the table to lose its limits. The limits are removed, as on
+  Local, when the table goes back to provisioned. The test asserts each
+  engine's description.
+- **A limit with one side, and the values of a limit**
+  (`TestE2E_OnDemandThroughputDocs`). The
+  [CreateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html)
+  and
+  [UpdateTable](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)
+  references say of `OnDemandThroughput` "If you use this parameter, you must
+  specify `MaxReadRequestUnits`, `MaxWriteRequestUnits`, or both", and the
+  [type](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_OnDemandThroughput.html)
+  lists each field as "Required: No". minidyn follows the documentation and
+  differs from Local in these requests. A limit with one side is accepted on
+  `CreateTable` (Local: "Table read and write throughput must be at least 1,
+  and cannot be null") and on `UpdateTable` (Local: 500 `InternalFailure`, also
+  for a limit with neither side, which minidyn rejects with the same
+  `ValidationException` as `CreateTable`). The side given is stored or
+  replaced; on `UpdateTable` the other side keeps its current value, and on
+  `CreateTable` it is absent. A description reports an absent side as `-1`, as
+  the limit of a side that was removed. The type reference also says "To
+  specify a maximum `OnDemandThroughput` on your table, set the value ... as
+  greater than or equal to 1. To remove the maximum `OnDemandThroughput` that is
+  currently set on your table, set the value ... to -1": `-1` removes only the
+  side it is given for (Local drops both limits when either side is `-1`), and
+  `0` or anything below `-1` is outside that range and is rejected on
+  `UpdateTable` with the text Local gives `CreateTable` for it (Local takes `0`
+  on `UpdateTable` as "remove the limits"). The documentation does not name an
+  error for a value out of range, so the message is the one Local already uses
+  for the same input on `CreateTable`. The test asserts each engine's answer
+  and the table it leaves.
+- **Requests DynamoDB Local answers with a 500** (`InternalFailure`).
+  minidyn rejects them with a `ValidationException`, since a 500 says nothing
+  about what is wrong with the request, and each has a test that asserts each
+  engine's answer. A `BillingMode` outside `PROVISIONED` and `PAY_PER_REQUEST`
+  gets the enum message of the API reference, on `UpdateTable`
+  (`TestE2E_UpdateTableInvalidBillingMode`) and on `CreateTable`
+  (`TestE2E_CreateTableInvalidBillingMode`). Capacity for a global secondary
+  index of an on-demand table gets DynamoDB's "One or more parameter values
+  were invalid: ProvisionedThroughput should not be specified for index: ...
+  when BillingMode is PAY_PER_REQUEST"
+  (`TestE2E_UpdateTableIndexCapacityOnDemand`), and going back to provisioned
+  with an index that has no capacity gets "No provisioned throughput specified
+  for the global secondary index"
+  (`TestE2E_UpdateTableProvisionedNeedsIndexCapacity`). The texts are borrowed
+  from the conditions DynamoDB gives them for, so the minidyn-only detail after
+  ` | ` says what happened. The one-sided limit on `UpdateTable` is no longer
+  one of these: the documentation allows it (see above).
+
 A divergence test that asserts each engine passes while both engines do what
 its entry says, and fails if either changes. If one fails, minidyn has stopped
 following DynamoDB's documented behavior, or Local changed: fix minidyn, don't

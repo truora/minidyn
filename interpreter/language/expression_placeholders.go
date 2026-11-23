@@ -30,12 +30,16 @@ func ScanExpression(expression string) ExpressionScan {
 		wasAfterBracket := afterBracket
 		afterBracket = tok.Type == LBRACKET
 
-		if tok.Type != IDENT {
+		if !isWordToken(tok) {
 			continue
 		}
 
 		if wasAfterBracket {
 			scan.noteListIndex(tok.Literal)
+		}
+
+		if tok.Type != IDENT {
+			continue
 		}
 
 		if seen[tok.Literal] {

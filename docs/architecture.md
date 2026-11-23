@@ -227,7 +227,10 @@ ADRs for the layers:
   table and an unknown index before them. For a Scan they also call
   `Table.ValidateConsistentRead` before that pre-check, for the same reason:
   Local reports ConsistentRead on a GSI right after the unknown index. This is a stopgap until #243 moves
-  that pre-check into `core`, where `SearchData` already orders it.
+  that pre-check into `core`, where `SearchData` already orders it. The same
+  pre-check carries the front ends' skips for a list index DynamoDB rejects
+  (`interpreter.HasInvalidListIndex`) and for an undefined value
+  (`hasUndefinedValue`), so #243 removes them all together.
 - **Why:** with per-item checks, the same bad request passes on an empty table
   and fails on a full one, and the error depends on the data.
 - **Check:** is a new validation reachable on an empty table? Does a unit test

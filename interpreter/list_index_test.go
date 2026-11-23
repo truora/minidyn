@@ -90,7 +90,7 @@ func TestPlaceholderListIndexIsASyntaxError(t *testing.T) {
 	t.Run("front end pre-check", func(t *testing.T) {
 		t.Parallel()
 
-		if !HasInvalidListIndex("SET l[:i] = :v") || !HasInvalidListIndex("n = :v AND l[#n] = :v") {
+		if !HasInvalidListIndex("SET l[:i] = :v") || !HasInvalidListIndex("n = :v AND l[#n] = :v") || !HasInvalidListIndex("REMOVE l[in]") || !HasInvalidListIndex("l[OR] = :v") {
 			t.Fatal("an index that is not a literal was not found")
 		}
 

@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -175,6 +176,13 @@ func TestTablePlaceholderListIndexIsASyntaxError(t *testing.T) {
 		return err
 	}, "UpdateExpression"}
 
+	// A keyword is a word between the brackets like any other, and keeps its case in the token.
+	for _, keyword := range []string{"OR", "and", "set", "in", "between"} {
+		for name, tt := range listIndexCases(keyword, values) {
+			tests["keyword "+keyword+"/"+name] = tt
+		}
+	}
+
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			table, key := listIndexTable(t)
@@ -182,6 +190,10 @@ func TestTablePlaceholderListIndexIsASyntaxError(t *testing.T) {
 			token := ":i"
 			if name == "name as index" {
 				token = "#n"
+			}
+
+			if k, _, found := strings.Cut(strings.TrimPrefix(name, "keyword "), "/"); found && strings.HasPrefix(name, "keyword ") {
+				token = k
 			}
 
 			want := "Invalid " + tt.label + ": " + fmt.Sprintf(`Syntax error; token: %q, near: "[%s]"`, token, token)

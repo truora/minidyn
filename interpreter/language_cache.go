@@ -25,6 +25,8 @@ type parsedCondition struct {
 	operandErr *language.OperandCountError
 	// indexRange is the error for the first literal list index above DynamoDB's range, or "".
 	indexRange string
+	// indexSyntax is the detail of the list index syntax error that is the first error, or "".
+	indexSyntax string
 }
 
 // conditionCache maps expression text to its parsed form. Parsing depends only on the text,
@@ -96,6 +98,7 @@ func parseCondition(expr string) *parsedCondition {
 		errs:        p.Errors(),
 	}
 	pc.indexRange = p.IndexRangeError()
+	pc.indexSyntax = p.IndexSyntaxError()
 	pc.names, pc.values = exprPlaceholders(expr)
 
 	if len(pc.errs) == 0 && pc.conditional != nil {
@@ -126,6 +129,7 @@ type parsedUpdate struct {
 	unsupported bool
 	operandErr  *language.OperandCountError
 	indexRange  string
+	indexSyntax string
 }
 
 // updateCache maps update expression text to its parsed form, bounded by maxParsedExpressions.
@@ -146,6 +150,7 @@ func parseUpdate(expr string) *parsedUpdate {
 	p := language.NewUpdateParser(language.NewLexer(expr))
 	pu := &parsedUpdate{stmt: p.ParseUpdateExpression(), errs: p.Errors(), unsupported: p.IsUnsupportedExpression()}
 	pu.indexRange = p.IndexRangeError()
+	pu.indexSyntax = p.IndexSyntaxError()
 
 	if len(pu.errs) == 0 && pu.stmt != nil {
 		pu.operandErr = language.FindOperandCountError(pu.stmt)
@@ -192,9 +197,10 @@ func validateDeclaredValues(expressionType string, placeholders []string, values
 
 // parsedProjection is a projection expression parsed once, like parsedCondition.
 type parsedProjection struct {
-	exprs      []language.Expression
-	errs       []string
-	indexRange string
+	exprs       []language.Expression
+	errs        []string
+	indexRange  string
+	indexSyntax string
 }
 
 // projectionCache maps projection expression text to its parsed form, bounded by
@@ -216,6 +222,7 @@ func parseProjection(expr string) *parsedProjection {
 	p := language.NewParser(language.NewLexer(expr))
 	pp := &parsedProjection{exprs: p.ParseProjectionExpression(), errs: p.Errors()}
 	pp.indexRange = p.IndexRangeError()
+	pp.indexSyntax = p.IndexSyntaxError()
 
 	if len(projectionCache.m) >= maxParsedExpressions {
 		clear(projectionCache.m)

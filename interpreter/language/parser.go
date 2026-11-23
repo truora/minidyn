@@ -3,7 +3,6 @@ package language
 import (
 	"fmt"
 	"slices"
-	"strings"
 )
 
 // Parser represent the interpreter parser
@@ -18,6 +17,10 @@ type Parser struct {
 	// indexRange is the error for the first literal list index above DynamoDB's range. It is
 	// kept out of errors because DynamoDB reports it only when the text has no syntax error.
 	indexRange string
+
+	// indexSyntax is the detail of the list index syntax error when it is the first error of
+	// the parse, which is the one DynamoDB reports; empty when the first error is another one.
+	indexSyntax string
 
 	// updateClauseHeaders tracks SET/ADD/REMOVE/DELETE clause headers for the
 	// current ParseUpdateExpression (each keyword at most once, per DynamoDB).
@@ -135,37 +138,6 @@ func (p *Parser) IsUnsupportedExpression() bool {
 	return p.unsupported
 }
 
-// LocatedSyntaxError returns the detail ("token: ..., near: ...") of a parse error that names
-// the token DynamoDB would reject, as the one for a list index that is not a literal does.
-func LocatedSyntaxError(msg string) (detail string, ok bool) {
-	rest, ok := strings.CutPrefix(msg, locatedSyntaxErrorPrefix)
-	if !ok {
-		return "", false
-	}
-
-	return `token: "` + rest, true
-}
-
-// locatedSyntaxErrorPrefix starts a parse error that quotes the offending token. The EOF error
-// has the same shape but an unquoted token, so it is not one of these.
-const locatedSyntaxErrorPrefix = `Syntax error; token: "`
-
-// isListIndexLiteral reports whether literal is made of digits only, as DynamoDB requires
-// between the brackets. Whether the number is a valid index is classifyListIndex's question.
-func isListIndexLiteral(literal string) bool {
-	if literal == "" {
-		return false
-	}
-
-	for i := range len(literal) {
-		if literal[i] < '0' || literal[i] > '9' {
-			return false
-		}
-	}
-
-	return true
-}
-
 // checkListIndex applies DynamoDB's rules for a list index to the token between brackets: a
 // token that is not digits, or a literal with a leading zero, is a syntax error with the text
 // Local reports; a literal above the range is only recorded (IndexRangeError).
@@ -173,6 +145,10 @@ func (p *Parser) checkListIndex(token string) {
 	syntax, rangeErr := classifyListIndex(token)
 
 	if syntax != "" {
+		if len(p.errors) == 0 {
+			p.indexSyntax = syntax
+		}
+
 		p.errors = append(p.errors, "Syntax error; "+syntax)
 	}
 
@@ -181,17 +157,17 @@ func (p *Parser) checkListIndex(token string) {
 	}
 }
 
+// IndexSyntaxError returns the detail ("token: ..., near: ...") of the syntax error of a list
+// index when it is the first error of the parse, as DynamoDB reports only the first, or "".
+func (p *Parser) IndexSyntaxError() string {
+	return p.indexSyntax
+}
+
 // IndexRangeError returns the error DynamoDB reports for the first literal list index above
 // 2147483647, or "". It is only meaningful when Errors is empty: DynamoDB reports a syntax
 // error anywhere in the text first.
 func (p *Parser) IndexRangeError() string {
 	return p.indexRange
-}
-
-// ListIndexSyntaxDetail is the detail of the syntax error for token between brackets, as
-// DynamoDB Local words it.
-func ListIndexSyntaxDetail(token string) string {
-	return fmt.Sprintf("token: %q, near: %q", token, "["+token+"]")
 }
 
 func (p *Parser) parseIdentifier() Expression {
@@ -337,9 +313,9 @@ func (p *Parser) parseIndexExpression(left Expression) Expression {
 
 	expression.Index = p.parseIdentifier()
 
-	// DynamoDB takes only an integer literal as a list index: a placeholder or a name is a
-	// syntax error (#164), so the parse carries it and no expression is evaluated to find it.
-	if expression.Token.Type == LBRACKET && p.curToken.Type == IDENT {
+	// DynamoDB takes only an integer literal as a list index: a placeholder, a name or a keyword
+	// is a syntax error (#164), so the parse carries it and no expression is evaluated to find it.
+	if expression.Token.Type == LBRACKET && isWordToken(p.curToken) {
 		p.checkListIndex(p.curToken.Literal)
 	}
 

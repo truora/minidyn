@@ -13,13 +13,19 @@ the list index was added (`git log -S'only support N as index' --format='%h %ad'
 
 DynamoDB does not have this syntax. DynamoDB Local takes only digits between the
 brackets; anything else is a syntax error that names the token. The probe was run on
-DynamoDB Local with minidyn beside it (`e2e/parity_list_index_syntax_test.go`, 169
-cases):
+DynamoDB Local with minidyn beside it (`e2e/parity_list_index_syntax_test.go`, 72
+named cases in `TestE2E_ListIndexSyntax`, from `awk '/^func TestE2E_ListIndexSyntax/{f=1}
+/^func TestE2E_ListIndexLiteral/{f=0} f' e2e/parity_list_index_syntax_test.go | grep -c
+'^\s*"[A-Za-z0-9]*": *{kind:'`; the literal rules are in `TestE2E_ListIndexLiteral`):
 
 - **The text.** `Invalid UpdateExpression: Syntax error; token: ":i", near: "[:i]"`,
   and the same with `ConditionExpression`, `FilterExpression`,
   `KeyConditionExpression` and `ProjectionExpression`. A name placeholder gives
-  `token: "#n", near: "[#n]"`, and a plain name `token: "abc", near: "[abc]"`.
+  `token: "#n", near: "[#n]"`, and a plain name `token: "abc", near: "[abc]"`. A keyword
+  is a word like any other, whatever its case, and the token keeps the case it was written
+  in: `l[OR]` gives `token: "OR", near: "[OR]"`, `l[and]` gives `token: "and", near:
+  "[and]"`, and `set`, `in`, `between` and `not` are the same, in an update, a condition, a
+  filter and a projection.
 - **Where.** In every position: SET (left and right side, inside `list_append`,
   `if_not_exists` and arithmetic), REMOVE, ADD, DELETE, a condition on `UpdateItem`,
   `PutItem`, `DeleteItem` and `TransactWriteItems`, a filter on `Query` and `Scan`, a
@@ -46,28 +52,31 @@ text, position and order are in the Decision):
   near: "0123]"`, `l[00]` gives `token: "0", near: "00]"`, `l[007]` gives `token: "0",
   near: "007"` and `l[0007]` gives `token: "0", near: "000"`.
 
-The extension also cost four fixes: #262 (a negative placeholder index panicked), #259
-(the conversion of the number), #267 (the conversion used `int64(float)` or an
-int-sized parse, so an out-of-range value behaved differently on arm64 and amd64) and
-PR #287 (a single exact conversion with its own error texts for fractions, ranges and
-negative values). Each of them handled values that only a placeholder can produce:
-neither a fraction nor a negative number is a valid literal index. #164 lists the
-extension among the inputs minidyn accepts and Local rejects.
+The extension also cost three fixes: #262 (a negative placeholder index panicked), #259
+(the conversion of the number) and #267 (the conversion used `int64(float)` or an
+int-sized parse, so an out-of-range value behaved differently on arm64 and amd64). Each
+of them handled values that only a placeholder can produce: neither a fraction nor a
+negative number is a valid literal index. #164 lists the extension among the inputs
+minidyn accepts and Local rejects.
 
-The code that existed only for it:
-`(*Number).listIndex`, `evalListIndexValue` reading the environment, the negative index
-branch of `indexAccessor.Set`, the `values` argument of `UpdateTargetPaths` (it loaded
-the expression values to resolve `l[:i]`), and the placeholder branch of
-`ExtractPath`.
+The code that existed on `main` only for it (`git show origin/main:<file>`):
+`(*Number).int64Value` (`interpreter/language/object.go`), `evalListIndexValue`'s
+`evalIdentifier` fallback and `newNegativeListIndexError`, used by `indexAccessor.Set`
+(`interpreter/language/evaluator.go`), `extractPathListIndex`'s `Eval` fallback
+(`interpreter/language/project.go`), and the `values` argument of `UpdateTargetPaths`
+(`interpreter/language.go`, `interpreter/language/update_targets.go`), which loaded the
+expression values to resolve `l[:i]`.
 
 ## Decision
 
-A list index is an integer literal, as in DynamoDB. The parser rejects any other token
-between `[` and `]` with Local's text, as the first error of the parse, so the cached
-parse (D6) carries it: `Parser.parseIndexExpression` adds
-`Syntax error; token: "<token>", near: "[<token>]"`, and
-`interpreter.locatedParseError` gives it the label of the expression
-(`Invalid UpdateExpression: ...`).
+A list index is an integer literal, as in DynamoDB. The parser rejects any other word
+between `[` and `]` (a name, a placeholder, a number that is not a valid literal, or a
+keyword such as `OR` or `SET`; `isWordToken`) with Local's text, as the first error of
+the parse, so the cached parse (D6) carries it: `Parser.parseIndexExpression` adds
+`Syntax error; token: "<token>", near: "[<token>]"` and keeps its detail in
+`Parser.IndexSyntaxError` when it is the first error, so no caller recovers the kind of
+error from the text; `interpreter.syntaxErrorAtToken` gives it the label of the
+expression (`Invalid UpdateExpression: ...`).
 
 Local reports it before the placeholder checks (D3), so:
 
@@ -89,7 +98,7 @@ The literals follow Local (D1, level 1) instead of minidyn's own int64 rule:
   `classifyListIndex` is the one place that knows: it gives the syntax detail of a token
   that is not digits or has a leading zero (`token: "0", near: "007"`), and the range
   message of a literal above the range. The parser, the lexer scan and `listIndexLiteral`
-  use it, so they cannot disagree.
+  (all in `interpreter/language/list_index.go`) use it, so they cannot disagree.
 - **Leading zeros** are a located syntax error in the same parse pass as the placeholder
   check (D6), with the same `Invalid <Expr>: Syntax error; token: ..., near: ...` text.
   The token after the literal is taken to be the closing bracket, so whitespace between a
@@ -150,23 +159,21 @@ so the whole message is pinned by unit tests (`TestPlaceholderListIndexIsASyntax
 `TestTablePlaceholderListIndexIsASyntaxError`, `TestLiteralListIndexLikeDynamoDBLocal`,
 `TestTableLiteralListIndexLikeDynamoDBLocal`). Generic syntax errors, such as
 `SET n = =`, still come after the unused-value check and without the `Invalid <X>:`
-prefix; only this error was moved (#164, #188). Two orders are not Local's yet, and are
-not changed here: across the expressions of one `UpdateItem`, Local checks the update
-expression completely (the syntax, the range, then its undefined names and values) before
-it parses the condition, so an undefined `:z` in the update is reported before a syntax
-error in the condition, and minidyn reports the syntax error first; and a text that has a
-generic syntax error and a range error reports the syntax error only after the undefined
-placeholders.
+prefix; only this error was moved. Two gaps remain, tracked in #296 (the order of the
+update expression against the condition expression) and #188 (the `near` text and the
+generic syntax errors).
 
 ## References
 
-- `interpreter/language/parser.go` — `parseIndexExpression`, `LocatedSyntaxError`
+- `interpreter/language/parser.go` — `parseIndexExpression`, `checkListIndex`,
+  `IndexSyntaxError`, `IndexRangeError`
 - `interpreter/language/expression_placeholders.go` — `ScanExpression`
-- `interpreter/interpreter.go` — `invalidListIndexError`, `HasInvalidListIndex`
-- `interpreter/language/list_index.go` — `classifyListIndex`, the range and leading zero texts
-- `interpreter/language/object.go` — `listIndexLiteral`
-- `e2e/parity_list_index_syntax_test.go` — the parity cases for each position, the range
-  boundary and the leading zeros
+- `interpreter/interpreter.go` — `listIndexError`, `syntaxErrorAtToken`,
+  `listIndexRangeError`, `HasInvalidListIndex`
+- `interpreter/language/list_index.go` — `classifyListIndex`, `isWordToken`,
+  `listIndexLiteral`, the range and leading zero texts
+- `e2e/parity_list_index_syntax_test.go` — the parity cases for each position, the
+  keywords, the range boundary and the leading zeros
 - `docs/architecture.md` — D1 (reference), D3 (order), D4 (text), D6 (parse once)
 - `docs/interpreter.md` — the grammar of paths
-- #164, #259, #262, #267, PR #287
+- #164, #188, #259, #262, #267, #296

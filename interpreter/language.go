@@ -28,8 +28,8 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 	conditional := parsed.conditional
 
 	if len(parsed.errs) != 0 {
-		if err := locatedParseError(matchExpressionLabel(input.ExpressionType), parsed.errs); err != nil {
-			return false, err
+		if parsed.indexSyntax != "" {
+			return false, &syntaxErrorAtToken{expressionType: matchExpressionLabel(input.ExpressionType), detail: parsed.indexSyntax}
 		}
 
 		detail := strings.Join(parsed.errs, "; ")
@@ -130,8 +130,8 @@ func CheckProjection(expr string, aliases map[string]string) (*CheckedProjection
 	pp := parseProjection(expr)
 
 	if len(pp.errs) != 0 {
-		if err := locatedParseError("ProjectionExpression", pp.errs); err != nil {
-			return nil, err
+		if pp.indexSyntax != "" {
+			return nil, &syntaxErrorAtToken{expressionType: "ProjectionExpression", detail: pp.indexSyntax}
 		}
 
 		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(pp.errs, "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
@@ -249,8 +249,8 @@ func (li *Language) Update(input UpdateInput) error {
 	env.Aliases = aliases
 
 	if len(pu.errs) != 0 {
-		if err := locatedParseError("UpdateExpression", pu.errs); err != nil {
-			return err
+		if pu.indexSyntax != "" {
+			return &syntaxErrorAtToken{expressionType: "UpdateExpression", detail: pu.indexSyntax}
 		}
 
 		errType := ErrSyntaxError

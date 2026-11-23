@@ -626,6 +626,18 @@ func TestParsingRejectsNonLiteralListIndex(t *testing.T) {
 		{[]string{"update"}, "SET l[0][:i] = :v", ":i"},
 		{[]string{"condition", "projection"}, "l[abc]", "abc"},
 		{[]string{"condition"}, "attribute_exists(m.l[:i])", ":i"},
+		// A keyword is a word like any other between the brackets, in its own case.
+		{[]string{"condition", "projection"}, "l[OR] = :v", "OR"},
+		{[]string{"condition", "projection"}, "l[and] = :v", "and"},
+		{[]string{"condition", "projection"}, "l[Not]", "Not"},
+		{[]string{"condition", "projection"}, "l[between]", "between"},
+		{[]string{"update"}, "SET l[OR] = :v", "OR"},
+		{[]string{"update"}, "SET l[and] = :v", "and"},
+		{[]string{"update"}, "SET l[set] = :v", "set"},
+		{[]string{"update"}, "REMOVE l[in]", "in"},
+		{[]string{"update"}, "REMOVE l[between]", "between"},
+		{[]string{"update"}, "ADD l[add] :v", "add"},
+		{[]string{"update"}, "DELETE l[delete] :v", "delete"},
 	}
 
 	for _, tt := range cases {
@@ -639,24 +651,36 @@ func TestParsingRejectsNonLiteralListIndex(t *testing.T) {
 		}
 	}
 
-	for _, input := range []string{"l[0] = :v", "l[12][3].m = :v", "l[9223372036854775808] = :v", "#a[1] = :v"} {
+	for _, input := range []string{"l[0] = :v", "l[12][3].m = :v", "l[9223372036854775808] = :v", "#a[1] = :v", "l[ 0 ] = :v"} {
 		if errs := parsers["condition"](input); len(errs) != 0 {
 			t.Errorf("%q: unexpected errors %q", input, errs)
 		}
 	}
 }
 
-func TestLocatedSyntaxError(t *testing.T) {
+// IndexSyntaxError is the list index syntax error only when it is the first error of the parse,
+// as DynamoDB reports one error: a generic error before it hides it.
+func TestParserIndexSyntaxError(t *testing.T) {
 	t.Parallel()
 
-	detail, ok := LocatedSyntaxError(`Syntax error; token: ":i", near: "[:i]"`)
-	if !ok || detail != `token: ":i", near: "[:i]"` {
-		t.Errorf("got %q, %v", detail, ok)
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"l[:i] = :v", `token: ":i", near: "[:i]"`},
+		{"l[OR] = :v", `token: "OR", near: "[OR]"`},
+		{"l[007] = :v", `token: "0", near: "007"`},
+		{"l[0] = :v", ""},
+		{"l[2147483648] = :v", ""},
+		{"= x AND l[:i] = :v", ""},
 	}
 
-	for _, msg := range []string{"Syntax error; token: <EOF>, near: \"x\"", "no prefix parse function for = found", ""} {
-		if detail, ok := LocatedSyntaxError(msg); ok {
-			t.Errorf("%q: unexpectedly located: %q", msg, detail)
+	for _, tt := range cases {
+		p := NewParser(NewLexer(tt.input))
+		p.ParseConditionalExpression()
+
+		if got := p.IndexSyntaxError(); got != tt.want {
+			t.Errorf("%q: IndexSyntaxError() = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -716,6 +740,11 @@ func TestParserListIndexLiteralRules(t *testing.T) {
 		{"projection", "l[0]", "", ""},
 		{"projection", "l[2147483647]", "", ""},
 		{"condition", "l[10] = :v", "", ""},
+		// Whitespace inside the brackets is not part of the index.
+		{"projection", "l[ 0 ]", "", ""},
+		{"condition", "l[ 2147483647 ] = :v", "", ""},
+		{"update", "SET l[ 1 ] = :v", "", ""},
+		{"projection", "l[ 2147483648 ]", "", "2147483648"},
 		// Above the range: recorded, not a syntax error, whatever the size.
 		{"projection", "l[2147483648]", "", "2147483648"},
 		{"projection", "l[4294967296]", "", "4294967296"},

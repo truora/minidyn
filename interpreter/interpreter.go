@@ -67,21 +67,6 @@ func (e *syntaxErrorAtToken) Error() string {
 
 func (e *syntaxErrorAtToken) Unwrap() error { return ErrSyntaxError }
 
-// locatedParseError returns the error for a parse that failed at a token DynamoDB names, or nil
-// when the first parse error is another one. DynamoDB reports only the first error.
-func locatedParseError(expressionType string, errs []string) error {
-	if len(errs) == 0 {
-		return nil
-	}
-
-	detail, ok := language.LocatedSyntaxError(errs[0])
-	if !ok {
-		return nil
-	}
-
-	return &syntaxErrorAtToken{expressionType: expressionType, detail: detail}
-}
-
 // listIndexRangeError is the error for a literal list index above DynamoDB's range. It is not a
 // syntax error in DynamoDB's words, but it maps to the same ValidationException, so it unwraps
 // to ErrSyntaxError like the other expression errors.

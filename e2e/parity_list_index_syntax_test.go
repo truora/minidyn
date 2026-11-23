@@ -42,6 +42,7 @@ func TestE2E_ListIndexSyntax(t *testing.T) {
 
 	i, v := vals(":i", one, ":v", str), vals(":v", str)
 	withX := vals(":i", one, ":x", str)
+	x := vals(":x", str)
 
 	tests := map[string]listIndexReq{
 		// UpdateExpression: SET, REMOVE, ADD and DELETE, and the right side.
@@ -101,10 +102,27 @@ func TestE2E_ListIndexSyntax(t *testing.T) {
 		"GetProjectionMixed":  {kind: "get", expr: "l[0][:i]"},
 		"BatchGetProjection":  {kind: "batchget", expr: "l[:i]"},
 		"QueryProjection":     {kind: "keycond", expr: "pk = :p", cond: "l[:i]", values: vals(":i", one, ":p", str)},
-		// A literal index stays valid.
-		"LiteralProjection": {kind: "get", expr: "l[0], l[1]"},
-		"LiteralSet":        {kind: "update", expr: "SET l[1] = :v", values: v},
-		"LiteralCondition":  {kind: "update", expr: "SET n = :v", cond: "l[1] = :v", values: vals(":v", fzS("q"))},
+		// A keyword between the brackets is not a literal either (#164).
+		"SetKeywordOr":         {kind: "update", expr: "SET l[OR] = :v", values: v},
+		"SetKeywordAndLower":   {kind: "update", expr: "SET l[and] = :v", values: v},
+		"SetKeywordSet":        {kind: "update", expr: "SET l[set] = :v", values: v},
+		"RemoveKeywordIn":      {kind: "update", expr: "REMOVE l[in]"},
+		"RemoveKeywordBetween": {kind: "update", expr: "REMOVE l[between]"},
+		"ConditionKeywordOr":   {kind: "update", expr: "SET n = :v", cond: "l[OR] = :v", values: v},
+		"ConditionKeywordAnd":  {kind: "update", expr: "SET n = :v", cond: "l[and] = :v", values: v},
+		"ConditionKeywordSet":  {kind: "update", expr: "SET n = :v", cond: "l[set] = :v", values: v},
+		"ProjectionKeywordOr":  {kind: "get", expr: "l[OR]"},
+		"ProjectionKeywordAnd": {kind: "get", expr: "l[and]"},
+		"ProjectionKeywordSet": {kind: "get", expr: "l[set]"},
+		"ScanFilterKeywordNot": {kind: "scan", expr: "l[not] = :x", values: x},
+		// A literal index stays valid, with a declared name and with whitespace inside.
+		"NamedListProjection": {kind: "get", expr: "#n[0]", names: map[string]string{"#n": "l"}},
+		"NamedListSet":        {kind: "update", expr: "SET #n[1] = :v", names: map[string]string{"#n": "l"}, values: v},
+		"NamedListCondition":  {kind: "update", expr: "SET n = :v", cond: "#n[1] = :v", names: map[string]string{"#n": "l"}, values: vals(":v", fzS("q"))},
+		"SpacedLiteral":       {kind: "get", expr: "l[ 0 ]"},
+		"LiteralProjection":   {kind: "get", expr: "l[0], l[1]"},
+		"LiteralSet":          {kind: "update", expr: "SET l[1] = :v", values: v},
+		"LiteralCondition":    {kind: "update", expr: "SET n = :v", cond: "l[1] = :v", values: vals(":v", fzS("q"))},
 	}
 
 	for name, tt := range tests {

@@ -154,20 +154,6 @@ func (i *Number) decimal() types.Decimal {
 	return d
 }
 
-// listIndexLiteral converts the literal index of a path, such as the 3 of l[3], exactly: it is
-// the one place that does it, so the evaluator and ExtractPath cannot disagree. DynamoDB accepts
-// 0 to 2147483647, and reason is its message for anything else. The parser already rejects an
-// index that is not a plain literal in range, so a reason can only come from a tree built
-// without it, and it is the range message whatever the text is. The caller builds the error, as
-// an assignment names the field and a read does not.
-func listIndexLiteral(literal string) (idx int64, reason string) {
-	if n, err := strconv.ParseInt(literal, 10, 64); err == nil && isListIndexLiteral(literal) && n <= maxListIndex {
-		return n, ""
-	}
-
-	return 0, ListIndexRangeMessage(literal)
-}
-
 // Add if the obj is an number it adds the value to the number
 func (i *Number) Add(obj Object) Object {
 	n, ok := obj.(*Number)

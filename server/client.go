@@ -202,9 +202,9 @@ func (c *Client) CreateTable(ctx context.Context, input *CreateTableInput) (*Cre
 	}
 
 	table.BillingMode = toStringPtr(string(input.BillingMode))
-	table.NativeInterpreter = *c.nativeInterpreter
+	table.NativeInterpreter = c.nativeInterpreter
 	table.UseNativeInterpreter = c.useNativeInterpreter
-	table.LangInterpreter = *c.langInterpreter
+	table.LangInterpreter = c.langInterpreter
 	table.IndexActivationDelay = c.indexActivationDelay
 
 	if err := table.CreatePrimaryIndex(&types.CreateTableInput{

@@ -31,6 +31,7 @@ Discover skills progressively — only read a skill when it is directly relevant
 - `writing-minidyn-e2e-parity-tests` — DynamoDB Local vs minidyn parity tests
 - `writing-minidyn-commits` — commit message format
 - `releasing` — cut a release (Keep a Changelog, tags, draft GitHub release)
+- `reviewing-minidyn-pr-comments` — go through PR review comments one at a time, decide each with the maintainer, then implement and ask before pushing or replying
 
 ## Verification
 

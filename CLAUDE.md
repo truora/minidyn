@@ -10,6 +10,7 @@ Project skills live in `.agents/skills/` (symlinked under `.claude/skills/`). Re
 - `writing-minidyn-e2e-parity-tests` — DynamoDB Local vs minidyn parity tests
 - `writing-minidyn-commits` — commit message format
 - `releasing` — cut a release
+- `reviewing-minidyn-pr-comments` — go through PR review comments one at a time before changing anything
 
 ## Sub-agents
 

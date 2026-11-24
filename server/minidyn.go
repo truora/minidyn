@@ -36,8 +36,9 @@ var (
 )
 
 // EmulateFailure configures failure injection on the server's in-memory client.
-// Every API hard-fails the call with the emulated error, including BatchWriteItem and
-// BatchGetItem (the whole batch errors; it does not return partial results). Use
+// Every item operation (PutItem, GetItem, UpdateItem, DeleteItem, Query, Scan, the
+// batches and the transactions) hard-fails the call with the emulated error, including
+// BatchWriteItem and BatchGetItem (the whole batch errors; it does not return partial results). Use
 // FailureConditionNone to clear emulation. To leave individual batch sub-requests
 // unprocessed instead of failing the whole call, use EmulateUnprocessedItems.
 func (s *Server) EmulateFailure(condition FailureCondition) {

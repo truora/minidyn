@@ -22,8 +22,7 @@ func TestE2E_IgnoredParams(t *testing.T) {
 		fn         func(t *testing.T, client *dynamodb.Client) any
 	}{
 		{
-			name:       "ParallelScanSegments",
-			knownIssue: "#155",
+			name: "ParallelScanSegments",
 			fn: func(t *testing.T, client *dynamodb.Client) any {
 				t.Helper()
 				ctx := context.Background()

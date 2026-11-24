@@ -16,10 +16,6 @@ request UpdateTableInput.DeletionProtectionEnabled
 request UpdateTableInput.OnDemandThroughput
 request UpdateTableInput.ProvisionedThroughput
 
-# parallel scan (#155)
-request ScanInput.Segment
-request ScanInput.TotalSegments
-
 # legacy parameters (#156)
 request AttributeValueUpdate.Action
 request AttributeValueUpdate.Value

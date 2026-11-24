@@ -736,6 +736,8 @@ func (fd *Client) Scan(ctx context.Context, input *dynamodb.ScanInput, opt ...fu
 		ConsistentRead:            aws.ToBool(input.ConsistentRead),
 		ScanIndexForward:          true,
 		Scan:                      true,
+		Segment:                   input.Segment,
+		TotalSegments:             input.TotalSegments,
 	})
 	if err != nil {
 		return nil, mapKnownError(err)

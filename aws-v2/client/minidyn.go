@@ -38,8 +38,9 @@ var (
 	}
 )
 
-// EmulateFailure forces the fake client to fail. Every API hard-fails the call with
-// the emulated error, including BatchWriteItem and BatchGetItem (the whole batch
+// EmulateFailure forces the fake client to fail. Every item operation (PutItem, GetItem,
+// UpdateItem, DeleteItem, Query, Scan, the batches and the transactions) hard-fails
+// the call with the emulated error, including BatchWriteItem and BatchGetItem (the whole batch
 // errors; it does not return partial results). Use FailureConditionNone to clear. To
 // leave individual batch sub-requests unprocessed instead of failing the whole call,
 // use EmulateUnprocessedItems.

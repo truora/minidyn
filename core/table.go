@@ -304,6 +304,9 @@ func (t *Table) BatchGetItem(keys []map[string]*types.Item, projectionExpr strin
 //
 // Keys are compared as the request spells them (rawKeyID), so equal numbers written differently,
 // like 1 and 1.0, are different keys, and a duplicate is reported even when its key is invalid.
+// The exception is a number: Local reads the numbers of each key before it compares the key with
+// the earlier ones, so an invalid number is reported ahead of the duplicate it makes, and after
+// a duplicate that comes before it in the request.
 // The comparison is on the mapped form of the key, so a key map that maps to nothing, like an
 // empty one, equals another one; two such keys are a duplicate. Within a table each key is
 // looked up among the keys before it and then counted, so a duplicate is reported ahead of the
@@ -325,9 +328,13 @@ func ValidateBatchGetKeys(requests map[string][]map[string]*types.Item) error {
 		seen := make(map[string]struct{}, len(keys))
 
 		for i, key := range keys {
+			if err := validateKeyNumbers(key, "table", name, "index", strconv.Itoa(i)); err != nil {
+				return err
+			}
+
 			id := rawKeyID(key)
 			if _, duplicate := seen[id]; duplicate {
-				return validationError(msgBatchDuplicateKeys, "table", name, "key", strconv.Itoa(i))
+				return validationError(msgBatchDuplicateKeys, "table", name, "index", strconv.Itoa(i))
 			}
 
 			seen[id] = struct{}{}
@@ -337,6 +344,32 @@ func ValidateBatchGetKeys(requests map[string][]map[string]*types.Item) error {
 				return validationError(msgBatchGetTooMany)
 			}
 		}
+	}
+
+	return nil
+}
+
+// validateKeyNumbers rejects the first invalid N value of a key of a BatchGetItem, by attribute
+// name, with the error a number gets anywhere else (ErrInvalidNumber, ErrNumberPrecision,
+// ErrNumberOverflow or ErrNumberUnderflow). detail locates the key in the request.
+func validateKeyNumbers(key map[string]*types.Item, detail ...string) error {
+	var (
+		first   string
+		failure error
+	)
+
+	for name, value := range key {
+		if value == nil || value.N == nil {
+			continue
+		}
+
+		if err := types.ValidateNumber(*value.N); err != nil && (failure == nil || name < first) {
+			first, failure = name, err
+		}
+	}
+
+	if failure != nil {
+		return validationError(failure.Error(), append(detail, "attribute", first, "number", *key[first].N)...)
 	}
 
 	return nil

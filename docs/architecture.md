@@ -149,14 +149,15 @@ ADRs for the layers:
     (`Table.BatchGetItem`);
   - the keys of a `BatchGetItem` (#246), before the tables, the keys' values
     or any projection (`core.ValidateBatchGetKeys`): no tables, a table with
-    no keys, then each key against the keys before it, as the request spells
-    them (so `1` and `1.0` differ; `rawKeyID` builds a length-prefixed
+    no keys, then each key's numbers (an invalid one is reported before the
+    key is compared) and the key against the keys before it, as the request
+    spells them (so `1` and `1.0` differ; `rawKeyID` builds a length-prefixed
     identity of the key map, so the scan is linear), then the 100 key count.
     The front ends run it in the order of `BatchWriteItem` (D13):
     `ReturnConsumedCapacity`, the emulated failure, then these checks. The
     count stays with the duplicate check rather than with the front ends'
     shape checks, because Local reports a duplicate ahead of the limit. An
-    error names the table and the position of the repeated key (`key: 3`),
+    error names the table and the position of the repeated key (`index: 3`),
     never its value. Local goes through the tables in the order of the wire
     request, which the SDK marshals from a map, so it is random; minidyn goes
     by table name, in the duplicate scan and in the per-table reads, so the

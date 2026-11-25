@@ -260,7 +260,7 @@ func TestServerBatchDuplicateKeysDetail(t *testing.T) {
 	_, err := client.BatchGetItem(context.Background(), &BatchGetItemInput{RequestItems: map[string]KeysAndAttributes{
 		"pokemons": {Keys: []map[string]*AttributeValue{idKey("secret"), idKey("b"), idKey("secret")}},
 	}})
-	require.ErrorContains(t, err, batchDuplicateKeys+" | table: pokemons; key: 2")
+	require.ErrorContains(t, err, batchDuplicateKeys+" | table: pokemons; index: 2")
 	require.NotContains(t, err.Error(), "secret")
 
 	_, err = client.BatchWriteItem(context.Background(), &BatchWriteItemInput{RequestItems: map[string][]WriteRequest{

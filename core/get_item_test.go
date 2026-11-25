@@ -217,6 +217,7 @@ func TestValidateBatchGetKeys(t *testing.T) {
 
 		return m
 	}
+	nkey := func(v string) map[string]*types.Item { return map[string]*types.Item{"id": n(v)} }
 	keys := func(k ...map[string]*types.Item) []map[string]*types.Item { return k }
 	many := func(count int) []map[string]*types.Item {
 		out := make([]map[string]*types.Item, count)
@@ -230,6 +231,10 @@ func TestValidateBatchGetKeys(t *testing.T) {
 	const (
 		dupMsg   = "Provided list of item keys contains duplicates"
 		limitMsg = "Too many items requested for the BatchGetItem call"
+
+		numMsg       = "A value provided cannot be converted into a number"
+		precisionMsg = "DynamoDB only supports precision up to 38 digits"
+		overflowMsg  = "Number overflow. Attempting to store a number with magnitude larger than supported range"
 	)
 
 	type reqs = map[string][]map[string]*types.Item
@@ -255,6 +260,12 @@ func TestValidateBatchGetKeys(t *testing.T) {
 		{"equal numbers spelled differently", reqs{
 			"t": keys(map[string]*types.Item{"id": n("1")}, map[string]*types.Item{"id": n("1.0")}),
 		}, ""},
+		// each key's numbers are read before the key is compared with the earlier ones
+		{"unparsable number twice", reqs{"t": keys(nkey("abc"), nkey("abc"))}, numMsg},
+		{"unparsable number after a duplicate", reqs{"t": keys(nkey("1"), nkey("1"), nkey("abc"))}, dupMsg},
+		{"unparsable number before a duplicate", reqs{"t": keys(nkey("abc"), nkey("1"), nkey("1"))}, numMsg},
+		{"number over 38 digits twice", reqs{"t": keys(nkey(strings.Repeat("1", 39)), nkey(strings.Repeat("1", 39)))}, precisionMsg},
+		{"number out of range twice", reqs{"t": keys(nkey("1e126"), nkey("1e126"))}, overflowMsg},
 		{"duplicate in the second table", reqs{"t": keys(key("1", "a")), "u": keys(key("2", "a"), key("2", "a"))}, dupMsg},
 		{"duplicate in an unknown table", reqs{"zzz": keys(key("1", "a"), key("1", "a"))}, dupMsg},
 		{"no tables", reqs{}, "BatchGetItem must have some requests set"},
@@ -331,7 +342,7 @@ func TestValidateBatchGetKeysCostOf100Keys(t *testing.T) {
 	require.Less(t, allocs, 2000.0, "allocs per call: %v", allocs)
 }
 
-// The position of a duplicate is in the detail, never the key.
+// The position of a duplicate is in the detail, never the key's value.
 func TestValidateBatchGetKeysDuplicateDetail(t *testing.T) {
 	s := func(v string) *types.Item { return &types.Item{S: &v} }
 	k := func(v string) map[string]*types.Item { return map[string]*types.Item{"id": s(v)} }
@@ -341,6 +352,6 @@ func TestValidateBatchGetKeysDuplicateDetail(t *testing.T) {
 	var typed types.Error
 
 	require.ErrorAs(t, err, &typed)
-	require.True(t, strings.HasSuffix(typed.Message(), " | table: t; key: 2"), typed.Message())
+	require.True(t, strings.HasSuffix(typed.Message(), " | table: t; index: 2"), typed.Message())
 	require.NotContains(t, typed.Message(), "secret")
 }

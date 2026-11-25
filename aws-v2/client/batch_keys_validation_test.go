@@ -247,7 +247,7 @@ func TestBatchDuplicateKeysDetail(t *testing.T) {
 			"pokemons": {Keys: []batchKey{keyID("secret"), keyID("b"), keyID("secret")}},
 		},
 	})
-	require.ErrorContains(t, err, batchDuplicateKeys+" | table: pokemons; key: 2")
+	require.ErrorContains(t, err, batchDuplicateKeys+" | table: pokemons; index: 2")
 	require.NotContains(t, err.Error(), "secret")
 
 	_, err = client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{

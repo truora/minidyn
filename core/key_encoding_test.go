@@ -410,3 +410,21 @@ func TestRawKeyID(t *testing.T) {
 		require.NotEqual(t, rawKeyID(pair[0]), rawKeyID(pair[1]), "%v", pair)
 	}
 }
+
+func BenchmarkRawKeyID(b *testing.B) {
+	keys := map[string]map[string]*types.Item{
+		"S": {"pk": keyItemS("user#1234")},
+		"N": {"pk": keyItemN("12345.678")},
+		"B": {"pk": keyItemB([]byte(strings.Repeat("x", 48))...)},
+	}
+
+	for name, key := range keys {
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				_ = rawKeyID(key)
+			}
+		})
+	}
+}

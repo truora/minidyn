@@ -932,12 +932,15 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := fd.batchEmulationLocked(tableNames(input.RequestItems)...)
+	names := tableNames(input.RequestItems)
+
+	emulation := fd.batchEmulationLocked(names...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
 	}
 
-	if err := validateBatchGetKeys(input.RequestItems); err != nil {
+	keys, err := validateBatchGetKeys(input.RequestItems)
+	if err != nil {
 		return nil, err
 	}
 
@@ -945,14 +948,14 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 	unprocessed := make(map[string]types.KeysAndAttributes, len(input.RequestItems))
 	unitsByTable := map[string]float64{}
 
-	for _, tableName := range slices.Sorted(maps.Keys(input.RequestItems)) {
+	for _, tableName := range names {
 		reqs := input.RequestItems[tableName]
 		unprocessedKeys := make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
 		responses[tableName] = make([]map[string]types.AttributeValue, 0, len(reqs.Keys))
 
 		consistent := aws.ToBool(reqs.ConsistentRead)
 
-		read, err := fd.batchGetTable(tableName, reqs)
+		read, err := fd.batchGetTable(tableName, reqs, keys[tableName])
 		if err != nil {
 			return nil, err
 		}
@@ -993,8 +996,9 @@ func (fd *Client) BatchGetItem(ctx context.Context, input *dynamodb.BatchGetItem
 }
 
 // validateBatchGetKeys runs the checks DynamoDB makes on the keys of a BatchGetItem before it looks
-// at any of them (core.ValidateBatchGetKeys).
-func validateBatchGetKeys(requestItems map[string]types.KeysAndAttributes) error {
+// at any of them (core.ValidateBatchGetKeys), and returns the keys it mapped, by table, for the
+// read.
+func validateBatchGetKeys(requestItems map[string]types.KeysAndAttributes) (map[string][]map[string]*mtypes.Item, error) {
 	requests := make(map[string][]map[string]*mtypes.Item, len(requestItems))
 
 	for name, reqs := range requestItems {
@@ -1007,15 +1011,16 @@ func validateBatchGetKeys(requestItems map[string]types.KeysAndAttributes) error
 	}
 
 	if err := core.ValidateBatchGetKeys(requests); err != nil {
-		return mapKnownError(err)
+		return nil, mapKnownError(err)
 	}
 
-	return nil
+	return requests, nil
 }
 
 // batchGetTable reads every key of one table of a BatchGetItem, checking all the keys, then the
-// projection once. Keys the unprocessed emulation skips are checked too. Callers must hold fd.mu.
-func (fd *Client) batchGetTable(tableName string, reqs types.KeysAndAttributes) ([]core.ReadItem, error) {
+// projection once. Keys the unprocessed emulation skips are checked too. keys are the mapped
+// reqs.Keys. Callers must hold fd.mu.
+func (fd *Client) batchGetTable(tableName string, reqs types.KeysAndAttributes, keys []map[string]*mtypes.Item) ([]core.ReadItem, error) {
 	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
 		return nil, mapKnownError(err)
 	}
@@ -1023,11 +1028,6 @@ func (fd *Client) batchGetTable(tableName string, reqs types.KeysAndAttributes) 
 	table, err := fd.getTable(tableName)
 	if err != nil {
 		return nil, mapKnownError(err)
-	}
-
-	keys := make([]map[string]*mtypes.Item, len(reqs.Keys))
-	for i, req := range reqs.Keys {
-		keys[i] = mapDynamoToTypesMapItem(req)
 	}
 
 	read, err := table.BatchGetItem(keys, aws.ToString(reqs.ProjectionExpression), reqs.ExpressionAttributeNames)

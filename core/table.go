@@ -2026,8 +2026,9 @@ func (t *Table) validateWriteRequests(requests []WriteRequest) error {
 		case req.Delete != nil:
 			key, err = t.CheckedKeyOf(req.Delete)
 		default:
-			// A request that is neither a put nor a delete has no key. The front ends check
-			// the shape of every request (exactly one of the two) before they call this.
+			// A request that is neither a put nor a delete has no key. This branch is
+			// reachable: the front ends map an empty PutRequest.Item or DeleteRequest.Key
+			// to nil, so a request that sets neither reaches here. Tracked in #309.
 			continue
 		}
 

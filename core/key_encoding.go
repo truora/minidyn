@@ -111,7 +111,7 @@ func appendNumber(dst []byte, field, s string) ([]byte, error) {
 // several kinds included: each present field adds its tag and its payload in a fixed order.
 // Sets and lists keep the order they were sent in.
 func rawKeyID(key map[string]*types.Item) string {
-	var b []byte
+	b := make([]byte, 0, 32)
 
 	for _, name := range slices.Sorted(maps.Keys(key)) {
 		b = appendPart(b, name)
@@ -121,7 +121,7 @@ func rawKeyID(key map[string]*types.Item) string {
 	return string(b)
 }
 
-func appendPart(b []byte, s string) []byte {
+func appendPart[T ~string | ~[]byte](b []byte, s T) []byte {
 	b = strconv.AppendInt(b, int64(len(s)), 10)
 	b = append(b, ':')
 
@@ -179,14 +179,14 @@ func appendRawItem(b []byte, item *types.Item) []byte {
 	b = appendRawString(b, 'N', item.N)
 
 	if item.B != nil {
-		b = appendPart(append(b, 'B'), string(item.B))
+		b = appendPart(append(b, 'B'), item.B)
 	}
 
 	b = appendRawBool(b, 'T', item.BOOL)
 	b = appendRawBool(b, 'Z', item.NULL)
 	b = appendRawList(b, 's', item.SS, appendRawStrings)
 	b = appendRawList(b, 'n', item.NS, appendRawStrings)
-	b = appendRawList(b, 'b', item.BS, func(b []byte, v []byte) []byte { return appendPart(b, string(v)) })
+	b = appendRawList(b, 'b', item.BS, appendPart[[]byte])
 	b = appendRawList(b, 'L', item.L, appendRawItem)
 
 	if item.M != nil {

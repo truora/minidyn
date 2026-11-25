@@ -260,3 +260,37 @@ func TestBatchDuplicateKeysDetail(t *testing.T) {
 	require.ErrorContains(t, err, batchDuplicateKeys+" | table: pokemons; request: 2")
 	require.NotContains(t, err.Error(), "secret")
 }
+
+// After the keys, each table is read by name: a table that does not exist and an unused
+// expression attribute name are reported for the table they belong to.
+func TestBatchGetItemReportsTheProblemOfATable(t *testing.T) {
+	client := pokemonsClient(t)
+	keys := []batchKey{keyID("1")}
+
+	tests := []struct {
+		name string
+		in   map[string]dynamodbtypes.KeysAndAttributes
+		want string
+	}{
+		{
+			"unknown table",
+			map[string]dynamodbtypes.KeysAndAttributes{"zzz": {Keys: keys}},
+			"Cannot do operations on a non-existent table",
+		},
+		{
+			"unused expression attribute name",
+			map[string]dynamodbtypes.KeysAndAttributes{"pokemons": {
+				Keys: keys, ProjectionExpression: aws.String("#a"),
+				ExpressionAttributeNames: map[string]string{"#invalid-name": "id"},
+			}},
+			"unused in expressions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := client.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{RequestItems: tt.in})
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}

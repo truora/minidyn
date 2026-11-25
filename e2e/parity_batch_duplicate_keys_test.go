@@ -105,6 +105,10 @@ func TestE2E_BatchWriteDuplicateKeys(t *testing.T) {
 		{"NumbersSpelledTheSame", batch{"ekn": {put(bdNKey("1")), put(bdNKey("1"))}}},
 		{"DifferentNumbers", batch{"ekn": {put(bdNKey("1")), put(bdNKey("2"))}}},
 
+		// an unparsable number against a duplicate: which is reported first
+		{"DuplicateThenUnparsableNumber", batch{"ekn": {put(bdNKey("1")), put(bdNKey("1")), put(bdNKey("abc"))}}},
+		{"UnparsableNumberTwice", batch{"ekn": {put(bdNKey("abc")), put(bdNKey("abc"))}}},
+
 		// the order against the other checks of the batch
 		{"NoTables", batch{}},
 		{"EmptyRequestList", one()},
@@ -203,6 +207,12 @@ func TestE2E_BatchGetDuplicateKeys(t *testing.T) {
 		{"NumbersWithLeadingZero", batch{"ekn": keys("", bdNKey("1"), bdNKey("01"))}},
 		{"NumbersSpelledTheSame", batch{"ekn": keys("", bdNKey("1"), bdNKey("1"))}},
 
+		// an unparsable number against a duplicate: which is reported first
+		{"DuplicateAndUnparsableNumber", batch{"ekn": keys("", bdNKey("1"), bdNKey("1"), bdNKey("abc"))}},
+		{"UnparsableNumberTwice", batch{"ekn": keys("", bdNKey("abc"), bdNKey("abc"))}},
+		{"LongNumberTwice", batch{"ekn": keys("", bdNKey("123456789012345678901234567890123456789"), bdNKey("123456789012345678901234567890123456789"))}},
+		{"OutOfRangeNumberTwice", batch{"ekn": keys("", bdNKey("1e126"), bdNKey("1e126"))}},
+
 		// the order against the other checks of the batch
 		{"NoTables", batch{}},
 		{"EmptyKeyList", batch{emptyKeyTable: keys("")}},
@@ -241,6 +251,10 @@ func TestE2E_BatchGetDuplicateKeys(t *testing.T) {
 			RunE2E(t, voRun(func(ctx context.Context, client *dynamodb.Client) string {
 				bdCreateSecondTable(ctx, t, client)
 
+				// one stored item for the keys that spell the same number differently
+				_, err := client.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String("ekn"), Item: bdNKey("1")})
+				require.NoError(t, err)
+
 				out, err := client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: tt.items})
 				if err != nil {
 					if anyError[tt.name] {
@@ -250,7 +264,8 @@ func TestE2E_BatchGetDuplicateKeys(t *testing.T) {
 					return fuzzErrString(err)
 				}
 
-				return fmt.Sprintf("ok items=%d,%d", len(out.Responses[emptyKeyTable]), len(out.Responses[second]))
+				return fmt.Sprintf("ok items=%d,%d,%d",
+					len(out.Responses[emptyKeyTable]), len(out.Responses[second]), len(out.Responses["ekn"]))
 			}))
 		})
 	}

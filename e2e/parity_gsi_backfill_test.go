@@ -191,18 +191,21 @@ func TestE2E_UpdateTableCreateIndexBackfill(t *testing.T) {
 			local   = "dynamodb-local"
 		)
 
+		const wrongTypeUpdateErr = "operation error DynamoDB: UpdateItem, https response error StatusCode: 400, RequestID: , " +
+			"api error ValidationException: One or more parameter values were invalid: Type mismatch for Index Key"
+
 		wrongType := backfillRecord("wrong", map[string]dynamodbtypes.AttributeValue{"type": &dynamodbtypes.AttributeValueMemberN{Value: "5"}})
 		common := []string{
 			"scan", "a1(extra,id,type)", "a2(extra,id,type)", "b1(extra,id,type)",
 			"query a", "a1(extra,id,type)", "a2(extra,id,type)",
-			"update wrong: rejected", "extra of wrong: S:e-wrong",
+			"update wrong: " + wrongTypeUpdateErr, "extra of wrong: S:e-wrong",
 			"delete wrong: OK",
 			"scan after deletes", "a1(extra,id,type)", "a2(extra,id,type)", "b1(extra,id,type)",
 		}
 		withWrong := []string{
 			"scan", "a1(extra,id,type)", "a2(extra,id,type)", "b1(extra,id,type)", "wrong(extra,id,type)",
 			"query a", "a1(extra,id,type)", "a2(extra,id,type)",
-			"update wrong: rejected", "extra of wrong: S:e-wrong",
+			"update wrong: " + wrongTypeUpdateErr, "extra of wrong: S:e-wrong",
 			"delete wrong: OK",
 			"scan after deletes", "a1(extra,id,type)", "a2(extra,id,type)", "b1(extra,id,type)",
 		}
@@ -218,15 +221,7 @@ func TestE2E_UpdateTableCreateIndexBackfill(t *testing.T) {
 
 				got := backfillOutcome(t, client, gsiAll(), append(backfillBaseItems(), wrongType), []string{"wrong"}, []string{"wrong"})
 
-				// Both engines reject the update and leave the item as it was. They word the
-				// rejection differently (minidyn: "Invalid attribute value type", DynamoDB Local:
-				// "Type mismatch for Index Key"), a gap #213 and #239 own, so the text is not compared.
-				for n, line := range got {
-					if strings.HasPrefix(line, "update wrong: ") && strings.Contains(line, "ValidationException") {
-						got[n] = "update wrong: rejected"
-					}
-				}
-
+				// Both engines reject the update, with the same text, and leave the item as it was.
 				require.Equal(t, want[engine], got)
 			})
 		}

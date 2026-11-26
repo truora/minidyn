@@ -195,7 +195,10 @@ ADRs for the layers:
     `Select`; then a GSI Query or Scan's `ProjectionExpression`, which must
     only name attributes the GSI projects (`Table.validateIndexProjection`);
   - empty S and B values in the key attributes of the table and of every
-    index (#163), with LSIs reported before GSIs;
+    index (#163), then the types of the table's key attributes, then the
+    index keys, where one pass over the indexes (LSIs before GSIs, a hash key
+    before its range key) reports an empty value or a value of another type
+    than the index declares (#213, `Table.firstIndexKeyViolation`);
   - `ReturnValues` and `ReturnValuesOnConditionCheckFailure`, including the
     nested shapes of `TransactWriteItems`;
   - `Select`;

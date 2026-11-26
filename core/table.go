@@ -1807,23 +1807,43 @@ func (t *Table) setItem(key string, item map[string]*types.Item) {
 	}
 }
 
-// emptyIndexKey reports the first index with a key attribute that is an empty value in item.
-// name is "" when there is none. DynamoDB Local reports the local secondary indexes before
-// the global ones. Within a kind the order is by name: Local's own order among several
-// local indexes is unverified, and the table does not keep the declaration order.
-func (t *Table) emptyIndexKey(item map[string]*types.Item) (name, attr, kind string) {
+// indexKeyViolation is the first index key attribute of an item that DynamoDB rejects: an empty S
+// or B value (empty is the kind) or a value of another type than the index declares (actual is
+// that type). index is "" when there is none.
+type indexKeyViolation struct {
+	index, attr, empty, actual string
+}
+
+// firstIndexKeyViolation reports the first index key attribute of item that is empty or of the
+// wrong type. DynamoDB Local reports the local secondary indexes before the global ones, and
+// the hash key of an index before its range key, checking both problems on an attribute
+// together. Within a kind the order is by name: Local's own order among several local indexes is
+// unverified, and the table does not keep the declaration order.
+func (t *Table) firstIndexKeyViolation(item map[string]*types.Item) indexKeyViolation {
 	names := t.sortedIndexNames()
 	slices.SortStableFunc(names, func(a, b string) int {
 		return cmp.Compare(indexKindRank(t.Indexes[a]), indexKindRank(t.Indexes[b]))
 	})
 
 	for _, name := range names {
-		if attr, kind := t.Indexes[name].keySchema.emptyKeyAttr(item); attr != "" {
-			return name, attr, kind
+		ks := t.Indexes[name].keySchema
+
+		for _, attr := range []string{ks.HashKey, ks.RangeKey} {
+			if attr == "" {
+				continue
+			}
+
+			if kind := emptyValueKind(item[attr]); kind != "" {
+				return indexKeyViolation{index: name, attr: attr, empty: kind}
+			}
+
+			if actual := wrongTypeName(item[attr], t.AttributesDef[attr]); actual != "" {
+				return indexKeyViolation{index: name, attr: attr, actual: actual}
+			}
 		}
 	}
 
-	return "", "", ""
+	return indexKeyViolation{}
 }
 
 // indexKindRank orders local indexes before global ones.
@@ -1836,32 +1856,43 @@ func indexKindRank(idx *index) int {
 }
 
 // validateItemKeyValues rejects an item whose primary key or index key attributes hold an
-// empty value.
+// empty value or one of the wrong type. DynamoDB Local reports the empty values of the primary
+// key, then its types, then the index keys.
 func (t *Table) validateItemKeyValues(item map[string]*types.Item) error {
 	if attr, kind := t.KeySchema.emptyKeyAttr(item); attr != "" {
 		return emptyKeyError(kind, PrimaryIndexName, attr)
 	}
 
-	if name, attr, kind := t.emptyIndexKey(item); name != "" {
-		return emptyKeyError(kind, name, attr)
+	if err := t.KeySchema.primaryTypeMismatch(t.AttributesDef, item); err != nil {
+		return err
+	}
+
+	if v := t.firstIndexKeyViolation(item); v.index != "" {
+		if v.empty != "" {
+			return emptyKeyError(v.empty, v.index, v.attr)
+		}
+
+		return indexKeyTypeError(v, t.AttributesDef[v.attr])
 	}
 
 	return nil
 }
 
 // validateUpdatedIndexKeys rejects an updated item whose index key attributes hold an empty
-// value, with the message DynamoDB gives for an update expression.
+// value, with the message DynamoDB gives for an update expression, or one of the wrong type.
 func (t *Table) validateUpdatedIndexKeys(item map[string]*types.Item) error {
-	if name, attr, kind := t.emptyIndexKey(item); name != "" {
-		return errors.New(types.WithDetail(emptyKeyValuePrefix+updateIndexKeyText+fmt.Sprintf(emptyKeyValueText, kind),
-			"index", name, "attribute", attr))
+	if v := t.firstIndexKeyViolation(item); v.index != "" {
+		if v.empty != "" {
+			return errors.New(types.WithDetail(emptyKeyValuePrefix+updateIndexKeyText+fmt.Sprintf(emptyKeyValueText, v.empty),
+				"index", v.index, "attribute", v.attr))
+		}
+
+		return indexKeyTypeError(v, t.AttributesDef[v.attr])
 	}
 
 	return nil
 }
 
-// indexKeysOf computes the key item has in every secondary index, by index name ("" when it
-// is not indexed there). It fails when an index rejects the item, before anything is written.
 func (t *Table) indexKeysOf(item map[string]*types.Item) (map[string]string, error) {
 	keys := make(map[string]string, len(t.Indexes))
 
@@ -2143,7 +2174,7 @@ func validateExpressionValues(m map[string]*types.Item) error {
 // checkItemKeyValues rejects empty values in the primary key and index key attributes of item.
 func (t *Table) checkItemKeyValues(item map[string]*types.Item) error {
 	if err := t.validateItemKeyValues(item); err != nil {
-		return types.NewError("ValidationException", err.Error(), nil)
+		return validationFailure(err)
 	}
 
 	return nil
@@ -2456,7 +2487,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 			maps.Copy(item, oldItem)
 		}
 
-		return nil, types.NewError("ValidationException", err.Error(), nil)
+		return nil, validationFailure(err)
 	}
 
 	t.writeItem(key, item, indexKeys)

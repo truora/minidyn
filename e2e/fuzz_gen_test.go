@@ -215,9 +215,7 @@ func (g *fuzzGen) mapVal() dynamodbtypes.AttributeValue {
 
 // attrValue returns a random value for a named non-key attribute.
 func (g *fuzzGen) attrValue(name string) dynamodbtypes.AttributeValue {
-	// #213: minidyn accepts a NULL index key, DynamoDB rejects it. Only known mode puts
-	// NULL in g.
-	if g.chance(0.1) && (g.known || name != "g") {
+	if g.chance(0.1) {
 		return &dynamodbtypes.AttributeValueMemberNULL{Value: true}
 	}
 

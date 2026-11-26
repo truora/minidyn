@@ -3,6 +3,7 @@ package types
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,12 +11,13 @@ import (
 
 // ValidateItemAttributeValue walks an attribute value, including nested List (L) and Map (M)
 // entries, and returns the first problem DynamoDB rejects, in the order it meets them: an N or
-// NS member that is not a number DynamoDB stores (see ValidateNumber), a String Set (SS),
-// Number Set (NS) or Binary Set (BS) with duplicate members, or a nil element of an L or value
-// of an M. Every problem is a *ValueError: its text is DynamoDB's, followed by minidyn detail.
+// NS member that is not a number DynamoDB stores (see ValidateNumber), an empty String Set
+// (SS), Number Set (NS) or Binary Set (BS), a set with duplicate members, or a nil element of
+// an L or value of an M. Every problem is a *ValueError: its text is DynamoDB's, followed by minidyn detail.
 // Callers typically wrap the result with NewError("ValidationException", msg, nil).
 //
-// A nil av is valid at the top level. NS duplicates are detected by exact wire string equality
+// A set is empty when its slice is non-nil and has no members: a nil slice is an attribute that
+// is not a set. A nil av is valid at the top level. NS duplicates are detected by exact wire string equality
 // of each element (e.g. "1" and "1.0" are not duplicates). SS uses the same string comparison
 // as StringValue. BS duplicates use bytes.Equal (nil and empty slices compare equal).
 func ValidateItemAttributeValue(av *Item) error {
@@ -70,6 +72,14 @@ const (
 	kindDuplicate
 	kindNullValue
 	kindNullElement
+	kindEmptySet
+)
+
+// Local's texts for an empty set, the double space of the first two included (#294).
+const (
+	emptyStringSetText = "One or more parameter values were invalid: An string set  may not be empty"
+	emptyNumberSetText = "One or more parameter values were invalid: An number set  may not be empty"
+	emptyBinarySetText = "One or more parameter values were invalid: Binary sets should not be empty"
 )
 
 // nullAttributeValueText is DynamoDB's text for an attribute value that is JSON null. A Go
@@ -112,6 +122,12 @@ func (e *ValueError) message() string {
 // detail is what minidyn adds to the text.
 func (e *ValueError) detail() string {
 	switch e.kind {
+	case kindEmptySet:
+		if e.path == "" {
+			return ""
+		}
+
+		return Detail("path", e.path)
 	case kindNumber:
 		if e.path == "" {
 			return Detail("number", e.number)
@@ -243,7 +259,16 @@ func duplicateCollectionError(displayParts []string) *ValueError {
 	return &ValueError{kind: kindDuplicate, cause: fmt.Errorf("One or more parameter values were invalid: Input collection [%s] contains duplicates.", inner)}
 }
 
+// emptySetError is the error of a set that has no members.
+func emptySetError(text string) *ValueError {
+	return &ValueError{kind: kindEmptySet, cause: errors.New(text)}
+}
+
 func validateStringSet(ss []*string) *ValueError {
+	if ss != nil && len(ss) == 0 {
+		return emptySetError(emptyStringSetText)
+	}
+
 	if len(ss) < 2 {
 		return nil
 	}
@@ -268,6 +293,10 @@ func validateStringSet(ss []*string) *ValueError {
 // validateNumberSet checks the members in order, as DynamoDB does: each must be a number, and
 // the first repeated one is the duplicate. Duplicates follow the exact string sent for each N.
 func validateNumberSet(ns []*string) *ValueError {
+	if ns != nil && len(ns) == 0 {
+		return emptySetError(emptyNumberSetText)
+	}
+
 	seen := make(map[string]struct{}, len(ns))
 
 	for _, p := range ns {
@@ -296,6 +325,10 @@ func validateNumberSet(ns []*string) *ValueError {
 }
 
 func validateBinarySet(bs [][]byte) *ValueError {
+	if bs != nil && len(bs) == 0 {
+		return emptySetError(emptyBinarySetText)
+	}
+
 	if len(bs) < 2 {
 		return nil
 	}

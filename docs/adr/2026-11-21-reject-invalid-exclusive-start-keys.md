@@ -1,6 +1,6 @@
 # Reject an ExclusiveStartKey DynamoDB rejects, before reading any item
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

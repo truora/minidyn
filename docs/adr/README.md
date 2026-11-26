@@ -76,6 +76,9 @@ show the command.
 | `Superseded by YYYY-MM-DD-….md` | A later ADR replaced it |
 | `Deprecated` | No longer applies, and nothing replaced it |
 
+A merge cannot change a file, so the pull request flips `Proposed` to
+`Accepted` in its last commit, once the review approves it.
+
 Once an ADR is `Accepted`, change only its **Status** line. To change the
 decision, write a new ADR and mark the old one `Superseded by` the new file.
 

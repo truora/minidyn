@@ -40,6 +40,18 @@ func isWordToken(tok Token) bool {
 	return false
 }
 
+// classifyListIndexToken is classifyListIndex for the first token after a bracket, whatever it
+// is: a word is classified by its text, and any other token, such as the - of l[-1] or the ] of
+// l[], is a syntax error. near is how Local words the context of that token: the source from the
+// bracket to the end of the token after it.
+func classifyListIndexToken(tok Token, near string) (syntax, rangeErr string) {
+	if isWordToken(tok) {
+		return classifyListIndex(tok.Literal)
+	}
+
+	return fmt.Sprintf("token: %q, near: %q", tok.Literal, near), ""
+}
+
 // isListIndexLiteral reports whether literal is made of digits only, as DynamoDB requires
 // between the brackets. Whether the number is a valid index is classifyListIndex's question.
 func isListIndexLiteral(literal string) bool {

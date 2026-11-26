@@ -90,7 +90,8 @@ func TestPlaceholderListIndexIsASyntaxError(t *testing.T) {
 	t.Run("front end pre-check", func(t *testing.T) {
 		t.Parallel()
 
-		if !HasInvalidListIndex("SET l[:i] = :v") || !HasInvalidListIndex("n = :v AND l[#n] = :v") || !HasInvalidListIndex("REMOVE l[in]") || !HasInvalidListIndex("l[OR] = :v") {
+		if !HasInvalidListIndex("SET l[:i] = :v") || !HasInvalidListIndex("n = :v AND l[#n] = :v") || !HasInvalidListIndex("REMOVE l[in]") || !HasInvalidListIndex("l[OR] = :v") ||
+			!HasInvalidListIndex("SET l[-1] = :v") || !HasInvalidListIndex("l[]") {
 			t.Fatal("an index that is not a literal was not found")
 		}
 
@@ -258,10 +259,23 @@ func TestLiteralListIndexUpFrontValidators(t *testing.T) {
 	requireListIndexError(t, ValidateExpressionPlaceholders(nil, attrs, upd, zero),
 		`Invalid ConditionExpression: Syntax error; token: "0", near: "007"`)
 
-	// A syntax error elsewhere in the same text is left to the parse that reports it.
-	broken := LabeledExpression{Label: "UpdateExpression", Expression: "SET l[2147483648] = :z, = x"}
-	if err := ValidateExpressionAttributeNamesDeclared(nil, broken); err != nil {
-		t.Fatalf("got %v", err)
+	// A syntax error elsewhere in the same text is reported, as the parse reports it, before an
+	// undefined value or an unused one.
+	for _, e := range []LabeledExpression{
+		{Label: "UpdateExpression", Expression: "SET l[2147483648] = :z, = x"},
+		{Label: "FilterExpression", Expression: "l[2147483648] = :v AND"},
+		{Label: "KeyConditionExpression", Expression: "pk = :v AND l[2147483648] = :v AND"},
+		{Label: "ProjectionExpression", Expression: "l[2147483648], , a"},
+	} {
+		wantParse := parseErrorOf(t, e)
+
+		if strings.Contains(wantParse.Error(), "allowable range") {
+			t.Fatalf("%s: the parse gave the range error: %v", e.Label, wantParse)
+		}
+
+		requireListIndexError(t, ValidateExpressionAttributeNamesDeclared(nil, e), wantParse.Error())
+		requireListIndexError(t, ValidateExpressionAttributeValuesDeclared(attrs, e), wantParse.Error())
+		requireListIndexError(t, ValidateExpressionPlaceholders(nil, attrs, e), wantParse.Error())
 	}
 
 	// Every kind of expression is checked against its own grammar.
@@ -321,4 +335,51 @@ func requireListIndexError(t *testing.T, err error, want string) {
 	if !errors.Is(err, ErrSyntaxError) {
 		t.Fatalf("%v does not unwrap to ErrSyntaxError", err)
 	}
+}
+
+// parseErrorOf returns the error the evaluation of e reports for its syntax error.
+func parseErrorOf(t *testing.T, e LabeledExpression) error {
+	t.Helper()
+
+	li := Language{}
+
+	var err error
+
+	switch e.Label {
+	case "UpdateExpression":
+		err = li.Update(UpdateInput{Expression: e.Expression})
+	case "ProjectionExpression":
+		_, err = CheckProjection(e.Expression, nil)
+	case "KeyConditionExpression":
+		_, err = li.Match(MatchInput{Expression: e.Expression, ExpressionType: ExpressionTypeKey})
+	default:
+		_, err = li.Match(MatchInput{Expression: e.Expression, ExpressionType: ExpressionTypeFilter})
+	}
+
+	if err == nil {
+		t.Fatalf("%s %q: no error", e.Label, e.Expression)
+	}
+
+	return err
+}
+
+// A token between the brackets that is not a word (l[-1], l[]) is the same up front syntax error
+// as l[:i], with the text Local reports, before an unused value (#164).
+func TestNonWordListIndexIsASyntaxError(t *testing.T) {
+	t.Parallel()
+
+	li := Language{}
+	attrs := map[string]*types.Item{":v": {S: new("a")}, ":z": {S: new("a")}}
+
+	err := li.Update(UpdateInput{Expression: "SET l[-1] = :v", Attributes: attrs})
+	requireListIndexError(t, err, `Invalid UpdateExpression: Syntax error; token: "-", near: "[-1"`)
+
+	err = ValidateExpressionAttributeValuesDeclared(attrs, LabeledExpression{Label: "UpdateExpression", Expression: "SET l[-1] = :v"})
+	requireListIndexError(t, err, `Invalid UpdateExpression: Syntax error; token: "-", near: "[-1"`)
+
+	_, err = li.Match(MatchInput{Expression: "l[] = :v", ExpressionType: ExpressionTypeFilter, Attributes: attrs})
+	requireListIndexError(t, err, `Invalid FilterExpression: Syntax error; token: "]", near: "[] ="`)
+
+	_, err = CheckProjection("l[]", nil)
+	requireListIndexError(t, err, `Invalid ProjectionExpression: Syntax error; token: "]", near: "[]"`)
 }

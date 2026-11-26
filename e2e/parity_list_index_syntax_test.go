@@ -25,6 +25,11 @@ type listIndexReq struct {
 	cond   string
 	names  map[string]string
 	values map[string]dynamodbtypes.AttributeValue
+	// knownIssue is the number of the issue that tracks a divergence ("#188"); empty for a case
+	// that must match.
+	knownIssue string
+	// empty leaves the table without the item.
+	empty bool
 }
 
 func TestE2E_ListIndexSyntax(t *testing.T) {
@@ -115,6 +120,9 @@ func TestE2E_ListIndexSyntax(t *testing.T) {
 		"ProjectionKeywordAnd": {kind: "get", expr: "l[and]"},
 		"ProjectionKeywordSet": {kind: "get", expr: "l[set]"},
 		"ScanFilterKeywordNot": {kind: "scan", expr: "l[not] = :x", values: x},
+		// A token that is not a word is not a literal either.
+		"SetMinusIndexUnusedValue": {kind: "update", expr: "SET l[-1] = :v", values: vals(":v", str, ":z", str)},
+		"ScanFilterMinusIndex":     {kind: "scan", expr: "l[-1] = :x", values: x},
 		// A literal index stays valid, with a declared name and with whitespace inside.
 		"NamedListProjection": {kind: "get", expr: "#n[0]", names: map[string]string{"#n": "l"}},
 		"NamedListSet":        {kind: "update", expr: "SET #n[1] = :v", names: map[string]string{"#n": "l"}, values: v},
@@ -242,16 +250,35 @@ func TestE2E_ListIndexLiteral(t *testing.T) {
 		"QueryFilterRangeUnused":       {kind: "query", expr: "l[2147483648] = :x", values: map[string]dynamodbtypes.AttributeValue{":p": str, ":x": str, ":z": str}},
 		"QueryFilterZeroUndefined":     {kind: "query", expr: "l[007] = :q", values: px},
 		"QueryProjectionRangeName":     {kind: "keycond", expr: "pk = :p", cond: "l[2147483648], #q", values: map[string]dynamodbtypes.AttributeValue{":p": str}},
-		"QueryKeyUndefinedFilterRange": {kind: "query", expr: "l[2147483648] = :x", values: px},
+		"QueryKeyUndefinedFilterRange": {kind: "query", expr: "l[2147483648] = :x", values: x},
 	} {
 		tests[name] = req
 	}
 
+	// These pin the up-front order: a syntax error comes before the undefined and the unused
+	// values, and on an empty table too. They wait on #188 for the label and the text of the
+	// syntax error.
+	tests["RangeThenSyntaxUndefinedValue"] = listIndexReq{
+		kind: "update", expr: "SET l[2147483648] = :z, = x", knownIssue: "#188",
+	}
+	tests["ScanEmptyRangeThenSyntax"] = listIndexReq{
+		kind: "scan", expr: "l[2147483648] = :v AND", values: v, knownIssue: "#188", empty: true,
+	}
+	tests["ScanEmptyRangeThenSyntaxUnusedValue"] = listIndexReq{
+		kind: "scan", expr: "l[2147483648] = :v AND", values: vz, knownIssue: "#188", empty: true,
+	}
+
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			RunE2E(t, func(t *testing.T, client *dynamodb.Client) string {
+			RunE2EKnown(t, tt.knownIssue, func(t *testing.T, client *dynamodb.Client) string {
 				t.Helper()
 				ctx := context.Background()
+
+				if tt.empty {
+					fuzzSetup(ctx, t, client)
+
+					return fuzzErrString(listIndexRun(ctx, client, tt))
+				}
 
 				item := fuzzKey("a", "1")
 				item["l"] = lpList("p", "q", "r")

@@ -66,6 +66,13 @@ func TestScanExpressionListIndex(t *testing.T) {
 		{"REMOVE l[in]", `token: "in", near: "[in]"`, ""},
 		{"l[between]", `token: "between", near: "[between]"`, ""},
 		{"l[007] = :v", `token: "0", near: "007"`, ""},
+		// A token that is not a word: near runs from the bracket to the end of the token after it,
+		// as Local words it.
+		{"l[-1] = :v", `token: "-", near: "[-1"`, ""},
+		{"SET l[+1] = :v", `token: "+", near: "[+1"`, ""},
+		{"SET l[] = :v", `token: "]", near: "[] ="`, ""},
+		{"l[]", `token: "]", near: "[]"`, ""},
+		{"SET l[(] = :v", `token: "(", near: "[(]"`, ""},
 		{"l[00]", `token: "0", near: "00]"`, ""},
 		{"l[01]", `token: "1", near: "01]"`, ""},
 		{"l[0123]", `token: "123", near: "0123]"`, ""},

@@ -32,12 +32,7 @@ func (li *Language) Match(input MatchInput) (bool, error) {
 			return false, &syntaxErrorAtToken{expressionType: matchExpressionLabel(input.ExpressionType), detail: parsed.indexSyntax}
 		}
 
-		detail := strings.Join(parsed.errs, "; ")
-		if input.ExpressionType == ExpressionTypeKey {
-			return false, fmt.Errorf("Invalid KeyConditionExpression: %w; %s", ErrSyntaxError, detail) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
-		}
-
-		return false, fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(parsed.errs, "\n"))
+		return false, conditionParseError(parsed, matchExpressionLabel(input.ExpressionType))
 	}
 
 	if parsed.indexRange != "" {
@@ -115,6 +110,43 @@ func matchExpressionLabel(t ExpressionType) string {
 	}
 }
 
+// conditionParseError is the error of a condition, filter or key condition expression that did
+// not parse, for the Match of the same text.
+func conditionParseError(parsed *parsedCondition, label string) error {
+	if parsed.indexSyntax != "" {
+		return &syntaxErrorAtToken{expressionType: label, detail: parsed.indexSyntax}
+	}
+
+	if label == "KeyConditionExpression" {
+		return fmt.Errorf("Invalid KeyConditionExpression: %w; %s", ErrSyntaxError, strings.Join(parsed.errs, "; ")) //nolint:staticcheck,ST1005 // DynamoDB ValidationException wording (parity)
+	}
+
+	return fmt.Errorf("%w: %s", ErrSyntaxError, strings.Join(parsed.errs, "\n"))
+}
+
+// projectionParseError is the error of a projection expression that did not parse.
+func projectionParseError(pp *parsedProjection) error {
+	if pp.indexSyntax != "" {
+		return &syntaxErrorAtToken{expressionType: "ProjectionExpression", detail: pp.indexSyntax}
+	}
+
+	return fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(pp.errs, "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+}
+
+// updateParseError is the error of an update expression that did not parse.
+func updateParseError(pu *parsedUpdate) error {
+	if pu.indexSyntax != "" {
+		return &syntaxErrorAtToken{expressionType: "UpdateExpression", detail: pu.indexSyntax}
+	}
+
+	errType := ErrSyntaxError
+	if pu.unsupported {
+		errType = ErrUnsupportedFeature
+	}
+
+	return fmt.Errorf("%w: %s", errType, strings.Join(pu.errs, "\n"))
+}
+
 // CheckedProjection is a projection expression that passed CheckProjection, ready for
 // ProjectChecked. It carries the parse and the aliases it was checked against, so the checks run
 // once per request.
@@ -130,11 +162,7 @@ func CheckProjection(expr string, aliases map[string]string) (*CheckedProjection
 	pp := parseProjection(expr)
 
 	if len(pp.errs) != 0 {
-		if pp.indexSyntax != "" {
-			return nil, &syntaxErrorAtToken{expressionType: "ProjectionExpression", detail: pp.indexSyntax}
-		}
-
-		return nil, fmt.Errorf("Invalid ProjectionExpression: %w; %s", ErrSyntaxError, strings.Join(pp.errs, "\n")) //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+		return nil, projectionParseError(pp)
 	}
 
 	if pp.indexRange != "" {
@@ -249,16 +277,7 @@ func (li *Language) Update(input UpdateInput) error {
 	env.Aliases = aliases
 
 	if len(pu.errs) != 0 {
-		if pu.indexSyntax != "" {
-			return &syntaxErrorAtToken{expressionType: "UpdateExpression", detail: pu.indexSyntax}
-		}
-
-		errType := ErrSyntaxError
-		if pu.unsupported {
-			errType = ErrUnsupportedFeature
-		}
-
-		return fmt.Errorf("%w: %s", errType, strings.Join(pu.errs, "\n"))
+		return updateParseError(pu)
 	}
 
 	if pu.indexRange != "" {

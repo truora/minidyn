@@ -42,11 +42,11 @@ func validateExpressionAttributes(exprNames map[string]string, exprValueKeys []s
 	missingValues := getMissingSubstrs(genericExpression, exprValueKeys)
 
 	// DynamoDB parses before it compares the placeholders with the declared ones, so a list index
-	// that is not a literal is a syntax error ahead of an unused name or value. The core reports
-	// it, with the label of the expression it is in (#164).
-	listIndexSyntaxError := interpreter.HasInvalidListIndex(genericExpression)
+	// that is not a literal, or is above DynamoDB's range, is reported ahead of an unused name or
+	// value. The core reports it, with the label of the expression it is in (#164).
+	invalidListIndex := interpreter.HasInvalidListIndex(genericExpression)
 
-	if len(missingNames) > 0 && !listIndexSyntaxError {
+	if len(missingNames) > 0 && !invalidListIndex {
 		sort.Strings(missingNames)
 
 		msg := unusedExpressionAttributeNamesMsg
@@ -64,7 +64,7 @@ func validateExpressionAttributes(exprNames map[string]string, exprValueKeys []s
 
 	// An undefined placeholder is reported by the core, with its expression label, ahead of
 	// an unused value, as DynamoDB does.
-	if len(missingValues) > 0 && !listIndexSyntaxError && !hasUndefinedValue(genericExpression, exprValueKeys) {
+	if len(missingValues) > 0 && !invalidListIndex && !hasUndefinedValue(genericExpression, exprValueKeys) {
 		if genericExpression == "" {
 			return &smithy.GenericAPIError{Code: "ValidationException", Message: expressionAttributeValuesOnlyWithExpressionsMsg}
 		}

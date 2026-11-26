@@ -84,8 +84,9 @@ func (e *listIndexRangeError) Unwrap() error { return ErrSyntaxError }
 // listIndexError returns the error of the first list index DynamoDB rejects before it checks any
 // placeholder. A syntax error (a token that is not a literal, or a leading zero) in any
 // expression comes first, as DynamoDB finds those while parsing; then a literal above the range,
-// which it reports once the expression parsed, so a syntax error elsewhere in the same text
-// wins: that text is left to the parse that reports it.
+// which it reports once the expression parsed. When that expression has a syntax error elsewhere,
+// that error is the one DynamoDB reports, so it is returned: the error the parse of the same text
+// gives, which no undefined placeholder or evaluation can come before.
 func listIndexError(exprs []LabeledExpression) error {
 	for _, e := range exprs {
 		if detail := exprScan(e.Expression).IndexSyntax; detail != "" {
@@ -98,9 +99,13 @@ func listIndexError(exprs []LabeledExpression) error {
 			continue
 		}
 
-		message, parses := indexRangeOf(e)
-		if !parses {
-			return nil
+		message, parseErr := indexRangeOf(e)
+		if parseErr != nil {
+			return parseErr
+		}
+
+		if message == "" {
+			continue
 		}
 
 		return &listIndexRangeError{expressionType: e.Label, message: message}
@@ -110,21 +115,31 @@ func listIndexError(exprs []LabeledExpression) error {
 }
 
 // indexRangeOf returns the range error of e's literal list indexes, parsed with the grammar of
-// its kind, and whether the expression has no other syntax error. The parses are cached.
-func indexRangeOf(e LabeledExpression) (message string, parses bool) {
+// its kind, or the error of the parse when the expression has another syntax error. The parses
+// are cached.
+func indexRangeOf(e LabeledExpression) (message string, parseErr error) {
 	switch e.Label {
 	case "UpdateExpression":
 		pu := parseUpdate(e.Expression)
+		if len(pu.errs) != 0 {
+			return "", updateParseError(pu)
+		}
 
-		return pu.indexRange, len(pu.errs) == 0
+		return pu.indexRange, nil
 	case "ProjectionExpression":
 		pp := parseProjection(e.Expression)
+		if len(pp.errs) != 0 {
+			return "", projectionParseError(pp)
+		}
 
-		return pp.indexRange, len(pp.errs) == 0
+		return pp.indexRange, nil
 	default:
 		pc := parseCondition(e.Expression)
+		if len(pc.errs) != 0 {
+			return "", conditionParseError(pc, e.Label)
+		}
 
-		return pc.indexRange, len(pc.errs) == 0
+		return pc.indexRange, nil
 	}
 }
 

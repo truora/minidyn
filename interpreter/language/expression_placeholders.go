@@ -24,18 +24,29 @@ func ScanExpression(expression string) ExpressionScan {
 
 	seen := map[string]bool{}
 	scan := ExpressionScan{Names: []string{}, Values: []string{}}
-	afterBracket := false
 
-	for tok := l.NextToken(); tok.Type != EOF; tok = l.NextToken() {
-		wasAfterBracket := afterBracket
-		afterBracket = tok.Type == LBRACKET
+	type spanned struct {
+		tok        Token
+		start, end int
+	}
 
-		if !isWordToken(tok) {
-			continue
-		}
+	var toks []spanned
 
-		if wasAfterBracket {
-			scan.noteListIndex(tok.Literal)
+	for tok, start, end := l.nextSpan(); tok.Type != EOF; tok, start, end = l.nextSpan() {
+		toks = append(toks, spanned{tok, start, end})
+	}
+
+	for i, st := range toks {
+		tok := st.tok
+
+		// The first token after a bracket is a list index, whatever it is.
+		if i > 0 && toks[i-1].tok.Type == LBRACKET {
+			near := expression[toks[i-1].start:st.end]
+			if i+1 < len(toks) {
+				near = expression[toks[i-1].start:toks[i+1].end]
+			}
+
+			scan.noteListIndex(classifyListIndexToken(tok, near))
 		}
 
 		if tok.Type != IDENT {
@@ -62,9 +73,7 @@ func ScanExpression(expression string) ExpressionScan {
 }
 
 // noteListIndex keeps the first syntax error and the first range error among the list indexes.
-func (s *ExpressionScan) noteListIndex(token string) {
-	syntax, rangeErr := classifyListIndex(token)
-
+func (s *ExpressionScan) noteListIndex(syntax, rangeErr string) {
 	if s.IndexSyntax == "" {
 		s.IndexSyntax = syntax
 	}

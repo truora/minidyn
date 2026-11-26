@@ -13,7 +13,7 @@ the list index was added (`git log -S'only support N as index' --format='%h %ad'
 
 DynamoDB does not have this syntax. DynamoDB Local takes only digits between the
 brackets; anything else is a syntax error that names the token. The probe was run on
-DynamoDB Local with minidyn beside it (`e2e/parity_list_index_syntax_test.go`, 72
+DynamoDB Local with minidyn beside it (`e2e/parity_list_index_syntax_test.go`, 74
 named cases in `TestE2E_ListIndexSyntax`, from `awk '/^func TestE2E_ListIndexSyntax/{f=1}
 /^func TestE2E_ListIndexLiteral/{f=0} f' e2e/parity_list_index_syntax_test.go | grep -c
 '^\s*"[A-Za-z0-9]*": *{kind:'`; the literal rules are in `TestE2E_ListIndexLiteral`):
@@ -25,7 +25,10 @@ named cases in `TestE2E_ListIndexSyntax`, from `awk '/^func TestE2E_ListIndexSyn
   is a word like any other, whatever its case, and the token keeps the case it was written
   in: `l[OR]` gives `token: "OR", near: "[OR]"`, `l[and]` gives `token: "and", near:
   "[and]"`, and `set`, `in`, `between` and `not` are the same, in an update, a condition, a
-  filter and a projection.
+  filter and a projection. A token that is not a word is the same error, with `near` from
+  the bracket to the end of the token after it: `l[-1]` gives `token: "-", near: "[-1"`,
+  `l[]` gives `token: "]", near: "[] ="` (or `"[]"` at the end of the text) and `l[(]`
+  gives `token: "(", near: "[(]"`.
 - **Where.** In every position: SET (left and right side, inside `list_append`,
   `if_not_exists` and arithmetic), REMOVE, ADD, DELETE, a condition on `UpdateItem`,
   `PutItem`, `DeleteItem` and `TransactWriteItems`, a filter on `Query` and `Scan`, a
@@ -71,7 +74,8 @@ expression values to resolve `l[:i]`.
 
 A list index is an integer literal, as in DynamoDB. The parser rejects any other word
 between `[` and `]` (a name, a placeholder, a number that is not a valid literal, or a
-keyword such as `OR` or `SET`; `isWordToken`) with Local's text, as the first error of
+keyword such as `OR` or `SET`; `isWordToken`), or any other token such as the `-` of
+`l[-1]` or the `]` of `l[]`, with Local's text, as the first error of
 the parse, so the cached parse (D6) carries it: `Parser.parseIndexExpression` adds
 `Syntax error; token: "<token>", near: "[<token>]"` and keeps its detail in
 `Parser.IndexSyntaxError` when it is the first error, so no caller recovers the kind of
@@ -117,9 +121,10 @@ The literals follow Local (D1, level 1) instead of minidyn's own int64 rule:
   and `ValidateExpressionAttributeValuesDeclared` report a syntax error of any expression
   first, then a range error, both before the undeclared names and values.
   `interpreter.HasInvalidListIndex` is true for a leading zero and a range error too, so
-  the front ends skip the unused-name and unused-value errors. A range error is left to
-  the parse when the same text has a syntax error, since the validators lex the text and
-  do not parse it.
+  the front ends skip the unused-name and unused-value errors. When the same text has a
+  syntax error besides the range error, the validators return the error of the parse of
+  that text, since they only lex it: it is the error DynamoDB reports, whether or not
+  a value is undefined and whether or not an item is evaluated.
 - **Evaluation.** `listIndexLiteral` converts exactly and enforces 0 to 2147483647. Its
   "must be an integer literal" reason is removed: the parser rejects an index that is not
   digits, so a tree built without it gets the range message, the one reason an index has

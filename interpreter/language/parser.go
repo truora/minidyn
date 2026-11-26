@@ -10,7 +10,10 @@ type Parser struct {
 	l         *Lexer
 	curToken  Token
 	peekToken Token
-	errors    []string
+	// prevStart is where the token before curToken starts in the input, curEnd where curToken
+	// ends and peekEnd where peekToken ends, to quote the context of a list index error.
+	prevStart, curStart, peekStart, curEnd, peekEnd int
+	errors                                          []string
 
 	unsupported bool
 
@@ -141,8 +144,14 @@ func (p *Parser) IsUnsupportedExpression() bool {
 // checkListIndex applies DynamoDB's rules for a list index to the token between brackets: a
 // token that is not digits, or a literal with a leading zero, is a syntax error with the text
 // Local reports; a literal above the range is only recorded (IndexRangeError).
-func (p *Parser) checkListIndex(token string) {
-	syntax, rangeErr := classifyListIndex(token)
+func (p *Parser) checkListIndex() {
+	// near runs from the bracket to the end of the token after the index.
+	end := p.curEnd
+	if p.peekToken.Type != EOF {
+		end = p.peekEnd
+	}
+
+	syntax, rangeErr := classifyListIndexToken(p.curToken, p.l.input[p.prevStart:end])
 
 	if syntax != "" {
 		if len(p.errors) == 0 {
@@ -181,7 +190,8 @@ func (p *Parser) Errors() []string {
 
 func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
-	p.peekToken = p.l.NextToken()
+	p.prevStart, p.curStart, p.curEnd = p.curStart, p.peekStart, p.peekEnd
+	p.peekToken, p.peekStart, p.peekEnd = p.l.nextSpan()
 }
 
 // ParseProjectionExpression parses a comma-separated list of path expressions (ProjectionExpression).
@@ -315,8 +325,8 @@ func (p *Parser) parseIndexExpression(left Expression) Expression {
 
 	// DynamoDB takes only an integer literal as a list index: a placeholder, a name or a keyword
 	// is a syntax error (#164), so the parse carries it and no expression is evaluated to find it.
-	if expression.Token.Type == LBRACKET && isWordToken(p.curToken) {
-		p.checkListIndex(p.curToken.Literal)
+	if expression.Token.Type == LBRACKET && p.curToken.Type != EOF {
+		p.checkListIndex()
 	}
 
 	if expression.Token.Type == DOT {

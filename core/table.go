@@ -785,6 +785,11 @@ func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, to
 
 	touched[indexName] = struct{}{}
 
+	return t.validateIndexAction(change, indexName, onDemand)
+}
+
+// validateIndexAction checks the one action of an index change against the indexes of the table.
+func (t *Table) validateIndexAction(change *types.GlobalSecondaryIndexUpdate, indexName string, onDemand bool) error {
 	_, exists := t.Indexes[indexName]
 
 	switch {
@@ -798,13 +803,29 @@ func (t *Table) validateIndexChange(change *types.GlobalSecondaryIndexUpdate, to
 		}
 	case change.Delete != nil && !exists:
 		return types.NewError("ResourceNotFoundException", types.WithDetail("Requested resource not found", "index", indexName, "table", t.Name), nil)
-	case change.Update != nil && !exists:
+	case change.Delete != nil && !t.isGlobalIndex(indexName):
+		// t.Indexes holds the local secondary indexes too, and only a global one can be deleted
+		return validationError(msgNotAGlobalIndex, "index", indexName, "table", t.Name)
+	case change.Update != nil && !t.isGlobalIndex(indexName):
+		// only a global secondary index has a capacity to change: a local one is as unknown as no index
 		return validationError(msgInvalidGSIName, "index", indexName, "table", t.Name)
 	case change.Update != nil:
 		return t.validateIndexThroughput(indexName, change.Update.ProvisionedThroughput, onDemand)
 	}
 
 	return nil
+}
+
+// isGlobalIndex reports whether the table has a global secondary index with the name.
+func (t *Table) isGlobalIndex(name string) bool {
+	idx, ok := t.Indexes[name]
+
+	return ok && idx.typ == indexTypeGlobal
+}
+
+// invalidIndexCapacity reports whether the capacity of an index has a side below one.
+func invalidIndexCapacity(pt *types.ProvisionedThroughput) bool {
+	return pt.ReadCapacityUnits < 1 || pt.WriteCapacityUnits < 1
 }
 
 // validateIndexThroughput checks the capacity an UpdateTable request gives an index, for the
@@ -818,7 +839,7 @@ func (t *Table) validateIndexThroughput(indexName string, pt *types.ProvisionedT
 		return validationError(msgNoGSIThroughput, "reason", "the table is provisioned and the index update has no capacity", "index", indexName, "table", t.Name)
 	case onDemand:
 		return validationError(fmt.Sprintf(msgIndexOnDemand, indexName), "reason", "the table is on demand after this request, so an index has no capacity to change", "index", indexName, "table", t.Name)
-	case pt.ReadCapacityUnits < 1 || pt.WriteCapacityUnits < 1:
+	case invalidIndexCapacity(pt):
 		return validationError(msgGSIThroughput, "index", indexName, "table", t.Name)
 	case sameThroughput(pt, t.Indexes[indexName].provisionedThroughput):
 		return validationError(msgSameThroughput, "index", indexName, "table", t.Name)
@@ -972,12 +993,30 @@ func (t *Table) validateAttributeDefinition(ks keySchema, message string) error 
 	return nil
 }
 
+// validateCreatedIndexThroughput checks the capacity a new global secondary index gets against the
+// billing mode of the table: a provisioned table needs a capacity of at least 1 on both sides
+// and an on-demand one takes none.
+func (t *Table) validateCreatedIndexThroughput(gsiInput *types.GlobalSecondaryIndex) error {
+	name, pt := types.StringValue(gsiInput.IndexName), gsiInput.ProvisionedThroughput
+
+	switch {
+	case t.isOnDemand() && pt != nil:
+		return validationError(fmt.Sprintf(msgIndexOnDemand, name), "index", name, "table", t.Name)
+	case t.isOnDemand():
+		return nil
+	case pt == nil:
+		// https://github.com/aws/aws-sdk-go/issues/3140
+		return validationError(msgNoGSIThroughput)
+	case invalidIndexCapacity(pt):
+		return validationError(msgGSIThroughput, "index", name, "table", t.Name)
+	}
+
+	return nil
+}
+
 func buildGSI(t *Table, gsiInput *types.GlobalSecondaryIndex) (*index, error) {
-	if !t.isOnDemand() {
-		if gsiInput.ProvisionedThroughput == nil {
-			// https://github.com/aws/aws-sdk-go/issues/3140
-			return nil, validationError(msgNoGSIThroughput)
-		}
+	if err := t.validateCreatedIndexThroughput(gsiInput); err != nil {
+		return nil, err
 	}
 
 	ks, err := parseKeySchema(gsiInput.KeySchema)

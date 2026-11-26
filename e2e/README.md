@@ -193,6 +193,16 @@ engine's behavior separately:
   from the conditions DynamoDB gives them for, so the minidyn-only detail after
   ` | ` says what happened. The one-sided limit on `UpdateTable` is no longer
   one of these: the documentation allows it (see above).
+- **Capacity for a new global secondary index of an on-demand table**
+  (`TestE2E_GlobalIndexCapacityOnDemandCreate`). DynamoDB Local accepts it:
+  `CreateTable` stores the capacity (even `0`) and an `UpdateTable` that
+  creates the index drops it. The API reference says capacity must not be
+  given for a `PAY_PER_REQUEST` table, and DynamoDB answers an index that has
+  it with "One or more parameter values were invalid: ProvisionedThroughput
+  should not be specified for index: ... when BillingMode is PAY_PER_REQUEST",
+  the text minidyn gives on both calls, leaving no table or index behind. A
+  provisioned table needs at least 1 on each side of an index's capacity, as
+  Local says, on `CreateTable` and on `UpdateTable`.
 
 A divergence test that asserts each engine passes while both engines do what
 its entry says, and fails if either changes. If one fails, minidyn has stopped

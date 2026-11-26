@@ -373,7 +373,7 @@ func mapTypesBillingModeSummary(in *types.BillingModeSummary) *ddbtypes.BillingM
 }
 
 // mapTypesTableThroughput maps the table-level capacity, which DynamoDB reports with the
-// number of decreases made today (always 0: minidyn does not support UpdateTable throughput).
+// number of decreases made today (always 0: minidyn does not count capacity decreases).
 func mapTypesTableThroughput(in *types.ProvisionedThroughput) *ddbtypes.ProvisionedThroughputDescription {
 	out := mapTypesProvisionedThroughput(in)
 	if out != nil {

@@ -625,7 +625,7 @@ func mapTypesToDynamoProjection(input *types.Projection) *dynamodbtypes.Projecti
 }
 
 // mapTypesToDynamoTableThroughput maps the table-level capacity, which DynamoDB reports with
-// the number of decreases made today (always 0: minidyn does not support UpdateTable throughput).
+// the number of decreases made today (always 0: minidyn does not count capacity decreases).
 func mapTypesToDynamoTableThroughput(input *types.ProvisionedThroughput) *dynamodbtypes.ProvisionedThroughputDescription {
 	output := mapTypesToDynamoProvisionedThroughput(input)
 	if output != nil {

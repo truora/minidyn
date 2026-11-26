@@ -4,6 +4,7 @@ package types
 import (
 	"fmt"
 	"reflect"
+	"slices"
 )
 
 // Item describes the DynamoDB item structure
@@ -136,25 +137,40 @@ var modelledUpdateTableFields = []string{
 
 // HasUnsupportedUpdateTableChanges reports whether a front end's UpdateTable request (a pointer to
 // a struct) carries a setting minidyn accepts and ignores (TableClass, StreamSpecification and so
-// on), which keeps a request with only those from being "Nothing to update". It is whatever is
-// left once the modelled fields are cleared, so a setting that is added to the request type later
-// counts too.
+// on), which keeps a request with only those from being "Nothing to update". It is any exported
+// field that the modelled fields do not cover and that is set, so a setting that is added to the
+// request type later counts too. A list or a map counts when it has entries: an SDK sends an empty
+// one as a request that changes nothing.
 func HasUnsupportedUpdateTableChanges(request any) bool {
 	v := reflect.ValueOf(request)
-	if v.Kind() != reflect.Pointer || v.IsNil() {
+	if v.Kind() != reflect.Pointer || v.IsNil() || v.Elem().Kind() != reflect.Struct {
 		return false
 	}
 
-	rest := reflect.New(v.Elem().Type()).Elem()
-	rest.Set(v.Elem())
+	v = v.Elem()
 
-	for _, name := range modelledUpdateTableFields {
-		if field := rest.FieldByName(name); field.IsValid() {
-			field.Set(reflect.Zero(field.Type()))
+	for i := range v.NumField() {
+		field := v.Type().Field(i)
+		if !field.IsExported() || slices.Contains(modelledUpdateTableFields, field.Name) {
+			continue
+		}
+
+		if isSet(v.Field(i)) {
+			return true
 		}
 	}
 
-	return !rest.IsZero()
+	return false
+}
+
+// isSet reports whether a request field carries a value: a list or a map needs an entry.
+func isSet(field reflect.Value) bool {
+	switch field.Kind() {
+	case reflect.Slice, reflect.Map:
+		return field.Len() > 0
+	default:
+		return !field.IsZero()
+	}
 }
 
 // Projection represents attributes that are copied (projected) from the table into an index

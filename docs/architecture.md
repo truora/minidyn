@@ -230,8 +230,8 @@ ADRs for the layers:
     per index, the online-index limit, exists or missing, projection, key
     schema, the capacity of an index update), then the capacity of the table
     (at least 1, different from the current one, present when going back to
-    provisioned), then the attribute definitions, then builds the created
-    index. A problem with an index change is reported ahead of one with the
+    provisioned), then the on-demand limits (`OnDemandThroughput`), then the
+    attribute definitions, then builds the created index. A problem with an index change is reported ahead of one with the
     table settings, as Local does;
   - `CreateTable` (`Table.AddIndexes`) checks each LSI completely (name, shape,
     key attributes) before any GSI.

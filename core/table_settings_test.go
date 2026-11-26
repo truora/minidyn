@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -589,4 +590,109 @@ func TestUpdateTableCreatedIndexFollowsTheNewBillingMode(t *testing.T) {
 	requireValidation(t, err, "ValidationException", testMsgNoGSIThroughput)
 	requireDescribed(t, table, "PAY_PER_REQUEST", 0, 0)
 	require.Empty(t, table.Indexes)
+}
+
+// A local secondary index has no capacity to change: an index update that names it is answered as
+// one that names an index the table does not have.
+func TestUpdateTableIndexChangesIgnoreLocalIndexes(t *testing.T) {
+	table := newDescribedTable(t, "PROVISIONED", throughput(5, 5))
+	require.NoError(t, table.AddLocalIndexes([]*types.LocalSecondaryIndex{{
+		IndexName:  new("by-local"),
+		KeySchema:  []*types.KeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}, {AttributeName: "gk", KeyType: "RANGE"}},
+		Projection: gsiAllProjection(),
+	}}))
+
+	_, err := updateIndexes(table, "described", nil, []*types.GlobalSecondaryIndexUpdate{gsiThroughputUpdate("by-local", throughput(8, 9))})
+	requireValidation(t, err, "ValidationException", types.WithDetail(msgInvalidGSIName, "index", "by-local", "table", "described"))
+
+	_, lsi := table.IndexesDescription()
+	require.Len(t, lsi, 1)
+	require.Contains(t, table.Indexes, "by-local")
+}
+
+// Deleting a local secondary index through UpdateTable is refused with DynamoDB Local's message,
+// after the check for an unknown name, and leaves the index in place.
+func TestUpdateTableDeleteLocalIndexIsRefused(t *testing.T) {
+	table := newDescribedTable(t, "PROVISIONED", throughput(5, 5))
+	require.NoError(t, table.AddLocalIndexes([]*types.LocalSecondaryIndex{{
+		IndexName:  new("by-local"),
+		KeySchema:  []*types.KeySchemaElement{{AttributeName: "pk", KeyType: "HASH"}, {AttributeName: "gk", KeyType: "RANGE"}},
+		Projection: gsiAllProjection(),
+	}}))
+
+	_, err := updateIndexes(table, "described", nil, []*types.GlobalSecondaryIndexUpdate{gsiDelete(new("by-local"))})
+	requireValidation(t, err, "ValidationException", types.WithDetail(msgNotAGlobalIndex, "index", "by-local", "table", "described"))
+
+	_, lsi := table.IndexesDescription()
+	require.Len(t, lsi, 1)
+	require.Contains(t, table.Indexes, "by-local")
+
+	_, err = updateIndexes(table, "described", nil, []*types.GlobalSecondaryIndexUpdate{gsiDelete(new("by-missing"))})
+	require.Error(t, err)
+
+	typed, ok := errors.AsType[types.Error](err)
+	require.True(t, ok)
+	require.Equal(t, "ResourceNotFoundException", typed.Code())
+}
+
+// A global secondary index gets the capacity rules of the table and of an index update, whether a
+// CreateTable request or an UpdateTable one creates it.
+func TestCreatedIndexThroughput(t *testing.T) {
+	const onDemandMsg = "One or more parameter values were invalid: ProvisionedThroughput should not be specified for index: by-gk when BillingMode is PAY_PER_REQUEST"
+
+	gsi := func(pt *types.ProvisionedThroughput) []*types.GlobalSecondaryIndex {
+		return []*types.GlobalSecondaryIndex{{IndexName: new("by-gk"), KeySchema: gsiHashKey(), Projection: gsiAllProjection(), ProvisionedThroughput: pt}}
+	}
+
+	create := func(pt *types.ProvisionedThroughput) *types.GlobalSecondaryIndexUpdate {
+		c := gsiCreate(new("by-gk"), gsiHashKey(), gsiAllProjection())
+		c.Create.ProvisionedThroughput = pt
+
+		return c
+	}
+
+	tests := []struct {
+		name  string
+		mode  string
+		table *types.ProvisionedThroughput
+		pt    *types.ProvisionedThroughput
+		want  string
+	}{
+		{"ProvisionedZero", "PROVISIONED", throughput(5, 5), throughput(0, 0), types.WithDetail(testMsgGSIThroughput, "index", "by-gk", "table", "described")},
+		{"ProvisionedZeroRead", "PROVISIONED", throughput(5, 5), throughput(0, 1), types.WithDetail(testMsgGSIThroughput, "index", "by-gk", "table", "described")},
+		{"ProvisionedNegativeWrite", "PROVISIONED", throughput(5, 5), throughput(1, -1), types.WithDetail(testMsgGSIThroughput, "index", "by-gk", "table", "described")},
+		{"ProvisionedNone", "PROVISIONED", throughput(5, 5), nil, testMsgNoGSIThroughput},
+		{"ProvisionedValid", "PROVISIONED", throughput(5, 5), throughput(1, 1), ""},
+		{"OnDemandCapacity", "PAY_PER_REQUEST", nil, throughput(5, 5), types.WithDetail(onDemandMsg, "index", "by-gk", "table", "described")},
+		{"OnDemandZeroCapacity", "PAY_PER_REQUEST", nil, throughput(0, 0), types.WithDetail(onDemandMsg, "index", "by-gk", "table", "described")},
+		{"OnDemandNone", "PAY_PER_REQUEST", nil, nil, ""},
+	}
+
+	for _, tt := range tests {
+		check := func(t *testing.T, table *Table, err error) {
+			t.Helper()
+
+			if tt.want == "" {
+				require.NoError(t, err)
+
+				return
+			}
+
+			requireValidation(t, err, "ValidationException", tt.want)
+			require.Empty(t, table.Indexes["by-gk"])
+		}
+
+		t.Run("CreateTable"+tt.name, func(t *testing.T) {
+			table := newDescribedTable(t, tt.mode, tt.table)
+			check(t, table, table.AddGlobalIndexes(gsi(tt.pt)))
+		})
+
+		t.Run("UpdateTable"+tt.name, func(t *testing.T) {
+			table := newDescribedTable(t, tt.mode, tt.table)
+			_, err := updateIndexes(table, "described",
+				[]*types.AttributeDefinition{{AttributeName: new("gk"), AttributeType: new("N")}},
+				[]*types.GlobalSecondaryIndexUpdate{create(tt.pt)})
+			check(t, table, err)
+		})
+	}
 }

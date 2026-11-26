@@ -13,6 +13,7 @@ import (
 
 const (
 	msgInvalidGSIName     = "Invalid global secondary index name"
+	msgNotAGlobalIndex    = "Cannot delete an index that is not a GlobalSecondaryIndex"
 	msgInvalidIndexName   = "Invalid table/index name.  Table/index names must be between 3 and 255 characters long, and may contain only the characters a-z, A-Z, 0-9, '_', '-', and '.'"
 	msgNoProjection       = "Indexes must have a projection specified"
 	msgNoKeySchema        = "No defined key schema.  A key schema containing at least a hash key must be defined for all tables"

@@ -129,6 +129,29 @@ func withIndexEntries(entries ...dynamodbtypes.GlobalSecondaryIndexUpdate) setti
 	}
 }
 
+func withReplicaUpdates(updates ...dynamodbtypes.ReplicationGroupUpdate) settingsOption {
+	return func(in *dynamodb.UpdateTableInput) {
+		in.ReplicaUpdates = append([]dynamodbtypes.ReplicationGroupUpdate{}, updates...)
+	}
+}
+
+func withIndexCreate(name string, pt *dynamodbtypes.ProvisionedThroughput) settingsOption {
+	return func(in *dynamodb.UpdateTableInput) {
+		action := gsiCreateAction(name)
+		action.ProvisionedThroughput = pt
+		in.AttributeDefinitions = gsiAttributes()
+		in.GlobalSecondaryIndexUpdates = append(in.GlobalSecondaryIndexUpdates, dynamodbtypes.GlobalSecondaryIndexUpdate{Create: action})
+	}
+}
+
+func withIndexDelete(name string) settingsOption {
+	return func(in *dynamodb.UpdateTableInput) {
+		in.GlobalSecondaryIndexUpdates = append(in.GlobalSecondaryIndexUpdates, dynamodbtypes.GlobalSecondaryIndexUpdate{
+			Delete: &dynamodbtypes.DeleteGlobalSecondaryIndexAction{IndexName: aws.String(name)},
+		})
+	}
+}
+
 func withAttributes(defs ...dynamodbtypes.AttributeDefinition) settingsOption {
 	return func(in *dynamodb.UpdateTableInput) { in.AttributeDefinitions = defs }
 }
@@ -352,6 +375,7 @@ func TestE2E_UpdateTableNothingToUpdate(t *testing.T) {
 		update("ProtectionOff", withProtection(false)),
 		update("SameMode", withMode(dynamodbtypes.BillingModeProvisioned)),
 		update("LimitsOnProvisioned", withLimits(5, 5)),
+		update("EmptyReplicaUpdates", withReplicaUpdates()),
 		update("ThroughputBeforeAttributes", withThroughput(-1, 1), withAttributes(dynamodbtypes.AttributeDefinition{AttributeName: aws.String("id"), AttributeType: "X"})),
 	)
 }
@@ -736,4 +760,151 @@ func TestE2E_CreateTableInvalidBillingMode(t *testing.T) {
 	runDivergence(t, []settingsCreateOption{bad}, nil,
 		[]string{"create: operation error DynamoDB: CreateTable, https response error StatusCode: 400, RequestID: , api error ValidationException: " + settingsBadModeMessage, noTable},
 		[]string{"create: " + settingsLocal500Create, noTable})
+}
+
+// withLocalIndex creates a table with a sort key and a local secondary index named "by-local".
+func withLocalIndex(in *dynamodb.CreateTableInput) {
+	in.AttributeDefinitions = gsiAttributes()
+	in.KeySchema = []dynamodbtypes.KeySchemaElement{
+		{AttributeName: aws.String("id"), KeyType: dynamodbtypes.KeyTypeHash},
+		{AttributeName: aws.String("type"), KeyType: dynamodbtypes.KeyTypeRange},
+	}
+	in.LocalSecondaryIndexes = []dynamodbtypes.LocalSecondaryIndex{{
+		IndexName: aws.String("by-local"),
+		KeySchema: []dynamodbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: dynamodbtypes.KeyTypeHash},
+			{AttributeName: aws.String("type"), KeyType: dynamodbtypes.KeyTypeRange},
+		},
+		Projection: gsiAll(),
+	}}
+}
+
+// localIndexes lists the local secondary indexes of the table, to see a request left them alone.
+func localIndexes(label string) settingsStep {
+	return func(ctx context.Context, client *dynamodb.Client) string {
+		out, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(parityPokemonTable)})
+		if err != nil {
+			return label + ": " + normalizeSDKErrorString(err.Error())
+		}
+
+		names := []string{}
+		for _, l := range out.Table.LocalSecondaryIndexes {
+			names = append(names, aws.ToString(l.IndexName))
+		}
+
+		return label + ": " + strings.Join(names, ",")
+	}
+}
+
+// A local secondary index has no capacity to change: UpdateTable answers an index update that names
+// it as it does one that names an index the table does not have. Deleting it is refused with a
+// message of its own, and an unknown name keeps ResourceNotFoundException.
+func TestE2E_UpdateTableLocalIndexIsNotGlobal(t *testing.T) {
+	runSettings(t, []settingsCreateOption{provisioned(5, 5), withLocalIndex},
+		update("UpdateLocal", withIndexThroughput("by-local", settingsThroughput(8, 9))),
+		update("UpdateMissing", withIndexThroughput("by-missing", settingsThroughput(8, 9))),
+		update("DeleteMissing", withIndexDelete("by-missing")),
+		update("DeleteLocal", withIndexDelete("by-local")),
+		localIndexes("LocalIndexes"),
+	)
+}
+
+func TestE2E_GlobalIndexCapacity(t *testing.T) {
+	t.Run("CreateTableProvisioned", func(t *testing.T) {
+		for name, pt := range map[string]*dynamodbtypes.ProvisionedThroughput{
+			"Zero": settingsThroughput(0, 0), "ZeroRead": settingsThroughput(0, 1), "ZeroWrite": settingsThroughput(1, 0), "Negative": settingsThroughput(-1, 1),
+		} {
+			t.Run(name, func(t *testing.T) {
+				runSettings(t, []settingsCreateOption{provisioned(5, 5), withIndex(pt)})
+			})
+		}
+	})
+
+	t.Run("UpdateTableProvisioned", func(t *testing.T) {
+		for name, pt := range map[string]*dynamodbtypes.ProvisionedThroughput{
+			"Zero": settingsThroughput(0, 0), "ZeroRead": settingsThroughput(0, 1), "ZeroWrite": settingsThroughput(1, 0), "Negative": settingsThroughput(-1, 1), "Valid": settingsThroughput(1, 1),
+		} {
+			t.Run(name, func(t *testing.T) {
+				runSettings(t, []settingsCreateOption{provisioned(5, 5)}, update("Create", withIndexCreate("created", pt)))
+			})
+		}
+	})
+}
+
+// TestE2E_GlobalIndexCapacityOnDemandCreate covers a divergence from DynamoDB Local, which accepts a
+// capacity for a global secondary index created on an on-demand table: CreateTable stores it
+// and UpdateTable drops it. The API reference says of a table's ProvisionedThroughput that it
+// must not be given for a PAY_PER_REQUEST table, and DynamoDB answers it for an index with
+// "ProvisionedThroughput should not be specified for index: ... when BillingMode is
+// PAY_PER_REQUEST". minidyn rejects the request on both calls and changes nothing.
+func TestE2E_GlobalIndexCapacityOnDemandCreate(t *testing.T) {
+	const (
+		described = "mode=PAY_PER_REQUEST throughput=0/0 protected=false"
+		noTable   = "describe: operation error DynamoDB: DescribeTable, https response error StatusCode: 400, RequestID: , ResourceNotFoundException: Cannot do operations on a non-existent table"
+		invalid   = "operation error DynamoDB: %s, https response error StatusCode: 400, RequestID: , api error ValidationException: " +
+			"One or more parameter values were invalid: ProvisionedThroughput should not be specified for index: %s when BillingMode is PAY_PER_REQUEST"
+	)
+
+	for _, capacity := range []struct {
+		name string
+		pt   *dynamodbtypes.ProvisionedThroughput
+		text string
+	}{
+		{"Capacity", settingsThroughput(5, 5), "5/5"},
+		{"ZeroCapacity", settingsThroughput(0, 0), "0/0"},
+	} {
+		t.Run("CreateTable"+capacity.name, func(t *testing.T) {
+			runDivergence(t, []settingsCreateOption{payPerRequest, withIndex(capacity.pt)}, nil,
+				[]string{"create: " + fmt.Sprintf(invalid, "CreateTable", "existing"), noTable},
+				[]string{"create: " + described + " indexes:existing=" + capacity.text})
+		})
+
+		t.Run("UpdateTable"+capacity.name, func(t *testing.T) {
+			runDivergence(t, []settingsCreateOption{payPerRequest},
+				[]settingsStep{update("Create", withIndexCreate("created", capacity.pt))},
+				[]string{"create: " + described, "Create: " + fmt.Sprintf(invalid, "UpdateTable", "created") + " | describe: " + described},
+				[]string{"create: " + described, "Create: " + described + " indexes:created=none | describe: " + described + " indexes:created=none"})
+		})
+	}
+}
+
+// TestE2E_UpdateTableDecreaseCounter compares the table capacity DescribeTable reports after a
+// decrease, with the number of decreases made today.
+func TestE2E_UpdateTableDecreaseCounter(t *testing.T) {
+	RunE2E(t, func(t *testing.T, client *dynamodb.Client) []string {
+		t.Helper()
+
+		ctx := context.Background()
+		out := []string{}
+
+		_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+			TableName:             aws.String(parityPokemonTable),
+			BillingMode:           dynamodbtypes.BillingModeProvisioned,
+			ProvisionedThroughput: settingsThroughput(5, 5),
+			AttributeDefinitions:  []dynamodbtypes.AttributeDefinition{{AttributeName: aws.String("id"), AttributeType: dynamodbtypes.ScalarAttributeTypeS}},
+			KeySchema:             []dynamodbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: dynamodbtypes.KeyTypeHash}},
+		})
+		require.NoError(t, err)
+
+		describe := func(label string) {
+			desc, describeErr := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(parityPokemonTable)})
+			require.NoError(t, describeErr)
+
+			pt := desc.Table.ProvisionedThroughput
+			out = append(out, fmt.Sprintf("%s: %d/%d decreases=%d", label,
+				aws.ToInt64(pt.ReadCapacityUnits), aws.ToInt64(pt.WriteCapacityUnits), aws.ToInt64(pt.NumberOfDecreasesToday)))
+		}
+
+		describe("Created")
+
+		_, err = client.UpdateTable(ctx, &dynamodb.UpdateTableInput{TableName: aws.String(parityPokemonTable), ProvisionedThroughput: settingsThroughput(3, 4)})
+		require.NoError(t, err)
+		describe("Lowered")
+
+		_, err = client.UpdateTable(ctx, &dynamodb.UpdateTableInput{TableName: aws.String(parityPokemonTable), ProvisionedThroughput: settingsThroughput(6, 6)})
+		require.NoError(t, err)
+		describe("Raised")
+
+		return out
+	})
 }

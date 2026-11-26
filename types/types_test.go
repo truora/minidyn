@@ -64,3 +64,48 @@ func TestHasUnsupportedUpdateTableChanges(t *testing.T) {
 	require.True(t, HasUnsupportedUpdateTableChanges(&request{TableClass: "STANDARD"}))
 	require.False(t, HasUnsupportedUpdateTableChanges(nil))
 }
+
+func TestHasUnsupportedUpdateTableChangesCountsOnlyRealSettings(t *testing.T) {
+	type request struct {
+		TableName      *string
+		BillingMode    string
+		ReplicaUpdates []int
+		Tags           map[string]string
+		TableClass     string
+		Stream         *int
+		ignored        string
+	}
+
+	one := 1
+
+	tests := []struct {
+		name    string
+		request any
+		want    bool
+	}{
+		{"Empty", &request{}, false},
+		{"EmptySlice", &request{ReplicaUpdates: []int{}}, false},
+		{"NonEmptySlice", &request{ReplicaUpdates: []int{1}}, true},
+		{"EmptyMap", &request{Tags: map[string]string{}}, false},
+		{"NonEmptyMap", &request{Tags: map[string]string{"a": "b"}}, true},
+		{"EmptyPointerToZero", &request{Stream: new(int)}, true},
+		{"Pointer", &request{Stream: &one}, true},
+		{"ZeroString", &request{TableClass: ""}, false},
+		{"String", &request{TableClass: "STANDARD"}, true},
+		{"ModelledOnly", &request{TableName: new("t"), BillingMode: "PROVISIONED"}, false},
+		{"UnexportedIgnored", &request{ignored: "x"}, false},
+		{"Nil", nil, false},
+		{"NilPointer", (*request)(nil), false},
+		{"Value", request{TableClass: "STANDARD"}, false},
+		{"PointerToNonStruct", &one, false},
+		{"PointerToSlice", &[]int{1}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotPanics(t, func() {
+				require.Equal(t, tt.want, HasUnsupportedUpdateTableChanges(tt.request))
+			})
+		})
+	}
+}

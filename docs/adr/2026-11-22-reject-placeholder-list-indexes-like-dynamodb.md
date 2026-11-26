@@ -1,6 +1,6 @@
 # Reject a placeholder list index like DynamoDB
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

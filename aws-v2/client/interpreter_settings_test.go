@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/truora/minidyn/interpreter"
@@ -79,6 +80,7 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 
 	native := c.GetNativeInterpreter()
 	native.AddMatcher("main", interpreter.ExpressionTypeConditional, "ok", func(_, _ map[string]*types.Item) bool { return true })
+	native.AddMatcher("main", interpreter.ExpressionTypeFilter, "ok", func(_, _ map[string]*types.Item) bool { return true })
 	native.AddMatcher("main", interpreter.ExpressionTypeKey, "id = :id", func(_, _ map[string]*types.Item) bool { return true })
 	native.AddUpdater("main", "SET x = :v", func(item, attrs map[string]*types.Item) { item["x"] = attrs[":v"] })
 
@@ -92,6 +94,7 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 
 			native.AddMatcher("main", interpreter.ExpressionTypeFilter, expr, func(_, _ map[string]*types.Item) bool { return true })
 			native.AddMatcher("main", interpreter.ExpressionTypeConditional, expr, func(_, _ map[string]*types.Item) bool { return true })
+			native.AddMatcher("main", interpreter.ExpressionTypeKey, expr, func(_, _ map[string]*types.Item) bool { return true })
 			native.AddUpdater("main", expr, func(_, _ map[string]*types.Item) {})
 		}
 	})
@@ -105,7 +108,7 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 				Item:                lockTestItem(id),
 				ConditionExpression: aws.String("ok"),
 			})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 
 			_, err = c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 				TableName:                 aws.String("main"),
@@ -113,14 +116,15 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 				UpdateExpression:          aws.String("SET x = :v"),
 				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":v": &dynamodbtypes.AttributeValueMemberS{Value: "u"}},
 			})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 
 			_, err = c.Query(ctx, &dynamodb.QueryInput{
 				TableName:                 aws.String("main"),
 				KeyConditionExpression:    aws.String("id = :id"),
+				FilterExpression:          aws.String("ok"),
 				ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{":id": &dynamodbtypes.AttributeValueMemberS{Value: id}},
 			})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}
 	})
 

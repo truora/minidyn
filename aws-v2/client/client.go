@@ -245,7 +245,7 @@ func (fd *Client) setIndexActivationDelay(delay time.Duration) {
 // SetInterpreter assigns a native interpreter
 func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 	native, ok := i.(*interpreter.Native)
-	if !ok {
+	if !ok || native == nil {
 		panic("invalid interpreter type")
 	}
 

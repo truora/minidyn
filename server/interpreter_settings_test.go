@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/truora/minidyn/interpreter"
@@ -64,6 +65,7 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 
 	native := c.nativeInterpreter
 	native.AddMatcher("main", interpreter.ExpressionTypeConditional, "ok", func(_, _ map[string]*types.Item) bool { return true })
+	native.AddMatcher("main", interpreter.ExpressionTypeFilter, "ok", func(_, _ map[string]*types.Item) bool { return true })
 	native.AddMatcher("main", interpreter.ExpressionTypeKey, "id = :id", func(_, _ map[string]*types.Item) bool { return true })
 	native.AddUpdater("main", "SET x = :v", func(_, _ map[string]*types.Item) {})
 
@@ -77,6 +79,7 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 
 			native.AddMatcher("main", interpreter.ExpressionTypeFilter, expr, func(_, _ map[string]*types.Item) bool { return true })
 			native.AddMatcher("main", interpreter.ExpressionTypeConditional, expr, func(_, _ map[string]*types.Item) bool { return true })
+			native.AddMatcher("main", interpreter.ExpressionTypeKey, expr, func(_, _ map[string]*types.Item) bool { return true })
 			native.AddUpdater("main", expr, func(_, _ map[string]*types.Item) {})
 		}
 	})
@@ -90,14 +93,15 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 				Item:                lockTestItem(id),
 				ConditionExpression: aws.String("ok"),
 			})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 
 			_, err = c.Query(ctx, &QueryInput{
 				TableName:                 aws.String("main"),
 				KeyConditionExpression:    aws.String("id = :id"),
+				FilterExpression:          aws.String("ok"),
 				ExpressionAttributeValues: map[string]*AttributeValue{":id": {S: aws.String(id)}},
 			})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 
 			_, err = c.UpdateItem(ctx, &UpdateItemInput{
 				TableName:                 aws.String("main"),
@@ -105,7 +109,7 @@ func TestNativeRegistrationRacesOperations(t *testing.T) {
 				UpdateExpression:          aws.String("SET x = :v"),
 				ExpressionAttributeValues: map[string]*AttributeValue{":v": {S: aws.String("v")}},
 			})
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}
 	})
 

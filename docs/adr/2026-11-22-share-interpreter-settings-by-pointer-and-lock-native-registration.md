@@ -1,6 +1,6 @@
 # Share the interpreter settings with every table by pointer, and lock native registration
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

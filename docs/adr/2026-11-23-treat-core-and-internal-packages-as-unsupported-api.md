@@ -1,6 +1,6 @@
 # Treat core and the other non-front-end packages as an unsupported API
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

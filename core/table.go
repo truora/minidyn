@@ -20,6 +20,19 @@ import (
 
 const defaultIndexActivationDelay = 0
 
+// DynamoDB's text for the checks a batch gets before any of its keys or items is looked at.
+const (
+	msgBatchDuplicateKeys   = "Provided list of item keys contains duplicates"
+	msgBatchGetNoRequests   = "BatchGetItem must have some requests set"
+	msgBatchGetEmptyKeys    = "The list of keys in RequestItems for BatchGetItem is required: %s has empty list"
+	msgBatchGetTooMany      = "Too many items requested for the BatchGetItem call"
+	msgBatchWriteNoRequests = "BatchWriteItem cannot have a null or no requests set"
+	msgBatchWriteEmptyList  = "The batch write request list for a table cannot be null or empty: %s"
+
+	// batchGetKeyLimit is the most keys a BatchGetItem may name, over all its tables.
+	batchGetKeyLimit = 100
+)
+
 // QueryInput struct to represent a query input
 type QueryInput struct {
 	Index                     string
@@ -37,6 +50,10 @@ type QueryInput struct {
 	Aliases          map[string]string
 	ScanIndexForward bool
 	Scan             bool
+	// Segment and TotalSegments select one part of a parallel Scan (see segment.go). They are
+	// set together or not at all.
+	Segment       *int32
+	TotalSegments *int32
 	// projection is ProjectionExpression, checked and parsed once by SearchData.
 	projection *interpreter.CheckedProjection
 }
@@ -52,8 +69,8 @@ type Table struct {
 	BillingMode           *string
 	ProvisionedThroughput *types.ProvisionedThroughput
 	UseNativeInterpreter  bool
-	NativeInterpreter     interpreter.Native
-	LangInterpreter       interpreter.Language
+	NativeInterpreter     *interpreter.Native
+	LangInterpreter       *interpreter.Language
 	IndexActivationDelay  time.Duration
 }
 
@@ -66,6 +83,8 @@ func NewTable(name string) *Table {
 		SortedKeys:           []string{},
 		Data:                 map[string]map[string]*types.Item{},
 		IndexActivationDelay: defaultIndexActivationDelay,
+		NativeInterpreter:    interpreter.NewNativeInterpreter(),
+		LangInterpreter:      &interpreter.Language{},
 	}
 }
 
@@ -275,6 +294,87 @@ func (t *Table) BatchGetItem(keys []map[string]*types.Item, projectionExpr strin
 	}
 
 	return items, nil
+}
+
+// ValidateBatchGetKeys runs the checks DynamoDB makes on a BatchGetItem before it looks at the
+// keys' values, the tables or any ProjectionExpression: a request without tables, a table without
+// keys, and a key named twice for one table (#246) or more keys than the limit allows. A front end
+// calls it after ReturnConsumedCapacity and the emulated failure (D13), as BatchWriteItem does
+// ValidateBatchWrite, then Table.BatchGetItem for each table. The count stays with the duplicate
+// check, not with the shape checks of the front end, because Local reports a duplicate ahead of
+// the limit: a batch of 101 keys with a duplicate must say duplicate.
+//
+// Keys are compared as the request spells them (rawKeyID), so equal numbers written differently,
+// like 1 and 1.0, are different keys, and a duplicate is reported even when its key is invalid.
+// The exception is a number: Local reads the numbers of each key before it compares the key with
+// the earlier ones, so an invalid number is reported ahead of the duplicate it makes, and after
+// a duplicate that comes before it in the request.
+// The comparison is on the mapped form of the key, so a key map that maps to nothing, like an
+// empty one, equals another one; two such keys are a duplicate. Within a table each key is
+// looked up among the keys before it and then counted, so a duplicate is reported ahead of the
+// limit, as on Local. DynamoDB Local goes through the tables in the order of the request;
+// a Go map carries no order, so minidyn goes by table name (D1 level 3).
+func ValidateBatchGetKeys(requests map[string][]map[string]*types.Item) error {
+	if len(requests) == 0 {
+		return validationError(msgBatchGetNoRequests)
+	}
+
+	count := 0
+
+	for _, name := range slices.Sorted(maps.Keys(requests)) {
+		keys := requests[name]
+		if len(keys) == 0 {
+			return validationError(fmt.Sprintf(msgBatchGetEmptyKeys, name))
+		}
+
+		seen := make(map[string]struct{}, len(keys))
+
+		for i, key := range keys {
+			if err := validateKeyNumbers(key, "table", name, "index", strconv.Itoa(i)); err != nil {
+				return err
+			}
+
+			id := rawKeyID(key)
+			if _, duplicate := seen[id]; duplicate {
+				return validationError(msgBatchDuplicateKeys, "table", name, "index", strconv.Itoa(i))
+			}
+
+			seen[id] = struct{}{}
+
+			count++
+			if count > batchGetKeyLimit {
+				return validationError(msgBatchGetTooMany)
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateKeyNumbers rejects the first invalid N value of a key of a BatchGetItem, by attribute
+// name, with the error a number gets anywhere else (ErrInvalidNumber, ErrNumberPrecision,
+// ErrNumberOverflow or ErrNumberUnderflow). detail locates the key in the request.
+func validateKeyNumbers(key map[string]*types.Item, detail ...string) error {
+	var (
+		first   string
+		failure error
+	)
+
+	for name, value := range key {
+		if value == nil || value.N == nil {
+			continue
+		}
+
+		if err := types.ValidateNumber(*value.N); err != nil && (failure == nil || name < first) {
+			first, failure = name, err
+		}
+	}
+
+	if failure != nil {
+		return validationError(failure.Error(), append(detail, "attribute", first, "number", *key[first].N)...)
+	}
+
+	return nil
 }
 
 // readItem reads the item under storageKey and projects it; a nil checked selects everything.
@@ -1299,12 +1399,12 @@ func (t *Table) partitionPrefix(input QueryInput, schema keySchema) (string, boo
 		return "", false
 	}
 
-	hash, err := keySchema{HashKey: schema.HashKey}.getKeyValue(t.AttributesDef, map[string]*types.Item{schema.HashKey: val})
+	hash, err := schema.encodeHashKey(t.AttributesDef, map[string]*types.Item{schema.HashKey: val})
 	if err != nil {
 		return "", false
 	}
 
-	return hash, true
+	return string(hash), true
 }
 
 // keysWithPrefix returns the contiguous run of sorted keys that start with prefix.
@@ -1460,41 +1560,55 @@ func (t *Table) validateSearchRequest(input QueryInput) error {
 	return nil
 }
 
-// SearchData queries the table based on the input.
-func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+// validateSearch runs the checks DynamoDB makes of a Query or Scan before it reads an item, in
+// its order. It keeps the parse of the ProjectionExpression in input and returns the segment of
+// a parallel Scan (nil for any other search).
+func (t *Table) validateSearch(input *QueryInput) (*segmentRange, error) {
 	if err := t.ValidateSearchIndex(input.Index); err != nil {
-		return SearchResult{}, err
+		return nil, err
 	}
 
-	if err := t.validateSearchRequest(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateSearchRequest(*input); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB checks the projection's syntax and names before the key condition.
 	if err := input.checkProjection(); err != nil {
-		return SearchResult{}, err
+		return nil, err
 	}
 
-	if err := t.validateKeyCondition(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateKeyCondition(*input); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB checks the start key right after the key condition, ahead of the index's projection
 	// and Select.
-	if err := t.validateStartKey(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateStartKey(*input); err != nil {
+		return nil, err
 	}
 
-	if err := t.validateFilterProjected(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateFilterProjected(*input); err != nil {
+		return nil, err
 	}
 
 	// DynamoDB reports Select after the key condition and the filter attributes.
-	if err := t.validateSelect(input); err != nil {
-		return SearchResult{}, err
+	if err := t.validateSelect(*input); err != nil {
+		return nil, err
 	}
 
-	if err := t.validateIndexProjection(input); err != nil {
+	// DynamoDB Local checks Segment and TotalSegments (a Scan only) ahead of the index's projection.
+	segment, err := t.validateSegment(*input)
+	if err != nil {
+		return nil, err
+	}
+
+	return segment, t.validateIndexProjection(*input)
+}
+
+// SearchData queries the table based on the input.
+func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:gocognit // query loop with paging, filters, and interpreter errors
+	segment, err := t.validateSearch(&input)
+	if err != nil {
 		return SearchResult{}, err
 	}
 
@@ -1503,8 +1617,8 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 	index, sortedKeys, _, seeked := t.fetchQueryData(input)
 
 	if seeked {
-		if err := t.checkSeek(input, index, sortedKeys); err != nil {
-			return SearchResult{}, err
+		if serr := t.checkSeek(input, index, sortedKeys); serr != nil {
+			return SearchResult{}, serr
 		}
 	}
 
@@ -1528,6 +1642,13 @@ func (t *Table) SearchData(input QueryInput) (SearchResult, error) { //nolint:go
 
 		pk, ok := getPrimaryKey(index, k)
 		if !ok {
+			scanned++
+			continue
+		}
+
+		if t.outsideSegment(segment, pk) {
+			// Another segment's item is not read: it is not counted. scanned only decides whether
+			// a LastEvaluatedKey is returned, which needs the whole key range to be walked.
 			scanned++
 			continue
 		}
@@ -1872,6 +1993,13 @@ func validateBatchValues(names []string, requests map[string][]WriteRequest) err
 // ValidateBatchWrite rejects a whole batch write when any of its requests is invalid, so a
 // front end can apply none of them (D8). lookup finds a table by name.
 //
+// DynamoDB rejects a batch without tables, and a table without requests, before it looks at a
+// request. Then, for each table, it validates each request and compares its key with the keys of
+// the requests before it, so a key named twice is rejected (#235) whatever the requests are, a
+// put and a delete included. Keys are compared as the table stores them: only the key
+// attributes count, and equal numbers match. The same key in two tables is fine. The first
+// invalid request or duplicate in the order of the requests is the one reported.
+//
 // Which error wins when a batch has both a missing table and an invalid request is not stable
 // in DynamoDB Local: probes got either error depending on the order of the tables on the wire
 // and on the table's key schema. minidyn reports invalid requests first, and a missing table
@@ -1880,9 +2008,19 @@ func validateBatchValues(names []string, requests map[string][]WriteRequest) err
 // uses table name order, and the requests of a table in order. Both are minidyn's choices (D1
 // level 3), pinned by unit tests.
 func ValidateBatchWrite(lookup func(name string) (*Table, bool), requests map[string][]WriteRequest) error {
-	var missing error
+	if len(requests) == 0 {
+		return validationError(msgBatchWriteNoRequests)
+	}
 
 	names := slices.Sorted(maps.Keys(requests))
+
+	for _, name := range names {
+		if len(requests[name]) == 0 {
+			return validationError(fmt.Sprintf(msgBatchWriteEmptyList, name))
+		}
+	}
+
+	var missing error
 
 	if err := validateBatchValues(names, requests); err != nil {
 		return err
@@ -1898,52 +2036,73 @@ func ValidateBatchWrite(lookup func(name string) (*Table, bool), requests map[st
 			continue
 		}
 
-		for _, req := range requests[name] {
-			var err error
-
-			switch {
-			case req.Put != nil:
-				err = table.ValidatePutItem(req.Put)
-			case req.Delete != nil:
-				err = table.ValidateDeleteKey(req.Delete)
-			}
-
-			if err != nil {
-				return err
-			}
+		if err := table.validateWriteRequests(requests[name]); err != nil {
+			return err
 		}
 	}
 
 	return missing
 }
 
-// ValidatePutItem runs the checks Put makes on an item that do not depend on a condition, in
-// the same order. It changes nothing, so a batch can reject an invalid request before it
-// applies any (D8).
-func (t *Table) ValidatePutItem(item map[string]*types.Item) error {
+// validateWriteRequests validates the requests of one table in order, each one before it is
+// compared with the keys of the requests before it.
+func (t *Table) validateWriteRequests(requests []WriteRequest) error {
+	seen := make(map[string]struct{}, len(requests))
+
+	for i, req := range requests {
+		var (
+			key string
+			err error
+		)
+
+		switch {
+		case req.Put != nil:
+			key, err = t.validatedPutKey(req.Put)
+		case req.Delete != nil:
+			key, err = t.CheckedKeyOf(req.Delete)
+		default:
+			// A request that is neither a put nor a delete has no key. This branch is
+			// reachable: the front ends map an empty PutRequest.Item or DeleteRequest.Key
+			// to nil, so a request that sets neither reaches here. Tracked in #309.
+			continue
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if _, duplicate := seen[key]; duplicate {
+			return validationError(msgBatchDuplicateKeys, "table", t.Name, "request", strconv.Itoa(i))
+		}
+
+		seen[key] = struct{}{}
+	}
+
+	return nil
+}
+
+// validatedPutKey runs the checks Put makes on an item that do not depend on a condition, in
+// the same order, and returns the storage key of the item. It changes nothing, so a batch can
+// reject an invalid request before it applies any (D8).
+func (t *Table) validatedPutKey(item map[string]*types.Item) (string, error) {
 	if err := validateItemValues(item); err != nil {
-		return err
+		return "", err
 	}
 
 	if err := t.checkItemKeyValues(item); err != nil {
-		return err
+		return "", err
 	}
 
-	if _, err := t.primaryKeyOf(item); err != nil {
-		return err
+	key, err := t.primaryKeyOf(item)
+	if err != nil {
+		return "", err
 	}
 
-	_, err := t.checkedIndexKeysOf(item)
+	if _, err := t.checkedIndexKeysOf(item); err != nil {
+		return "", err
+	}
 
-	return err
-}
-
-// ValidateDeleteKey runs the checks Delete makes on a key that do not depend on a condition, in
-// the same order. It changes nothing.
-func (t *Table) ValidateDeleteKey(key map[string]*types.Item) error {
-	_, err := t.CheckedKeyOf(key)
-
-	return err
+	return key, nil
 }
 
 // CheckedKeyOf runs the checks a key gets before it is read or deleted and returns its storage

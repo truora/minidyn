@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -676,7 +677,7 @@ func TestServerBatchGetItemValidationException(t *testing.T) {
 		var apiErr smithy.APIError
 		require.ErrorAs(t, err, &apiErr)
 		require.Equal(t, "ValidationException", apiErr.ErrorCode())
-		require.Equal(t, "1 validation error detected: Value '{}' at 'requestItems' failed to satisfy constraint: Member must have length greater than or equal to 1", apiErr.ErrorMessage())
+		require.Equal(t, "BatchGetItem must have some requests set", apiErr.ErrorMessage())
 	})
 
 	t.Run("all tables have empty keys", func(t *testing.T) {
@@ -688,14 +689,14 @@ func TestServerBatchGetItemValidationException(t *testing.T) {
 		var apiErr smithy.APIError
 		require.ErrorAs(t, err, &apiErr)
 		require.Equal(t, "ValidationException", apiErr.ErrorCode())
-		require.Equal(t, "1 validation error detected: Value '{}' at 'requestItems' failed to satisfy constraint: Member must have length greater than or equal to 1", apiErr.ErrorMessage())
+		require.Equal(t, "The list of keys in RequestItems for BatchGetItem is required: pokemons has empty list", apiErr.ErrorMessage())
 	})
 
 	t.Run("too many keys", func(t *testing.T) {
 		keys := make([]map[string]ddbtypes.AttributeValue, 0, 101)
 		for range 101 {
 			keys = append(keys, map[string]ddbtypes.AttributeValue{
-				"id": &ddbtypes.AttributeValueMemberS{Value: "x"},
+				"id": &ddbtypes.AttributeValueMemberS{Value: strconv.Itoa(len(keys))},
 			})
 		}
 

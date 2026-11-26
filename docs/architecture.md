@@ -147,6 +147,27 @@ ADRs for the layers:
     `#names`), before the key (`Table.GetItem`); a `BatchGetItem` is the
     opposite: every key of a table, then the projection, once per table
     (`Table.BatchGetItem`);
+  - the keys of a `BatchGetItem` (#246), before the tables, the keys' values
+    or any projection (`core.ValidateBatchGetKeys`): no tables, a table with
+    no keys, then each key's numbers (an invalid one is reported before the
+    key is compared) and the key against the keys before it, as the request
+    spells them (so `1` and `1.0` differ; `rawKeyID` builds a length-prefixed
+    identity of the key map, so the scan is linear), then the 100 key count.
+    The front ends run it in the order of `BatchWriteItem` (D13):
+    `ReturnConsumedCapacity`, the emulated failure, then these checks. The
+    count stays with the duplicate check rather than with the front ends'
+    shape checks, because Local reports a duplicate ahead of the limit. An
+    error names the table and the position of the repeated key (`index: 3`),
+    never its value. Local goes through the tables in the order of the wire
+    request, which the SDK marshals from a map, so it is random; minidyn goes
+    by table name, in the duplicate scan and in the per-table reads, so the
+    error is the same on every run (D1 level 3). The parity cases that mix
+    failing tables compare only that the batch is rejected;
+  - the requests of a `BatchWriteItem` (`core.ValidateBatchWrite`): no
+    tables, a table with no requests, then, per table in request order, each
+    request validated and compared by its stored key with the requests
+    before it (#235, a put and a delete included). The error names the table
+    and the position of the repeated request (`request: 3`);
   - the shape and types of a key condition, with BETWEEN bounds checked
     first (same type, then lower <= upper, comparing by type);
   - the `ExclusiveStartKey` of a Query or Scan (`Table.validateStartKey`, #171,
@@ -167,11 +188,18 @@ ADRs for the layers:
     index (#163), with LSIs reported before GSIs;
   - `ReturnValues` and `ReturnValuesOnConditionCheckFailure`, including the
     nested shapes of `TransactWriteItems`;
-  - `Select`.
+  - `Select`;
+  - the `Segment` and `TotalSegments` of a parallel Scan (#155; a Query ignores
+    them): after the start key's own checks and `Select`, but before the projection of a GSI. Each needs the other, then `Segment` must lie in
+    `[0, TotalSegments-1]`, then `TotalSegments` is at most 1000000
+    (`Table.validateSegment`, `core/segment.go`). An item's segment is a hash of
+    the table's encoded partition key, so a partition never splits and an
+    `ExclusiveStartKey` of another segment is rejected. Local's assignment is not
+    reproducible (D1, level 3): the parity cases compare the union of the segments.
 
   The code is at `core/table.go`, in `validateSearch*`, `validateWriteExpressions`,
   `validateKeyCondition*` and `ValidateNoneOrAllOldReturnValues`, and in
-  `core/select.go`. Placeholders are checked through
+  `core/select.go` and `core/segment.go`. Placeholders are checked through
   `interpreter.ValidateExpressionPlaceholders`.
 
   For a request with several problems, the order is pinned by
@@ -324,9 +352,17 @@ ADRs for the layers:
   - Each front end's `Client` has one `sync.Mutex`. A public operation takes
     it once at the top and calls `core` directly. It does not call other locked
     public methods.
-  - `core.Table` and the interpreter do no locking. The only exception is
-    `interpreter/language_cache.go`: its four expression caches (placeholders,
-    conditions, updates, projections) each have their own mutex.
+  - `core.Table` and the interpreter do no locking. The exceptions are
+    `interpreter/language_cache.go`, whose four expression caches
+    (placeholders, conditions, updates, projections) each have their own
+    mutex, and `interpreter.Native`, whose matcher and updater maps are
+    guarded by its own `RWMutex` (#250). Every table of a client holds the
+    client's `*Native` and `*Language` by pointer, so `AddMatcher`,
+    `AddUpdater` (callable on the object `GetNativeInterpreter` returns) and
+    `ActivateDebug` reach existing and later tables, and registration is safe
+    while operations run (an operation may still see the old or the new
+    matcher). Matchers and updaters run outside that mutex, under the client
+    lock. See [`2026-11-22-share-interpreter-settings-by-pointer-and-lock-native-registration.md`](adr/2026-11-22-share-interpreter-settings-by-pointer-and-lock-native-registration.md).
 - **On `main`:**
   - Every public operation of both front ends takes the lock once at the top
     and holds it for the whole call: the table operations (`CreateTable`,
@@ -384,7 +420,8 @@ ADRs for the layers:
   - `BatchWriteItem` validates every request (key shape and values, index
     keys, table existence) before it applies any, so an invalid request
     rejects the whole batch. The orchestration is `core.ValidateBatchWrite`,
-    built on `Table.ValidatePutItem` and `Table.ValidateDeleteKey`. The front
+    built on `Table.CheckedKeyOf` and the put check that returns the storage
+    key (`validatedPutKey`), the same steps Put and Delete run. The front
     ends only map shapes. minidyn reports a missing table only when every
     request of the existing tables is valid, and between two invalid tables
     the first by name, because the request is a map and has no order. Both

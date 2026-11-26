@@ -4081,3 +4081,11 @@ func TestWriteItemKeyBeforeExpressions(t *testing.T) {
 		require.ErrorContains(t, err, "ResourceNotFoundException")
 	})
 }
+
+func TestSetInterpreterRejectsNilNative(t *testing.T) {
+	c := NewClient()
+
+	require.PanicsWithValue(t, "invalid interpreter type", func() {
+		c.SetInterpreter((*interpreter.Native)(nil))
+	})
+}

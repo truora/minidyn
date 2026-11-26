@@ -1,6 +1,6 @@
 # Reject an N value DynamoDB cannot store, wherever a request carries it
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

@@ -245,7 +245,7 @@ func (fd *Client) setIndexActivationDelay(delay time.Duration) {
 // SetInterpreter assigns a native interpreter
 func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 	native, ok := i.(*interpreter.Native)
-	if !ok {
+	if !ok || native == nil {
 		panic("invalid interpreter type")
 	}
 
@@ -255,7 +255,7 @@ func (fd *Client) SetInterpreter(i interpreter.Interpreter) {
 	fd.nativeInterpreter = native
 
 	for _, table := range fd.tables {
-		table.NativeInterpreter = *native
+		table.NativeInterpreter = native
 	}
 }
 
@@ -283,9 +283,9 @@ func (fd *Client) CreateTable(ctx context.Context, input *dynamodb.CreateTableIn
 	}
 
 	newTable.BillingMode = aws.String(string(input.BillingMode))
-	newTable.NativeInterpreter = *fd.nativeInterpreter
+	newTable.NativeInterpreter = fd.nativeInterpreter
 	newTable.UseNativeInterpreter = fd.useNativeInterpreter
-	newTable.LangInterpreter = *fd.langInterpreter
+	newTable.LangInterpreter = fd.langInterpreter
 	newTable.IndexActivationDelay = fd.indexActivationDelay
 
 	if err := newTable.CreatePrimaryIndex(mapDynamoToTypesCreateTableInput(input)); err != nil {

@@ -83,8 +83,14 @@ func roundTripInput(target roundTripTarget, cond roundTripCond, filtered, forwar
 	}
 
 	if filtered {
-		// Drops the item whose l is "b".
-		in.FilterExpression = "l <> :skip"
+		// Drops the item whose l (and gr) is "b", through an attribute that is no key of the
+		// target: a Query cannot filter on its own keys.
+		attr := "l"
+		if target.attr == "l" {
+			attr = "gr"
+		}
+
+		in.FilterExpression = attr + " <> :skip"
 		values[":skip"] = skS("b")
 	}
 

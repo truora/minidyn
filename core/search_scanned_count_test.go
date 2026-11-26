@@ -16,7 +16,7 @@ func TestSearchDataScannedCount(t *testing.T) {
 	for _, p := range []pokemon{
 		{ID: "001", Type: "grass", Name: "Bulbasaur"},
 		{ID: "001", Type: "grass", Name: "Ivysaur"},
-		{ID: "001", Type: "grass", Name: "Venusaur"},
+		{ID: "001", Type: "poison", Name: "Venusaur"},
 		{ID: "002", Type: "fire", Name: "Charmander"},
 	} {
 		_, err = table.Put(&types.PutItemInput{Item: createPokemon(p), TableName: &table.Name})
@@ -26,11 +26,11 @@ func TestSearchDataScannedCount(t *testing.T) {
 	query := func(limit int64, start map[string]*types.Item) SearchResult {
 		res, qerr := table.SearchData(QueryInput{
 			KeyConditionExpression: "id = :id",
-			FilterExpression:       "#n = :n",
-			Aliases:                map[string]string{"#n": "name"},
+			FilterExpression:       "#t = :t",
+			Aliases:                map[string]string{"#t": "type"},
 			ExpressionAttributeValues: map[string]*types.Item{
 				":id": {S: new("001")},
-				":n":  {S: new("Venusaur")},
+				":t":  {S: new("poison")},
 			},
 			Limit:             limit,
 			ExclusiveStartKey: start,
@@ -60,10 +60,10 @@ func TestSearchDataScannedCount(t *testing.T) {
 	// A scan reads every item, whatever the filter keeps.
 	scan, err := table.SearchData(QueryInput{
 		Scan:             true,
-		FilterExpression: "#n = :n",
-		Aliases:          map[string]string{"#n": "name"},
+		FilterExpression: "#t = :t",
+		Aliases:          map[string]string{"#t": "type"},
 		ExpressionAttributeValues: map[string]*types.Item{
-			":n": {S: new("Venusaur")},
+			":t": {S: new("poison")},
 		},
 		ScanIndexForward: true,
 	})

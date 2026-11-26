@@ -3,6 +3,8 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -725,5 +727,219 @@ func TestE2E_ValidationOrder_SearchValueErrors(t *testing.T) {
 				})
 			})
 		}
+	}
+}
+
+// filterKeyReq is one Query or Scan of the select table for TestE2E_ValidationOrder_FilterKeyAttributes.
+type filterKeyReq struct {
+	index  string
+	filter string
+	names  map[string]string
+	mod    func(*dynamodb.QueryInput)
+	scan   bool
+}
+
+// filterKeyConds is the key condition, and the value it compares to, of a Query on each index.
+var filterKeyConds = map[string][2]string{
+	"": {"pk = :p", "p"}, "gko": {"g = :p", "g"}, "ginc": {"g = :p", "g"},
+	"lko": {"pk = :p", "p"}, "linc": {"pk = :p", "p"},
+}
+
+func filterKeyStr(v string) dynamodbtypes.AttributeValue {
+	return &dynamodbtypes.AttributeValueMemberS{Value: v}
+}
+
+// run sends the request and returns the error text, or the number of items.
+func (r filterKeyReq) run(ctx context.Context, c *dynamodb.Client) string {
+	vals := map[string]dynamodbtypes.AttributeValue{":v": filterKeyStr("x")}
+
+	var (
+		items int
+		err   error
+	)
+
+	if r.scan {
+		in := &dynamodb.ScanInput{
+			TableName: aws.String(paritySelectTableName), FilterExpression: aws.String(r.filter),
+			ExpressionAttributeValues: vals, ExpressionAttributeNames: r.names,
+		}
+		if r.index != "" {
+			in.IndexName = aws.String(r.index)
+		}
+
+		var out *dynamodb.ScanOutput
+
+		if out, err = c.Scan(ctx, in); err == nil {
+			items = len(out.Items)
+		}
+	} else {
+		cond := filterKeyConds[r.index]
+		vals[":p"] = filterKeyStr(cond[1])
+
+		in := &dynamodb.QueryInput{
+			TableName: aws.String(paritySelectTableName), KeyConditionExpression: aws.String(cond[0]),
+			FilterExpression: aws.String(r.filter), ExpressionAttributeValues: vals,
+			ExpressionAttributeNames: r.names,
+		}
+		if r.index != "" {
+			in.IndexName = aws.String(r.index)
+		}
+
+		if r.mod != nil {
+			r.mod(in)
+		}
+
+		var out *dynamodb.QueryOutput
+
+		if out, err = c.Query(ctx, in); err == nil {
+			items = len(out.Items)
+		}
+	}
+
+	if err != nil {
+		return fuzzErrString(err)
+	}
+
+	return fmt.Sprintf("ok items=%d", items)
+}
+
+// filterKeyAttributeCases lists which attributes count, per target, for a Query and a Scan.
+func filterKeyAttributeCases(tests map[string]filterKeyReq) {
+	filters := map[string]string{
+		"Pk": "pk = :v", "Sk": "sk = :v", "G": "g = :v", "L": "l = :v", "A": "a = :v",
+		"PkSk": "pk = :v AND sk = :v", "SkPk": "sk = :v AND pk = :v", "LPk": "l = :v AND pk = :v",
+		"LSk": "l = :v AND sk = :v", "LG": "l = :v AND g = :v", "GL": "g = :v AND l = :v",
+		"PkTwice": "pk = :v OR pk <> :v", "ExistsPk": "attribute_exists(pk)", "ExistsG": "attribute_not_exists(g)",
+		"SizeSk": "size(sk) > :v", "ContainsL": "contains(l, :v)", "Not": "NOT (sk = :v)",
+		"BThenPk": "b = :v AND pk = :v", "PkThenB": "pk = :v AND b = :v",
+	}
+
+	for _, scan := range []bool{false, true} {
+		op := "Query"
+		if scan {
+			op = "Scan"
+		}
+
+		for _, idx := range []string{"", "gko", "ginc", "lko", "linc"} {
+			for name, f := range filters {
+				tests[op+"/"+idx+"/"+name] = filterKeyReq{index: idx, filter: f, scan: scan}
+			}
+
+			for name, attr := range map[string]string{"NamedPk": "pk", "NamedL": "l", "NamedPlain": "a"} {
+				tests[op+"/"+idx+"/"+name] = filterKeyReq{
+					index: idx, filter: "#k = :v", names: map[string]string{"#k": attr}, scan: scan,
+				}
+			}
+		}
+	}
+}
+
+// filterKeyOrderCases pins where the check sits, on the table, a GSI and an LSI. Each case
+// brings a second problem; target.key is a key attribute and target.other one that is not.
+func filterKeyOrderCases(tests map[string]filterKeyReq) {
+	num := &dynamodbtypes.AttributeValueMemberN{Value: "1"}
+	startKey := func(m map[string]dynamodbtypes.AttributeValue) func(*dynamodb.QueryInput) {
+		return func(in *dynamodb.QueryInput) { in.ExclusiveStartKey = m }
+	}
+	set := func(name string, v dynamodbtypes.AttributeValue) func(*dynamodb.QueryInput) {
+		return func(in *dynamodb.QueryInput) { in.ExpressionAttributeValues[name] = v }
+	}
+	sel := func(s dynamodbtypes.Select, projection string) func(*dynamodb.QueryInput) {
+		return func(in *dynamodb.QueryInput) {
+			in.Select = s
+			if projection != "" {
+				in.ProjectionExpression = aws.String(projection)
+			}
+		}
+	}
+
+	for _, target := range []struct{ idx, key, other string }{
+		{"", "pk = :v", "sk = :v"}, {"gko", "g = :v", "l = :v"}, {"lko", "l = :v", "g = :v"},
+	} {
+		idx, key := target.idx, target.key
+		with := func(name, filter string, mod func(*dynamodb.QueryInput)) {
+			tests["Order/"+idx+"/"+name] = filterKeyReq{index: idx, filter: filter, mod: mod}
+		}
+
+		with("KeyAndNotProjected", target.other+" AND "+key, nil)
+		with("NotProjectedAndKey", key+" AND "+target.other, nil)
+		with("BadKeyCondition", key, func(in *dynamodb.QueryInput) { in.KeyConditionExpression = aws.String("zz = :p") })
+		with("EmptyKeyValue", key, set(":p", filterKeyStr("")))
+		with("KeyTypeMismatch", key, set(":p", num))
+		with("UndeclaredFilterName", "#q = :v AND "+key, nil)
+		with("UndefinedFilterValue", key+" AND "+strings.Replace(target.other, ":v", ":nope", 1), nil)
+		with("UnusedValue", key, set(":u", filterKeyStr("u")))
+		with("UnusedName", key, func(in *dynamodb.QueryInput) { in.ExpressionAttributeNames = map[string]string{"#u": "u"} })
+		with("ProjectionSyntaxError", key, sel("", "a,"))
+		with("ProjectionUndeclaredName", key, sel("", "#x"))
+		with("ProjectionNotProjected", key, sel("", "b"))
+		with("InvalidSelect", key, sel("BOGUS", ""))
+		with("SpecificWithoutProjection", key, sel(dynamodbtypes.SelectSpecificAttributes, ""))
+		with("CountWithProjection", key, sel(dynamodbtypes.SelectCount, "a"))
+		with("AllProjectedOnTable", key, sel(dynamodbtypes.SelectAllProjectedAttributes, ""))
+		with("ConsistentRead", key, func(in *dynamodb.QueryInput) { in.ConsistentRead = aws.Bool(true) })
+		with("StartKeyMissingAttribute", key, startKey(map[string]dynamodbtypes.AttributeValue{"pk": filterKeyStr("p")}))
+		with("StartKeyWrongType", key, startKey(map[string]dynamodbtypes.AttributeValue{
+			"pk": num, "sk": filterKeyStr("s"), "g": filterKeyStr("g"), "l": filterKeyStr("l"),
+		}))
+		with("StartKeyOffCondition", key, startKey(map[string]dynamodbtypes.AttributeValue{
+			"pk": filterKeyStr("zz"), "sk": filterKeyStr("s"), "g": filterKeyStr("zz"), "l": filterKeyStr("l"),
+		}))
+	}
+
+	tests["Order/UnknownIndex"] = filterKeyReq{index: "nope", filter: "pk = :v"}
+	tests["Order/UnknownIndexG"] = filterKeyReq{index: "nope", filter: "g = :v"}
+}
+
+// A Query whose FilterExpression names a key attribute of the table or index it reads is
+// rejected (#255), naming the first one in key schema order (hash, then range): the table's
+// pk and sk, the pk and l of an LSI, only the g of a GSI (the table's keys are plain
+// attributes there). A Scan has no such rule. The check comes after the placeholders, the
+// key condition and the start key, and before Select, the "does not project" check of #202
+// and the projection of a GSI. A GSI's ConsistentRead error comes before it. They use the
+// select table: pk/sk, GSIs gko and ginc on g, LSIs lko and linc on pk/l.
+func TestE2E_ValidationOrder_FilterKeyAttributes(t *testing.T) {
+	tests := map[string]filterKeyReq{}
+	filterKeyAttributeCases(tests)
+	filterKeyOrderCases(tests)
+
+	names := make([]string, 0, len(tests))
+	for name := range tests {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	for _, empty := range []bool{false, true} {
+		suffix := "WithItem"
+		if empty {
+			suffix = "EmptyTable"
+		}
+
+		t.Run(suffix, func(t *testing.T) {
+			RunE2E(t, func(t *testing.T, client *dynamodb.Client) any {
+				t.Helper()
+				ctx := context.Background()
+
+				paritySelectTable(ctx, t, client)
+
+				if empty {
+					_, err := client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+						TableName: aws.String(paritySelectTableName),
+						Key: map[string]dynamodbtypes.AttributeValue{
+							"pk": filterKeyStr("p"), "sk": filterKeyStr("s"),
+						},
+					})
+					require.NoError(t, err)
+				}
+
+				out := make([]string, 0, len(names))
+				for _, name := range names {
+					out = append(out, name+": "+tests[name].run(ctx, client))
+				}
+
+				return out
+			})
+		})
 	}
 }

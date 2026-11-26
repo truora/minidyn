@@ -294,19 +294,18 @@ func (e *fuzzExpr) valuesOrNil() map[string]dynamodbtypes.AttributeValue {
 	return e.values
 }
 
-// condition returns a random condition or filter expression over item attributes; write
-// conditions (write=true) may refer to the key attributes.
-func (g *fuzzGen) condition(e *fuzzExpr, write bool) string {
+// condition returns a random condition or filter expression over item attributes. A filter
+// may name g, the index's hash key: a Query on the index rejects it (#255) and a Scan or a
+// Query of the table accepts it, in both engines.
+func (g *fuzzGen) condition(e *fuzzExpr) string {
 	fns := true
-	// #164: minidyn accepts filters on key attributes (g is the index's hash key).
-	keys := g.known || write
-	c := g.atom(e, fns, keys)
+	c := g.atom(e, fns)
 
 	switch g.rng.IntN(6) {
 	case 0:
-		return c + " AND " + g.atom(e, fns, keys)
+		return c + " AND " + g.atom(e, fns)
 	case 1:
-		return c + " OR " + g.atom(e, fns, keys)
+		return c + " OR " + g.atom(e, fns)
 	case 2:
 		return "NOT (" + c + ")"
 	default:
@@ -314,13 +313,9 @@ func (g *fuzzGen) condition(e *fuzzExpr, write bool) string {
 	}
 }
 
-// atom returns one comparison or, if fns, possibly a function call. With keys=false it
-// does not refer to the index key attribute g.
-func (g *fuzzGen) atom(e *fuzzExpr, fns, keys bool) string {
+// atom returns one comparison or, if fns, possibly a function call.
+func (g *fuzzGen) atom(e *fuzzExpr, fns bool) string {
 	attr := pick(g, fuzzAttrs...)
-	if !keys && attr == "g" {
-		attr = "s"
-	}
 
 	n := 5
 	if fns {
@@ -379,7 +374,7 @@ func (g *fuzzGen) putItem() fuzzOp {
 
 	if g.chance(0.3) {
 		e := newFuzzExpr()
-		in.ConditionExpression = aws.String(g.condition(e, true))
+		in.ConditionExpression = aws.String(g.condition(e))
 		in.ExpressionAttributeNames = e.namesOrNil()
 		in.ExpressionAttributeValues = e.valuesOrNil()
 	} else {
@@ -505,7 +500,7 @@ func (g *fuzzGen) updateItem() fuzzOp {
 	var conds []string
 
 	if g.chance(0.3) {
-		conds = append(conds, g.condition(e, true))
+		conds = append(conds, g.condition(e))
 	}
 
 	switch len(conds) {
@@ -538,7 +533,7 @@ func (g *fuzzGen) deleteItem() fuzzOp {
 
 	if g.chance(0.4) {
 		e := newFuzzExpr()
-		in.ConditionExpression = aws.String(g.condition(e, true))
+		in.ConditionExpression = aws.String(g.condition(e))
 		in.ExpressionAttributeNames = e.namesOrNil()
 		in.ExpressionAttributeValues = e.valuesOrNil()
 	}
@@ -748,7 +743,7 @@ func (g *fuzzGen) scan() fuzzOp {
 // readOptions sets an optional filter and an optional limit.
 func (g *fuzzGen) readOptions(e *fuzzExpr, filter **string, limit **int32) {
 	if g.chance(0.4) {
-		*filter = aws.String(g.condition(e, false))
+		*filter = aws.String(g.condition(e))
 	}
 
 	if g.chance(0.3) {

@@ -64,6 +64,9 @@ types     (internal item form types.Item, errors, types.WithDetail)
 `Native` is a hook for users to override evaluation. minidyn's own behavior
 never goes through it.
 
+The grammar accepts only an integer literal as a list index, as DynamoDB does
+(D1): [`2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md`](adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md).
+
 ADRs for the layers:
 
 - [`2021-08-02-interpret-dynamodb-expressions-with-a-hand-written-lexer-parser-and-evaluator.md`](adr/2021-08-02-interpret-dynamodb-expressions-with-a-hand-written-lexer-parser-and-evaluator.md)
@@ -138,6 +141,13 @@ ADRs for the layers:
     first (`core.ValidateWriteValues`), and a batch write every request
     (`core.ValidateBatchWrite`). See
     [`docs/adr/2026-11-22-validate-number-values-on-every-write.md`](adr/2026-11-22-validate-number-values-on-every-write.md);
+  - a list index that is not a literal, such as `l[:i]`, one with a leading
+    zero, or one above 2147483647 (#164): DynamoDB reports it while it checks
+    the expression, before any placeholder, so it comes ahead of the
+    undeclared names, the undefined values and the front ends' pre-check of
+    unused names and values (`interpreter.HasInvalidListIndex`). A syntax error
+    elsewhere in the same text comes before the range error. See
+    [`docs/adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md`](adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md);
   - undeclared `#names`, then undefined `:values` (#190). Across all of a
     request's expressions an undeclared name comes before an undefined value;
     an UpdateExpression comes before a ConditionExpression; and, for undefined
@@ -217,7 +227,10 @@ ADRs for the layers:
   table and an unknown index before them. For a Scan they also call
   `Table.ValidateConsistentRead` before that pre-check, for the same reason:
   Local reports ConsistentRead on a GSI right after the unknown index. This is a stopgap until #243 moves
-  that pre-check into `core`, where `SearchData` already orders it.
+  that pre-check into `core`, where `SearchData` already orders it. The same
+  pre-check carries the front ends' skips for a list index DynamoDB rejects
+  (`interpreter.HasInvalidListIndex`) and for an undefined value
+  (`hasUndefinedValue`), so #243 removes them all together.
 - **Why:** with per-item checks, the same bad request passes on an empty table
   and fails on a full one, and the error depends on the data.
 - **Check:** is a new validation reachable on an empty table? Does a unit test

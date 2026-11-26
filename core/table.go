@@ -2381,8 +2381,7 @@ func (t *Table) Update(input *types.UpdateItemInput) (map[string]*types.Item, er
 	}
 
 	// A parse error leaves no paths: the interpreter reports it later.
-	writtenPaths := interpreter.UpdateTargetPaths(input.UpdateExpression,
-		input.ExpressionAttributeNames, input.ExpressionAttributeValues)
+	writtenPaths := interpreter.UpdateTargetPaths(input.UpdateExpression, input.ExpressionAttributeNames)
 
 	if !t.KeySchema.Secondary {
 		if err := language.ValidatePathsDoNotTargetPrimaryKey(

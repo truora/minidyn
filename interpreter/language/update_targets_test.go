@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/truora/minidyn/types"
 )
 
 func assertPrimaryKeyUpdateError(t *testing.T, err error, wantSubstr string) {
@@ -118,7 +116,7 @@ func TestValidateUpdateExpressionDoesNotTargetPrimaryKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			paths := UpdateTargetPaths(parseUpdateForTest(t, tt.expr), tt.aliases, nil)
+			paths := UpdateTargetPaths(parseUpdateForTest(t, tt.expr), tt.aliases)
 			err := ValidatePathsDoNotTargetPrimaryKey(paths, tt.hashKey, tt.rangeKey)
 			if tt.wantErr {
 				assertPrimaryKeyUpdateError(t, err, tt.wantSubstr)
@@ -136,8 +134,6 @@ func TestValidateUpdateExpressionDoesNotTargetPrimaryKey(t *testing.T) {
 func TestUpdateTargetPaths(t *testing.T) {
 	key := func(k string) PathElement { return PathElement{Kind: PathKindMapKey, Key: k} }
 	idx := func(i int64) PathElement { return PathElement{Kind: PathKindListIndex, Index: i} }
-	one := "1"
-	values := map[string]*types.Item{":i": {N: &one}}
 
 	tests := []struct {
 		name    string
@@ -160,29 +156,30 @@ func TestUpdateTargetPaths(t *testing.T) {
 			name: "list index", expr: "SET l[1] = :v REMOVE m.l[0].k",
 			want: [][]PathElement{{key("l"), idx(1)}, {key("m"), key("l"), idx(0), key("k")}},
 		},
-		{name: "value index", expr: "SET l[:i] = :v", want: [][]PathElement{{key("l"), idx(1)}}},
+		// A literal above 2147483647 cannot be extracted: the target keeps its prefix. The parser
+		// reports it as a range error, so this is the path of a tree that was not rejected.
 		{
-			name: "unresolvable index before another target", expr: "SET l[:missing] = :v, n = :v",
+			name: "out of range index before another target", expr: "SET l[2147483648] = :v, n = :v",
 			want: [][]PathElement{{key("l")}, {key("n")}},
 		},
 		{
-			name: "unresolvable index after another target", expr: "SET n = :v, l[:missing] = :v",
+			name: "out of range index after another target", expr: "SET n = :v, l[2147483648] = :v",
 			want: [][]PathElement{{key("n")}, {key("l")}},
 		},
 		{
-			name: "nested unresolvable index keeps prefix", expr: "SET m.l[:missing].k = :v, n = :v",
+			name: "nested out of range index keeps prefix", expr: "SET m.l[2147483648].k = :v, n = :v",
 			want: [][]PathElement{{key("m"), key("l")}, {key("n")}},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, UpdateTargetPaths(parseUpdateForTest(t, tt.expr), tt.aliases, values))
+			require.Equal(t, tt.want, UpdateTargetPaths(parseUpdateForTest(t, tt.expr), tt.aliases))
 		})
 	}
 
 	t.Run("no statement", func(t *testing.T) {
-		require.Empty(t, UpdateTargetPaths(nil, nil, nil))
-		require.Empty(t, UpdateTargetPaths(parseUpdateForTest(t, ""), nil, nil))
+		require.Empty(t, UpdateTargetPaths(nil, nil))
+		require.Empty(t, UpdateTargetPaths(parseUpdateForTest(t, ""), nil))
 	})
 }

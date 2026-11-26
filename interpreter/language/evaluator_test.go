@@ -2,6 +2,7 @@ package language
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -89,7 +90,6 @@ func TestEval(t *testing.T) {
 		{":listA = :listA", TRUE},
 		{":listA[0] = :listA[0]", TRUE},
 		{":listB[0] = :listA[0]", FALSE},
-		{":listB[:listIndex] = :listA[:listIndex]", FALSE},
 		{":matrix[0][0] = :listA[0]", TRUE},
 		{":matrix[0][1] = :txtB", TRUE},
 		// StringSet
@@ -1194,10 +1194,6 @@ func TestUpdateEvalSyntaxError(t *testing.T) {
 			"The document path provided in the update expression is invalid for update | field id: :x; path: 1",
 		},
 		{
-			"SET :list[:x] = :val",
-			"access index with [] only support N as index : got \"BOOL\"",
-		},
-		{
 			"SET :val = sizze(:list)",
 			"invalid function name; function: sizze",
 		},
@@ -1779,10 +1775,11 @@ func TestEvalMismatchedValuesDoNotFailTheExpression(t *testing.T) {
 }
 
 const (
-	updMissingMsg = "The provided expression refers to an attribute that does not exist in the item"
-	updTypeMsg    = "An operand in the update expression has an incorrect data type"
-	updPathMsg    = "The document path provided in the update expression is invalid for update"
-	updOperandFmt = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
+	updMissingMsg    = "The provided expression refers to an attribute that does not exist in the item"
+	updTypeMsg       = "An operand in the update expression has an incorrect data type"
+	listIndexReadMsg = "invalid list index in a document path"
+	updPathMsg       = "The document path provided in the update expression is invalid for update"
+	updOperandFmt    = "Invalid UpdateExpression: Incorrect operand type for operator or function; " +
 		"operator or function: %s, operand type: %s"
 )
 
@@ -1954,50 +1951,141 @@ func TestOperandText(t *testing.T) {
 	}
 }
 
-// A placeholder list index is a minidyn extension. A negative one cannot address an element:
-// assigning to it is a document path error, not a panic (#262).
-func TestEvalUpdateNegativeListIndex(t *testing.T) {
-	t.Parallel()
+const indexRangeReason = "List index is not within the allowable range; index: [%s]"
 
-	const message = updPathMsg + " | field id: l; path: -1; reason: list index must not be negative"
+// forceListIndex sets the literal of every list index in a parsed tree. The parser rejects a
+// literal outside DynamoDB's range (#164), so only a tree built without it, which this stands
+// for, reaches the evaluator with one: it must report it, not use it.
+func forceListIndex(t *testing.T, node any, literal string) {
+	t.Helper()
 
-	tests := map[string]string{
-		"SET l[:neg] = :val":              message,
-		"SET l[0] = :val, l[:neg] = :val": message,
-		"ADD l[:neg] :one":                message,
+	found := false
+
+	visitValues(reflect.ValueOf(node), func(v reflect.Value) {
+		ie, ok := v.Interface().(*IndexExpression)
+		if !ok || ie.Type != ObjectTypeList {
+			return
+		}
+
+		if id, ok := ie.Index.(*Identifier); ok {
+			id.Token.Literal, found = literal, true
+		}
+	})
+
+	if !found {
+		t.Fatal("no list index in the tree")
 	}
+}
 
-	for input, message := range tests {
-		env := startUpdateMismatchEnv(t)
-		if err := env.AddAttributes(map[string]*types.Item{":neg": {N: new("-1")}}); err != nil {
-			t.Fatal(err)
+// visitValues calls fn on every non-nil pointer and interface reachable from v through exported
+// fields and slices.
+func visitValues(v reflect.Value, fn func(reflect.Value)) {
+	switch v.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if !v.IsNil() {
+			fn(v)
+			visitValues(v.Elem(), fn)
 		}
-
-		got := testEvalUpdate(t, input, env)
-
-		errObj, ok := got.(*Error)
-		if !ok {
-			t.Errorf("%q: expected an error, got=%s", input, got.Inspect())
-
-			continue
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if v.Type().Field(i).IsExported() {
+				visitValues(v.Field(i), fn)
+			}
 		}
-
-		if errObj.Message != message {
-			t.Errorf("%q: expected=%q got=%q", input, message, errObj.Message)
+	case reflect.Slice:
+		for i := range v.Len() {
+			visitValues(v.Index(i), fn)
 		}
 	}
 }
 
-// Removing a list element that does not exist is a no-op, and a negative index never exists.
-func TestEvalUpdateRemoveNegativeListIndex(t *testing.T) {
+func parseConditionTree(t *testing.T, input string) *ConditionalExpression {
+	t.Helper()
+
+	p := NewParser(NewLexer(input))
+	conditional := p.ParseConditionalExpression()
+
+	if len(p.errors) != 0 {
+		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
+	}
+
+	return conditional
+}
+
+func parseUpdateTree(t *testing.T, input string) *UpdateStatement {
+	t.Helper()
+
+	p := NewUpdateParser(NewLexer(input))
+	update := p.ParseUpdateExpression()
+
+	if len(p.errors) != 0 {
+		t.Fatalf("parsing %q failed: %s", input, strings.Join(p.errors, ";\n"))
+	}
+
+	return update
+}
+
+// An index outside 0 to 2147483647 that reaches the evaluator is an error, whatever its size:
+// an assignment reports it as an invalid document path of the field; a read has no DynamoDB
+// message to borrow, so it gets minidyn's own text (D4). The detail is the message DynamoDB
+// gives for the range.
+func TestEvalLiteralListIndexOutOfRange(t *testing.T) {
+	t.Parallel()
+
+	for _, literal := range []string{"2147483648", "9223372036854775807", "9223372036854775808", "99999999999999999999"} {
+		env := startUpdateMismatchEnv(t)
+		reason := fmt.Sprintf(indexRangeReason, literal)
+
+		cond := parseConditionTree(t, "l[0] = :val")
+		forceListIndex(t, cond, literal)
+
+		want := listIndexReadMsg + " | path: " + literal + "; reason: " + reason
+		if errObj, ok := Eval(cond, env).(*Error); !ok || errObj.Message != want {
+			t.Errorf("expected %q, got %s", want, Eval(cond, env).Inspect())
+		}
+
+		wantAssign := updPathMsg + " | field id: l; path: " + literal + "; reason: " + reason
+
+		for _, input := range []string{"SET l[0] = :val", "REMOVE l[0]", "ADD l[0] :one"} {
+			update := parseUpdateTree(t, input)
+			forceListIndex(t, update, literal)
+
+			got := EvalUpdate(update, startUpdateMismatchEnv(t))
+			if errObj, ok := got.(*Error); !ok || errObj.Message != wantAssign {
+				t.Errorf("%q with %s: expected %q, got %s", input, literal, wantAssign, got.Inspect())
+			}
+		}
+	}
+}
+
+// The largest index is a valid literal that no element can hold: reading it gives no value, so a
+// condition on it is just false, and removing it is a no-op.
+func TestEvalLiteralListIndexBeyondTheList(t *testing.T) {
 	t.Parallel()
 
 	env := startUpdateMismatchEnv(t)
-	if err := env.AddAttributes(map[string]*types.Item{":neg": {N: new("-1")}}); err != nil {
-		t.Fatal(err)
+
+	if got := testEval(t, "attribute_exists(l[2147483647])", env); got != FALSE {
+		t.Errorf("expected FALSE, got %s", got.Inspect())
 	}
 
-	if got := testEvalUpdate(t, "REMOVE l[:neg]", env); isError(got) {
-		t.Fatalf("expected no error, got=%s", got.Inspect())
+	if got := testEvalUpdate(t, "REMOVE l[2147483647]", env); isError(got) {
+		t.Errorf("expected no error, got %s", got.Inspect())
+	}
+}
+
+// An error value in the environment is the result of a path that reads it, as a map key or as the
+// root, instead of being taken for an attribute.
+func TestEvalPathReadsErrorFromEnvironment(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{"m.broken = :val", "broken[0] = :val"} {
+		env := startUpdateMismatchEnv(t)
+		env.Set("broken", &Error{Message: "boom"})
+
+		got := testEval(t, input, env)
+		if errObj, ok := got.(*Error); !ok || errObj.Message != "boom" {
+			t.Errorf("%q: expected the error from the environment, got %s", input, got.Inspect())
+		}
 	}
 }

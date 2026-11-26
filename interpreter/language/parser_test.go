@@ -1,6 +1,7 @@
 package language
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -87,7 +88,7 @@ func TestParsingIndexExpressions(t *testing.T) {
 		left     any
 		indexVal any
 	}{
-		{"a[:i]", "a", ":i"},
+		{"a[2]", "a", "2"},
 		{"#a[1]", "#a", "1"},
 		{"#a[1][2]", "(#a[1])", "2"},
 		{"a.f", "a", "f"},
@@ -579,6 +580,213 @@ func BenchmarkParser(b *testing.B) {
 
 		if len(p.errors) != 0 {
 			b.Fatal("errors found")
+		}
+	}
+}
+
+// A list index is a literal: DynamoDB rejects a placeholder or a name between the brackets as a
+// syntax error that names the token (#164). Every parser reports it at parse time, as the first
+// error, so the cached parse carries it and no expression has to be evaluated to find it.
+func TestParsingRejectsNonLiteralListIndex(t *testing.T) {
+	t.Parallel()
+
+	parsers := map[string]func(string) []string{
+		"condition": func(s string) []string {
+			p := NewParser(NewLexer(s))
+			p.ParseConditionalExpression()
+
+			return p.Errors()
+		},
+		"update": func(s string) []string {
+			p := NewUpdateParser(NewLexer(s))
+			p.ParseUpdateExpression()
+
+			return p.Errors()
+		},
+		"projection": func(s string) []string {
+			p := NewParser(NewLexer(s))
+			p.ParseProjectionExpression()
+
+			return p.Errors()
+		},
+	}
+
+	cases := []struct {
+		kinds []string
+		input string
+		token string
+	}{
+		{[]string{"condition", "projection"}, "l[:i] = :v", ":i"},
+		{[]string{"update"}, "SET l[:i] = :v", ":i"},
+		{[]string{"update"}, "SET l[#n] = :v", "#n"},
+		{[]string{"update"}, "REMOVE l[:i]", ":i"},
+		{[]string{"update"}, "SET x = l[:i]", ":i"},
+		{[]string{"update"}, "SET m.l[:i] = :v", ":i"},
+		{[]string{"update"}, "SET l[:i].m = :v", ":i"},
+		{[]string{"update"}, "SET l[0][:i] = :v", ":i"},
+		{[]string{"condition", "projection"}, "l[abc]", "abc"},
+		{[]string{"condition"}, "attribute_exists(m.l[:i])", ":i"},
+		// A keyword is a word like any other between the brackets, in its own case.
+		{[]string{"condition", "projection"}, "l[OR] = :v", "OR"},
+		{[]string{"condition", "projection"}, "l[and] = :v", "and"},
+		{[]string{"condition", "projection"}, "l[Not]", "Not"},
+		{[]string{"condition", "projection"}, "l[between]", "between"},
+		{[]string{"update"}, "SET l[OR] = :v", "OR"},
+		{[]string{"update"}, "SET l[and] = :v", "and"},
+		{[]string{"update"}, "SET l[set] = :v", "set"},
+		{[]string{"update"}, "REMOVE l[in]", "in"},
+		{[]string{"update"}, "REMOVE l[between]", "between"},
+		{[]string{"update"}, "ADD l[add] :v", "add"},
+		{[]string{"update"}, "DELETE l[delete] :v", "delete"},
+	}
+
+	for _, tt := range cases {
+		for _, kind := range tt.kinds {
+			errs := parsers[kind](tt.input)
+			want := `Syntax error; token: "` + tt.token + `", near: "[` + tt.token + `]"`
+
+			if len(errs) == 0 || errs[0] != want {
+				t.Errorf("%s parser, %q: want first error %q, got %q", kind, tt.input, want, errs)
+			}
+		}
+	}
+
+	for _, input := range []string{"l[0] = :v", "l[12][3].m = :v", "l[9223372036854775808] = :v", "#a[1] = :v", "l[ 0 ] = :v"} {
+		if errs := parsers["condition"](input); len(errs) != 0 {
+			t.Errorf("%q: unexpected errors %q", input, errs)
+		}
+	}
+}
+
+// IndexSyntaxError is the list index syntax error only when it is the first error of the parse,
+// as DynamoDB reports one error: a generic error before it hides it.
+func TestParserIndexSyntaxError(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"l[:i] = :v", `token: ":i", near: "[:i]"`},
+		{"l[OR] = :v", `token: "OR", near: "[OR]"`},
+		{"l[007] = :v", `token: "0", near: "007"`},
+		{"l[-1] = :v", `token: "-", near: "[-1"`},
+		{"l[] = :v", `token: "]", near: "[] ="`},
+		{"l[]", `token: "]", near: "[]"`},
+		{"l[(] = :v", `token: "(", near: "[(]"`},
+		{"l[0] = :v", ""},
+		{"l[2147483648] = :v", ""},
+		{"= x AND l[:i] = :v", ""},
+	}
+
+	for _, tt := range cases {
+		p := NewParser(NewLexer(tt.input))
+		p.ParseConditionalExpression()
+
+		if got := p.IndexSyntaxError(); got != tt.want {
+			t.Errorf("%q: IndexSyntaxError() = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// DynamoDB Local takes a literal list index of 0 to 2147483647 and no leading zero. A leading
+// zero is a syntax error found while parsing, with the offending token and its neighbours; a
+// literal above the range is found by the same pass but reported after the whole text parsed,
+// so a syntax error anywhere in the text comes first (#164). Probed on DynamoDB Local.
+func TestParserListIndexLiteralRules(t *testing.T) {
+	t.Parallel()
+
+	parse := map[string]func(string) *Parser{
+		"condition": func(s string) *Parser {
+			p := NewParser(NewLexer(s))
+			p.ParseConditionalExpression()
+
+			return p
+		},
+		"update": func(s string) *Parser {
+			p := NewUpdateParser(NewLexer(s))
+			p.ParseUpdateExpression()
+
+			return p
+		},
+		"projection": func(s string) *Parser {
+			p := NewParser(NewLexer(s))
+			p.ParseProjectionExpression()
+
+			return p
+		},
+	}
+
+	const rangeText = "List index is not within the allowable range; index: [%s]"
+
+	cases := []struct {
+		kind   string
+		input  string
+		syntax string // the first syntax error, "" when the text parses
+		index  string // the literal reported as out of range, "" when none
+	}{
+		// Leading zeros: the token is the one after the first zero, near is that token with its
+		// neighbours.
+		{"projection", "l[01]", `Syntax error; token: "1", near: "01]"`, ""},
+		{"projection", "l[012]", `Syntax error; token: "12", near: "012]"`, ""},
+		{"projection", "l[0123]", `Syntax error; token: "123", near: "0123]"`, ""},
+		{"projection", "l[05]", `Syntax error; token: "5", near: "05]"`, ""},
+		{"projection", "l[00]", `Syntax error; token: "0", near: "00]"`, ""},
+		{"projection", "l[007]", `Syntax error; token: "0", near: "007"`, ""},
+		{"projection", "l[0007]", `Syntax error; token: "0", near: "000"`, ""},
+		{"projection", "a, b.l[007], c", `Syntax error; token: "0", near: "007"`, ""},
+		{"condition", "l[007] = :v", `Syntax error; token: "0", near: "007"`, ""},
+		{"condition", "attribute_exists(l[0][007])", `Syntax error; token: "0", near: "007"`, ""},
+		{"update", "SET l[007] = :v", `Syntax error; token: "0", near: "007"`, ""},
+		{"update", "REMOVE l[01]", `Syntax error; token: "1", near: "01]"`, ""},
+		{"update", "SET x = l[00000000002147483648]", `Syntax error; token: "0", near: "000"`, ""},
+		// A zero alone is the first element, and the largest index is accepted.
+		{"projection", "l[0]", "", ""},
+		{"projection", "l[2147483647]", "", ""},
+		{"condition", "l[10] = :v", "", ""},
+		// Whitespace inside the brackets is not part of the index.
+		{"projection", "l[ 0 ]", "", ""},
+		{"condition", "l[ 2147483647 ] = :v", "", ""},
+		{"update", "SET l[ 1 ] = :v", "", ""},
+		{"projection", "l[ 2147483648 ]", "", "2147483648"},
+		// Above the range: recorded, not a syntax error, whatever the size.
+		{"projection", "l[2147483648]", "", "2147483648"},
+		{"projection", "l[4294967296]", "", "4294967296"},
+		{"projection", "l[9223372036854775807]", "", "9223372036854775807"},
+		{"projection", "l[9223372036854775808]", "", "9223372036854775808"},
+		{"projection", "l[99999999999999999999999999]", "", "99999999999999999999999999"},
+		{"condition", "l[2147483648] = :v", "", "2147483648"},
+		{"update", "SET l[2147483648] = :v", "", "2147483648"},
+		{"update", "REMOVE m.l[0][2147483648].k", "", "2147483648"},
+		{"update", "SET x = l[2147483648]", "", "2147483648"},
+		// The first one in the text is the one reported.
+		{"update", "SET l[2147483649] = :v, m[2147483648] = :v", "", "2147483649"},
+		// A syntax error anywhere in the text is reported instead, before or after the literal.
+		{"update", "SET l[2147483648] = :v, m[:i] = :v", `Syntax error; token: ":i", near: "[:i]"`, "2147483648"},
+		{"update", "SET m[:i] = :v, l[2147483648] = :v", `Syntax error; token: ":i", near: "[:i]"`, "2147483648"},
+		{"update", "SET l[007] = :v, m[2147483648] = :v", `Syntax error; token: "0", near: "007"`, "2147483648"},
+		{"update", "SET m[2147483648] = :v, l[007] = :v", `Syntax error; token: "0", near: "007"`, "2147483648"},
+		{"projection", "l[2147483648], l[007]", `Syntax error; token: "0", near: "007"`, "2147483648"},
+	}
+
+	for _, tt := range cases {
+		p := parse[tt.kind](tt.input)
+
+		if tt.syntax == "" && len(p.Errors()) != 0 {
+			t.Errorf("%s %q: unexpected errors %q", tt.kind, tt.input, p.Errors())
+		}
+
+		if tt.syntax != "" && (len(p.Errors()) == 0 || p.Errors()[0] != tt.syntax) {
+			t.Errorf("%s %q: want first error %q, got %q", tt.kind, tt.input, tt.syntax, p.Errors())
+		}
+
+		want := ""
+		if tt.index != "" {
+			want = fmt.Sprintf(rangeText, tt.index)
+		}
+
+		if got := p.IndexRangeError(); got != want {
+			t.Errorf("%s %q: IndexRangeError() = %q, want %q", tt.kind, tt.input, got, want)
 		}
 	}
 }

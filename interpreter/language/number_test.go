@@ -79,15 +79,6 @@ func TestEvalUpdateArithmeticPrecisionError(t *testing.T) {
 	}
 }
 
-func TestEvalListIndexRejectsFractions(t *testing.T) {
-	env := startEvalUpdateEnv(t)
-	env.Set(":idx", &Number{Text: "1.5"})
-
-	if result := testEvalUpdate(t, "SET :list[:idx] = :one", env); !isError(result) {
-		t.Fatalf("expected an error, got %v", result.Inspect())
-	}
-}
-
 const (
 	overflowError  = "Number overflow. Attempting to store a number with magnitude larger than supported range"
 	underflowError = "Number underflow. Attempting to store a number with magnitude smaller than supported range"

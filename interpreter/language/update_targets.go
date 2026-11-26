@@ -1,38 +1,24 @@
 package language
 
-import (
-	"fmt"
-
-	"github.com/truora/minidyn/types"
-)
+import "fmt"
 
 // UpdateTargetPaths returns the document path of every action target (SET, REMOVE, ADD and
 // DELETE) of a parsed update expression, in expression order, with expression attribute names
-// resolved through aliases. values resolves value-based list indexes such as l[:i]. A target
-// whose path can't be extracted still yields its longest extractable prefix (at least its root
-// attribute), so one odd target never hides the others.
-func UpdateTargetPaths(stmt *UpdateStatement, aliases map[string]string, values map[string]*types.Item) [][]PathElement {
+// resolved through aliases. A target whose path can't be extracted (a literal index out of
+// range) still yields its longest extractable prefix (at least its root attribute), so one odd
+// target never hides the others.
+func UpdateTargetPaths(stmt *UpdateStatement, aliases map[string]string) [][]PathElement {
 	if stmt == nil || stmt.Expression == nil {
 		return nil
 	}
 
 	env := NewEnvironment()
 	env.Aliases = aliases
-	valuesLoaded := false
 
 	var paths [][]PathElement
 
 	walkUpdateActions(stmt.Expression, func(action *ActionExpression) {
 		path, err := ExtractPath(action.Left, env)
-		if err != nil && !valuesLoaded {
-			// Values are only needed by value-based indexes, so load them on first use.
-			valuesLoaded = true
-
-			if env.AddAttributes(values) == nil {
-				path, err = ExtractPath(action.Left, env)
-			}
-		}
-
 		if err != nil {
 			path = extractablePrefix(action.Left, env)
 		}

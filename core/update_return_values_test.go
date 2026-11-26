@@ -194,8 +194,8 @@ func TestUpdateUpdatedValuesPaths(t *testing.T) {
 		{name: "list index remove", expr: "REMOVE l[0]", wantOld: []string{"l"}, wantNew: []string{"l"}},
 		{name: "list index remove last", expr: "REMOVE l[2]", wantOld: []string{"l"}, wantNew: nil},
 		{name: "list index remove out of range", expr: "REMOVE l[9]", wantOld: nil, wantNew: nil},
-		{name: "value index then plain", expr: "SET l[:i] = :str, n = :one", wantOld: []string{"l", "n"}, wantNew: []string{"l", "n"}},
-		{name: "plain then value index", expr: "SET n = :one, l[:i] = :str", wantOld: []string{"l", "n"}, wantNew: []string{"l", "n"}},
+		{name: "list index then plain", expr: "SET l[1] = :str, n = :one", wantOld: []string{"l", "n"}, wantNew: []string{"l", "n"}},
+		{name: "plain then list index", expr: "SET n = :one, l[1] = :str", wantOld: []string{"l", "n"}, wantNew: []string{"l", "n"}},
 		{name: "upsert", upsert: true, expr: "SET n = :one, s = :str", wantOld: nil, wantNew: []string{"n", "s"}},
 		{name: "upsert remove", upsert: true, expr: "REMOVE n", wantOld: nil, wantNew: nil},
 	}

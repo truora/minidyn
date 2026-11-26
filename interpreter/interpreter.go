@@ -53,6 +53,106 @@ func (e *undeclaredAttributeValueError) Error() string {
 
 func (e *undeclaredAttributeValueError) Unwrap() error { return ErrSyntaxError }
 
+// syntaxErrorAtToken reports a syntax error that names the token DynamoDB rejects, such as a
+// placeholder used as a list index. Its message is DynamoDB's, with the expression label, and it
+// unwraps to ErrSyntaxError like the other expression errors.
+type syntaxErrorAtToken struct {
+	expressionType string
+	detail         string
+}
+
+func (e *syntaxErrorAtToken) Error() string {
+	return "Invalid " + e.expressionType + ": " + ErrSyntaxError.Error() + "; " + e.detail
+}
+
+func (e *syntaxErrorAtToken) Unwrap() error { return ErrSyntaxError }
+
+// listIndexRangeError is the error for a literal list index above DynamoDB's range. It is not a
+// syntax error in DynamoDB's words, but it maps to the same ValidationException, so it unwraps
+// to ErrSyntaxError like the other expression errors.
+type listIndexRangeError struct {
+	expressionType string
+	message        string
+}
+
+func (e *listIndexRangeError) Error() string {
+	return "Invalid " + e.expressionType + ": " + e.message
+}
+
+func (e *listIndexRangeError) Unwrap() error { return ErrSyntaxError }
+
+// listIndexError returns the error of the first list index DynamoDB rejects before it checks any
+// placeholder. A syntax error (a token that is not a literal, or a leading zero) in any
+// expression comes first, as DynamoDB finds those while parsing; then a literal above the range,
+// which it reports once the expression parsed. When that expression has a syntax error elsewhere,
+// that error is the one DynamoDB reports, so it is returned: the error the parse of the same text
+// gives, which no undefined placeholder or evaluation can come before.
+func listIndexError(exprs []LabeledExpression) error {
+	for _, e := range exprs {
+		if detail := exprScan(e.Expression).IndexSyntax; detail != "" {
+			return &syntaxErrorAtToken{expressionType: e.Label, detail: detail}
+		}
+	}
+
+	for _, e := range exprs {
+		if exprScan(e.Expression).IndexRange == "" {
+			continue
+		}
+
+		message, parseErr := indexRangeOf(e)
+		if parseErr != nil {
+			return parseErr
+		}
+
+		if message == "" {
+			continue
+		}
+
+		return &listIndexRangeError{expressionType: e.Label, message: message}
+	}
+
+	return nil
+}
+
+// indexRangeOf returns the range error of e's literal list indexes, parsed with the grammar of
+// its kind, or the error of the parse when the expression has another syntax error. The parses
+// are cached.
+func indexRangeOf(e LabeledExpression) (message string, parseErr error) {
+	switch e.Label {
+	case "UpdateExpression":
+		pu := parseUpdate(e.Expression)
+		if len(pu.errs) != 0 {
+			return "", updateParseError(pu)
+		}
+
+		return pu.indexRange, nil
+	case "ProjectionExpression":
+		pp := parseProjection(e.Expression)
+		if len(pp.errs) != 0 {
+			return "", projectionParseError(pp)
+		}
+
+		return pp.indexRange, nil
+	default:
+		pc := parseCondition(e.Expression)
+		if len(pc.errs) != 0 {
+			return "", conditionParseError(pc, e.Label)
+		}
+
+		return pc.indexRange, nil
+	}
+}
+
+// HasInvalidListIndex reports whether expression has a list index DynamoDB rejects before it
+// checks the placeholders: a token that is not a literal, such as a placeholder, a literal with
+// a leading zero, or a literal above 2147483647. Front ends use it to let that error win over
+// the unused-placeholder checks, as DynamoDB does.
+func HasInvalidListIndex(expression string) bool {
+	scan := exprScan(expression)
+
+	return scan.IndexSyntax != "" || scan.IndexRange != ""
+}
+
 // operandCountError reports a built-in function called with the wrong number of operands. Its
 // message mirrors DynamoDB's ValidationException wording; like undeclaredAttributeNameError it
 // unwraps to ErrSyntaxError so the same gating maps it to ValidationException.
@@ -93,6 +193,10 @@ type LabeledExpression struct {
 // matching DynamoDB which reports the first undeclared name in the order given. Expressions
 // are scanned once and cached.
 func ValidateExpressionAttributeNamesDeclared(aliases map[string]string, exprs ...LabeledExpression) error {
+	if err := listIndexError(exprs); err != nil {
+		return err
+	}
+
 	for _, e := range exprs {
 		names, _ := exprPlaceholders(e.Expression)
 		if err := validateDeclaredNames(e.Label, names, aliases); err != nil {
@@ -108,6 +212,10 @@ func ValidateExpressionAttributeNamesDeclared(aliases map[string]string, exprs .
 // matching DynamoDB which reports the first undefined value in the order given. Expressions
 // are scanned once and cached.
 func ValidateExpressionAttributeValuesDeclared(values map[string]*types.Item, exprs ...LabeledExpression) error {
+	if err := listIndexError(exprs); err != nil {
+		return err
+	}
+
 	for _, e := range exprs {
 		_, names := exprPlaceholders(e.Expression)
 		if err := validateDeclaredValues(e.Label, names, values); err != nil {

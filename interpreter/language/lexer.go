@@ -33,6 +33,18 @@ func NewLexer(input string) *Lexer {
 	return l
 }
 
+// nextSpan is NextToken that also returns where the token is in the input: start is its first
+// byte and end the byte after its last, so input[start:end] is the token as written.
+func (l *Lexer) nextSpan() (tok Token, start, end int) {
+	l.skipWhitespace()
+
+	start = min(l.position, len(l.input))
+	tok = l.NextToken()
+	end = min(l.position, len(l.input))
+
+	return tok, start, end
+}
+
 func (l *Lexer) readChar() {
 	if l.readPosition >= len(l.input) {
 		l.ch = 0

@@ -65,7 +65,7 @@ Used for `Project` (`ProjectionExpression` in DynamoDB). This is **path-only** s
 | Top-level name | `ProductId`, `#attr` | y |
 | Nested map segments | `a.b.c` | y |
 | List index (literal) | `items[0]` | y |
-| List index (dynamic) | `items[k]` | y if `k` is a placeholder or name that evaluates to a **number** at evaluation time |
+| List index (placeholder or name) | `items[:i]`, `items[#n]`, `items[k]` | **n**, a syntax error (see below) |
 | Comma-separated paths | `a, b.c, items[0]` | y |
 
 Rules:
@@ -73,6 +73,10 @@ Rules:
 - Each segment after `.` is an identifier (or `#` placeholder).
 - `[` … `]` selects a list index; map keys use `.name` rather than `[name]`.
 - If a path evaluates to a missing attribute, that path is skipped (no error); the projected map only includes paths that resolved.
+- A list index is a **literal**: only digits are allowed between `[` and `]`, in every expression (condition, filter, key condition, projection and update). A placeholder (`l[:i]`, `l[#n]`) a plain name (`l[k]`) or any other token (`l[-1]`, `l[]`) is rejected when the expression is parsed, as DynamoDB Local does, with `Invalid <Expression>: Syntax error; token: ":i", near: "[:i]"`. DynamoDB reports it before it compares the placeholders with the declared ones, so an undefined `:i`, an unused value or an unused name does not change the answer. minidyn used to accept a placeholder index; see [`docs/adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md`](adr/2026-11-22-reject-placeholder-list-indexes-like-dynamodb.md).
+  - A literal is **0 to 2147483647** with **no leading zero**, as in DynamoDB Local. A larger one, whatever its size, is `Invalid <Expression>: List index is not within the allowable range; index: [N]`. A literal such as `l[007]`, `l[00]` or `l[01]` is a syntax error that names the token Local's lexer stops at: `Syntax error; token: "0", near: "007"` (`l[01]` gives `token: "1", near: "01]"`). `l[0]` and `l[2147483647]` are valid; no element can be at the largest index, so reading it gives no value and removing it is a no-op.
+  - Both are found while the expression is parsed, so they come before the undeclared names, the undefined values and the unused names and values, in every kind of expression. A syntax error anywhere in the same text comes before the range error (the leading zero is one), and the first range error in the text is the one reported. When the text has another syntax error, that error is the one reported, even where a value is undefined or no item is evaluated.
+  - An index that reaches the evaluator outside that range can only come from a tree built without the parser: a read reports `invalid list index in a document path` with the path and the reason (the range message), and an **update** (`SET`, `ADD`, `REMOVE`) reports the update expression's invalid document path message plus the field, the path and the reason.
 
 ---
 

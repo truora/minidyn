@@ -3,7 +3,6 @@ package language
 import (
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/truora/minidyn/types"
@@ -115,7 +114,7 @@ func extractPathFromIndex(node *IndexExpression, env *Environment) ([]PathElemen
 	case ObjectTypeMap:
 		return appendMapKeySegment(prefix, node.Index, env)
 	case ObjectTypeList:
-		return appendListIndexSegment(prefix, node.Index, env)
+		return appendListIndexSegment(prefix, node.Index)
 	default:
 		return nil, fmt.Errorf("projection path: unsupported index type")
 	}
@@ -132,8 +131,8 @@ func appendMapKeySegment(prefix []PathElement, indexExpr Expression, env *Enviro
 	return append(prefix, PathElement{Kind: PathKindMapKey, Key: key}), nil
 }
 
-func appendListIndexSegment(prefix []PathElement, indexExpr Expression, env *Environment) ([]PathElement, error) {
-	idx, err := extractPathListIndex(indexExpr, env)
+func appendListIndexSegment(prefix []PathElement, indexExpr Expression) ([]PathElement, error) {
+	idx, err := extractPathListIndex(indexExpr)
 	if err != nil {
 		return nil, err
 	}
@@ -141,31 +140,15 @@ func appendListIndexSegment(prefix []PathElement, indexExpr Expression, env *Env
 	return append(prefix, PathElement{Kind: PathKindListIndex, Index: idx}), nil
 }
 
-func extractPathListIndex(idxExpr Expression, env *Environment) (int64, error) {
+func extractPathListIndex(idxExpr Expression) (int64, error) {
 	ident, ok := idxExpr.(*Identifier)
 	if !ok {
 		return 0, fmt.Errorf("projection path: list index must be an identifier")
 	}
 
-	if n, err := strconv.Atoi(ident.Token.Literal); err == nil {
-		return int64(n), nil
-	}
-
-	obj := Eval(ident, env)
-	if isError(obj) {
-		errObj, _ := obj.(*Error)
-
-		return 0, fmt.Errorf("%s", errObj.Message)
-	}
-
-	number, ok := obj.(*Number)
-	if !ok {
-		return 0, fmt.Errorf("projection path: list index must be a number")
-	}
-
-	idx, ok := number.int64Value()
-	if !ok {
-		return 0, fmt.Errorf("projection path: list index must be an integer")
+	idx, reason := listIndexLiteral(ident.Token.Literal)
+	if reason != "" {
+		return 0, fmt.Errorf("%s", newListIndexReadError(ident.Token.Literal, reason).Message)
 	}
 
 	return idx, nil

@@ -23,6 +23,10 @@ type parsedCondition struct {
 	values []string
 	// operandErr is the first built-in call with the wrong number of operands, if any.
 	operandErr *language.OperandCountError
+	// indexRange is the error for the first literal list index above DynamoDB's range, or "".
+	indexRange string
+	// indexSyntax is the detail of the list index syntax error that is the first error, or "".
+	indexSyntax string
 }
 
 // conditionCache maps expression text to its parsed form. Parsing depends only on the text,
@@ -32,39 +36,43 @@ var conditionCache = struct {
 	m  map[string]*parsedCondition
 }{m: map[string]*parsedCondition{}}
 
-// placeholderCache maps expression text to its #names and :values, scanned in one lexer pass.
+// placeholderCache maps expression text to its #names and :values, scanned in one lexer pass
+// together with its first list index problems.
 // Placeholders don't depend on the expression kind, so the cache serves condition, filter, key
 // condition, projection and update expressions alike.
 var placeholderCache = struct {
 	mu sync.Mutex
-	m  map[string]scannedPlaceholders
-}{m: map[string]scannedPlaceholders{}}
+	m  map[string]language.ExpressionScan
+}{m: map[string]language.ExpressionScan{}}
 
-// scannedPlaceholders are the placeholders of one expression, in order of first appearance.
-type scannedPlaceholders struct {
-	names, values []string
-}
-
-// exprPlaceholders returns the #names and :values expr uses, lexing it only on first use. The
-// returned slices are shared and must not be modified.
-func exprPlaceholders(expr string) (names, values []string) {
+// exprScan returns what one lexer pass finds in expr: its #names and :values in order of first
+// appearance, and the first list index that is not an integer literal. It lexes expr only on
+// first use. The returned slices are shared and must not be modified.
+func exprScan(expr string) language.ExpressionScan {
 	placeholderCache.mu.Lock()
 	defer placeholderCache.mu.Unlock()
 
-	if sp, ok := placeholderCache.m[expr]; ok {
-		return sp.names, sp.values
+	if scan, ok := placeholderCache.m[expr]; ok {
+		return scan
 	}
 
-	sp := scannedPlaceholders{}
-	sp.names, sp.values = language.Placeholders(expr)
+	scan := language.ScanExpression(expr)
 
 	if len(placeholderCache.m) >= maxParsedExpressions {
 		clear(placeholderCache.m)
 	}
 
-	placeholderCache.m[expr] = sp
+	placeholderCache.m[expr] = scan
 
-	return sp.names, sp.values
+	return scan
+}
+
+// exprPlaceholders returns the #names and :values expr uses, lexing it only on first use. The
+// returned slices are shared and must not be modified.
+func exprPlaceholders(expr string) (names, values []string) {
+	scan := exprScan(expr)
+
+	return scan.Names, scan.Values
 }
 
 // cachedPlaceholders reports how many expressions have cached placeholders (for tests).
@@ -89,6 +97,8 @@ func parseCondition(expr string) *parsedCondition {
 		conditional: p.ParseConditionalExpression(),
 		errs:        p.Errors(),
 	}
+	pc.indexRange = p.IndexRangeError()
+	pc.indexSyntax = p.IndexSyntaxError()
 	pc.names, pc.values = exprPlaceholders(expr)
 
 	if len(pc.errs) == 0 && pc.conditional != nil {
@@ -118,6 +128,8 @@ type parsedUpdate struct {
 	errs        []string
 	unsupported bool
 	operandErr  *language.OperandCountError
+	indexRange  string
+	indexSyntax string
 }
 
 // updateCache maps update expression text to its parsed form, bounded by maxParsedExpressions.
@@ -137,6 +149,8 @@ func parseUpdate(expr string) *parsedUpdate {
 
 	p := language.NewUpdateParser(language.NewLexer(expr))
 	pu := &parsedUpdate{stmt: p.ParseUpdateExpression(), errs: p.Errors(), unsupported: p.IsUnsupportedExpression()}
+	pu.indexRange = p.IndexRangeError()
+	pu.indexSyntax = p.IndexSyntaxError()
 
 	if len(pu.errs) == 0 && pu.stmt != nil {
 		pu.operandErr = language.FindOperandCountError(pu.stmt)
@@ -183,8 +197,10 @@ func validateDeclaredValues(expressionType string, placeholders []string, values
 
 // parsedProjection is a projection expression parsed once, like parsedCondition.
 type parsedProjection struct {
-	exprs []language.Expression
-	errs  []string
+	exprs       []language.Expression
+	errs        []string
+	indexRange  string
+	indexSyntax string
 }
 
 // projectionCache maps projection expression text to its parsed form, bounded by
@@ -205,6 +221,8 @@ func parseProjection(expr string) *parsedProjection {
 
 	p := language.NewParser(language.NewLexer(expr))
 	pp := &parsedProjection{exprs: p.ParseProjectionExpression(), errs: p.Errors()}
+	pp.indexRange = p.IndexRangeError()
+	pp.indexSyntax = p.IndexSyntaxError()
 
 	if len(projectionCache.m) >= maxParsedExpressions {
 		clear(projectionCache.m)

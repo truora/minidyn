@@ -10,9 +10,20 @@ type Parser struct {
 	l         *Lexer
 	curToken  Token
 	peekToken Token
-	errors    []string
+	// prevStart is where the token before curToken starts in the input, curEnd where curToken
+	// ends and peekEnd where peekToken ends, to quote the context of a list index error.
+	prevStart, curStart, peekStart, curEnd, peekEnd int
+	errors                                          []string
 
 	unsupported bool
+
+	// indexRange is the error for the first literal list index above DynamoDB's range. It is
+	// kept out of errors because DynamoDB reports it only when the text has no syntax error.
+	indexRange string
+
+	// indexSyntax is the detail of the list index syntax error when it is the first error of
+	// the parse, which is the one DynamoDB reports; empty when the first error is another one.
+	indexSyntax string
 
 	// updateClauseHeaders tracks SET/ADD/REMOVE/DELETE clause headers for the
 	// current ParseUpdateExpression (each keyword at most once, per DynamoDB).
@@ -130,6 +141,44 @@ func (p *Parser) IsUnsupportedExpression() bool {
 	return p.unsupported
 }
 
+// checkListIndex applies DynamoDB's rules for a list index to the token between brackets: a
+// token that is not digits, or a literal with a leading zero, is a syntax error with the text
+// Local reports; a literal above the range is only recorded (IndexRangeError).
+func (p *Parser) checkListIndex() {
+	// near runs from the bracket to the end of the token after the index.
+	end := p.curEnd
+	if p.peekToken.Type != EOF {
+		end = p.peekEnd
+	}
+
+	syntax, rangeErr := classifyListIndexToken(p.curToken, p.l.input[p.prevStart:end])
+
+	if syntax != "" {
+		if len(p.errors) == 0 {
+			p.indexSyntax = syntax
+		}
+
+		p.errors = append(p.errors, "Syntax error; "+syntax)
+	}
+
+	if rangeErr != "" && p.indexRange == "" {
+		p.indexRange = rangeErr
+	}
+}
+
+// IndexSyntaxError returns the detail ("token: ..., near: ...") of the syntax error of a list
+// index when it is the first error of the parse, as DynamoDB reports only the first, or "".
+func (p *Parser) IndexSyntaxError() string {
+	return p.indexSyntax
+}
+
+// IndexRangeError returns the error DynamoDB reports for the first literal list index above
+// 2147483647, or "". It is only meaningful when Errors is empty: DynamoDB reports a syntax
+// error anywhere in the text first.
+func (p *Parser) IndexRangeError() string {
+	return p.indexRange
+}
+
 func (p *Parser) parseIdentifier() Expression {
 	return &Identifier{Token: p.curToken, Value: p.curToken.Literal}
 }
@@ -141,7 +190,8 @@ func (p *Parser) Errors() []string {
 
 func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
-	p.peekToken = p.l.NextToken()
+	p.prevStart, p.curStart, p.curEnd = p.curStart, p.peekStart, p.peekEnd
+	p.peekToken, p.peekStart, p.peekEnd = p.l.nextSpan()
 }
 
 // ParseProjectionExpression parses a comma-separated list of path expressions (ProjectionExpression).
@@ -272,6 +322,12 @@ func (p *Parser) parseIndexExpression(left Expression) Expression {
 	p.nextToken()
 
 	expression.Index = p.parseIdentifier()
+
+	// DynamoDB takes only an integer literal as a list index: a placeholder, a name or a keyword
+	// is a syntax error (#164), so the parse carries it and no expression is evaluated to find it.
+	if expression.Token.Type == LBRACKET && p.curToken.Type != EOF {
+		p.checkListIndex()
+	}
 
 	if expression.Token.Type == DOT {
 		expression.Type = ObjectTypeMap

@@ -1,6 +1,7 @@
 package language
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -95,38 +96,6 @@ func TestSetProjectedPath_listIndex(t *testing.T) {
 	}
 }
 
-func TestExtractPath_listIndex_nonNumericIdentifierEval(t *testing.T) {
-	t.Parallel()
-
-	env := NewEnvironment()
-
-	err := env.AddAttributes(map[string]*types.Item{
-		"L": {L: []*types.Item{{S: new("a")}, {S: new("b")}, {S: new("c")}}},
-		"k": {N: new("2")},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	l := NewLexer("L[k]")
-	p := NewParser(l)
-	exprs := p.ParseProjectionExpression()
-	checkParserErrors(t, p)
-
-	path, err := ExtractPath(exprs[0], env)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	want := []PathElement{
-		{Kind: PathKindMapKey, Key: "L"},
-		{Kind: PathKindListIndex, Index: 2},
-	}
-	if diff := cmp.Diff(want, path); diff != "" {
-		t.Fatal(diff)
-	}
-}
-
 func TestExtractPathFromIndex_unsupportedIndexType(t *testing.T) {
 	t.Parallel()
 
@@ -169,47 +138,60 @@ func TestSetProjectedPath_threeMapSegments(t *testing.T) {
 func TestAppendListIndexSegment_invalidIndexExpression(t *testing.T) {
 	t.Parallel()
 
-	_, err := appendListIndexSegment([]PathElement{{Kind: PathKindMapKey, Key: "L"}}, &PrefixExpression{}, NewEnvironment())
+	_, err := appendListIndexSegment([]PathElement{{Kind: PathKindMapKey, Key: "L"}}, &PrefixExpression{})
 	if err == nil {
 		t.Fatal("expected error when list index is not an identifier")
 	}
 }
 
-func TestExtractPath_listIndex_evaluatesToNonNumber(t *testing.T) {
+// An index outside 0 to 2147483647 that reaches ExtractPath is an error with minidyn's own text,
+// not an update expression one, and the same on every platform (#267). The parser rejects it
+// (#164), so only a tree built without the parser, which forceListIndex stands for, gets here.
+func TestExtractPath_literalListIndexOutOfRange(t *testing.T) {
 	t.Parallel()
 
-	env := NewEnvironment()
+	for _, index := range []string{"2147483648", "9223372036854775808", "99999999999999999999999"} {
+		p := NewParser(NewLexer("l[0]"))
+		exprs := p.ParseProjectionExpression()
+		checkParserErrors(t, p)
+		forceListIndex(t, exprs, index)
 
-	err := env.AddAttributes(map[string]*types.Item{
-		"L": {L: []*types.Item{{S: new("x")}}},
-		"k": {S: new("text")},
-	})
-	if err != nil {
-		t.Fatal(err)
+		_, err := ExtractPath(exprs[0], NewEnvironment())
+
+		want := "invalid list index in a document path | path: " + index + "; reason: " + fmt.Sprintf(indexRangeReason, index)
+		if err == nil || err.Error() != want {
+			t.Errorf("expected %q, got %v", want, err)
+		}
 	}
 
-	l := NewLexer("L[k]")
-	p := NewParser(l)
+	// The largest index is valid: no element can be there, but the path is addressable.
+	p := NewParser(NewLexer("l[2147483647]"))
 	exprs := p.ParseProjectionExpression()
 	checkParserErrors(t, p)
 
-	_, err = ExtractPath(exprs[0], env)
-	if err == nil {
-		t.Fatal("expected error when index evaluates to non-number")
+	path, err := ExtractPath(exprs[0], NewEnvironment())
+	if err != nil || path[1].Index != 2147483647 {
+		t.Errorf("got %v, %v", path, err)
 	}
 }
 
-func TestExtractPathListIndex_reservedWordEval(t *testing.T) {
+// Only a tree built without the parser can reach an index that is not an integer literal: the
+// parser rejects it (#164), so ExtractPath refuses it instead of reading a placeholder. It gets
+// the range message, the one reason an index has for being refused.
+func TestExtractPathListIndex_notAnIntegerLiteral(t *testing.T) {
 	t.Parallel()
 
-	env := NewEnvironment()
+	for _, literal := range []string{"OR", ":i", "1.5", "-1", ""} {
+		_, err := extractPathListIndex(&Identifier{Token: Token{Type: IDENT, Literal: literal}, Value: literal})
 
-	_, err := extractPathListIndex(&Identifier{
-		Token: Token{Type: IDENT, Literal: "OR"},
-		Value: "OR",
-	}, env)
-	if err == nil {
-		t.Fatal("expected reserved word index to error")
+		want := "invalid list index in a document path | path: " + literal + "; reason: " + fmt.Sprintf(indexRangeReason, literal)
+		if err == nil || err.Error() != want {
+			t.Errorf("%q: expected %q, got %v", literal, want, err)
+		}
+	}
+
+	if _, err := extractPathListIndex(&PrefixExpression{}); err == nil {
+		t.Error("expected an error when the index is not an identifier")
 	}
 }
 

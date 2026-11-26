@@ -154,14 +154,6 @@ func (i *Number) decimal() types.Decimal {
 	return d
 }
 
-// int64Value is the number as an integer, such as a list index. It returns false for a
-// fractional or out of range value.
-func (i *Number) int64Value() (int64, bool) {
-	n, err := strconv.ParseInt(i.Text, 10, 64)
-
-	return n, err == nil
-}
-
 // Add if the obj is an number it adds the value to the number
 func (i *Number) Add(obj Object) Object {
 	n, ok := obj.(*Number)

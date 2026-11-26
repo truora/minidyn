@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -950,40 +952,29 @@ func batchWriteTarget(tableName string, req WriteRequest) capacity.WriteTarget {
 }
 
 func tableNames[V any](requestItems map[string]V) []string {
-	names := make([]string, 0, len(requestItems))
-	for name := range requestItems {
-		names = append(names, name)
-	}
-
-	return names
+	return slices.Sorted(maps.Keys(requestItems))
 }
 
-func validateBatchGetItemInput(input *BatchGetItemInput) error {
-	if input == nil {
-		return nil
-	}
+// validateBatchGetKeys runs the checks DynamoDB makes on the keys of a BatchGetItem before it looks
+// at any of them (core.ValidateBatchGetKeys), and returns the keys it mapped, by table, for the
+// read.
+func validateBatchGetKeys(requestItems map[string]KeysAndAttributes) (map[string][]map[string]*types.Item, error) {
+	requests := make(map[string][]map[string]*types.Item, len(requestItems))
 
-	count := 0
-
-	for _, reqs := range input.RequestItems {
-		count += len(reqs.Keys)
-	}
-
-	if count == 0 {
-		return &smithy.GenericAPIError{
-			Code:    "ValidationException",
-			Message: "1 validation error detected: Value '{}' at 'requestItems' failed to satisfy constraint: Member must have length greater than or equal to 1",
+	for name, reqs := range requestItems {
+		keys := make([]map[string]*types.Item, len(reqs.Keys))
+		for i, key := range reqs.Keys {
+			keys[i] = mapAttributeValueMapToTypes(key)
 		}
+
+		requests[name] = keys
 	}
 
-	if count > batchGetItemRequestsLimit {
-		return &smithy.GenericAPIError{
-			Code:    "ValidationException",
-			Message: "Too many items requested for the BatchGetItem call",
-		}
+	if err := core.ValidateBatchGetKeys(requests); err != nil {
+		return nil, mapKnownError(err)
 	}
 
-	return nil
+	return requests, nil
 }
 
 // BatchGetItem retrieves multiple items across one or more tables. Validation errors
@@ -996,26 +987,31 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := validateBatchGetItemInput(input); err != nil {
-		return nil, err
-	}
-
 	mode, modeErr := capacity.ParseMode(string(input.ReturnConsumedCapacity))
 	if modeErr != nil {
 		return nil, mapKnownError(modeErr)
 	}
 
-	emulation := c.batchEmulationLocked(tableNames(input.RequestItems)...)
+	names := tableNames(input.RequestItems)
+
+	emulation := c.batchEmulationLocked(names...)
 	if emulation.failErr != nil {
 		return nil, emulation.failErr
+	}
+
+	keys, err := validateBatchGetKeys(input.RequestItems)
+	if err != nil {
+		return nil, err
 	}
 
 	responses := map[string][]map[string]*AttributeValue{}
 	unprocessed := map[string]KeysAndAttributes{}
 	unitsByTable := map[string]float64{}
 
-	for tableName, reqs := range input.RequestItems {
-		tableResponses, unprocessedKeys, units, err := c.batchGetItemForTable(ctx, tableName, reqs, emulation, mode)
+	for _, tableName := range names {
+		reqs := input.RequestItems[tableName]
+
+		tableResponses, unprocessedKeys, units, err := c.batchGetItemForTable(ctx, tableName, reqs, keys[tableName], emulation, mode)
 		if err != nil {
 			return nil, err
 		}
@@ -1038,8 +1034,8 @@ func (c *Client) BatchGetItem(ctx context.Context, input *BatchGetItemInput) (*B
 }
 
 // batchGetItemForTable reads one table of a BatchGetItem. Callers must hold c.mu.
-func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, emulation batchEmulation, mode capacity.Mode) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
-	read, err := c.batchGetTable(tableName, reqs)
+func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, reqs KeysAndAttributes, keys []map[string]*types.Item, emulation batchEmulation, mode capacity.Mode) ([]map[string]*AttributeValue, []map[string]*AttributeValue, float64, error) {
+	read, err := c.batchGetTable(tableName, reqs, keys)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -1072,8 +1068,9 @@ func (c *Client) batchGetItemForTable(ctx context.Context, tableName string, req
 }
 
 // batchGetTable reads every key of one table of a BatchGetItem, checking all the keys, then the
-// projection once. Keys the unprocessed emulation skips are checked too. Callers must hold c.mu.
-func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes) ([]core.ReadItem, error) {
+// projection once. Keys the unprocessed emulation skips are checked too. keys are the mapped
+// reqs.Keys. Callers must hold c.mu.
+func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes, keys []map[string]*types.Item) ([]core.ReadItem, error) {
 	if err := validateExpressionAttributes(reqs.ExpressionAttributeNames, nil, aws.ToString(reqs.ProjectionExpression)); err != nil {
 		return nil, err
 	}
@@ -1081,11 +1078,6 @@ func (c *Client) batchGetTable(tableName string, reqs KeysAndAttributes) ([]core
 	table, err := c.getTable(tableName)
 	if err != nil {
 		return nil, err
-	}
-
-	keys := make([]map[string]*types.Item, len(reqs.Keys))
-	for i, key := range reqs.Keys {
-		keys[i] = mapAttributeValueMapToTypes(key)
 	}
 
 	read, err := table.BatchGetItem(keys, aws.ToString(reqs.ProjectionExpression), reqs.ExpressionAttributeNames)

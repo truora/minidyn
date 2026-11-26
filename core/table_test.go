@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -2282,9 +2283,21 @@ func TestWriteIndexDeltasSkipsUnchangedProjections(t *testing.T) {
 	c.Len(table.WriteIndexDeltas(nil, item("a", "x")), 2)
 }
 
-// ValidatePutItem and ValidateDeleteKey run the checks Put and Delete make without a condition,
-// so a batch can reject an invalid request before it applies any (#216). They never write.
-func TestValidatePutItemAndDeleteKey(t *testing.T) {
+func checkPut(t *Table, item map[string]*types.Item) error {
+	_, err := t.validatedPutKey(item)
+
+	return err
+}
+
+func checkDel(t *Table, key map[string]*types.Item) error {
+	_, err := t.CheckedKeyOf(key)
+
+	return err
+}
+
+// validatedPutKey and CheckedKeyOf run the checks Put and Delete make without a condition, so a
+// batch can reject an invalid request before it applies any (#216). They never write.
+func TestValidatedPutKeyAndCheckedKeyOf(t *testing.T) {
 	c := require.New(t)
 
 	newTable, err := createPokemonTable()
@@ -2293,8 +2306,8 @@ func TestValidatePutItemAndDeleteKey(t *testing.T) {
 	s := func(v string) *types.Item { return &types.Item{S: &v} }
 	n := "1"
 
-	c.NoError(newTable.ValidatePutItem(map[string]*types.Item{"id": s("1"), "name": s("a")}))
-	c.NoError(newTable.ValidateDeleteKey(map[string]*types.Item{"id": s("1"), "name": s("a")}))
+	c.NoError(checkPut(newTable, map[string]*types.Item{"id": s("1"), "name": s("a")}))
+	c.NoError(checkDel(newTable, map[string]*types.Item{"id": s("1"), "name": s("a")}))
 
 	puts := map[string]map[string]*types.Item{
 		"The AttributeValue for a key attribute cannot contain an empty string value. Key: id": {"id": s(""), "name": s("a")},
@@ -2303,7 +2316,7 @@ func TestValidatePutItemAndDeleteKey(t *testing.T) {
 	}
 
 	for msg, item := range puts {
-		err = newTable.ValidatePutItem(item)
+		err = checkPut(newTable, item)
 		c.Error(err, msg)
 		c.Contains(err.Error(), msg)
 	}
@@ -2315,7 +2328,7 @@ func TestValidatePutItemAndDeleteKey(t *testing.T) {
 	}
 
 	for msg, key := range dels {
-		err = newTable.ValidateDeleteKey(key)
+		err = checkDel(newTable, key)
 		c.Error(err, msg)
 		c.Contains(err.Error(), msg)
 	}
@@ -2323,11 +2336,11 @@ func TestValidatePutItemAndDeleteKey(t *testing.T) {
 	c.Empty(newTable.Data)
 
 	// an attribute value DynamoDB rejects
-	err = newTable.ValidatePutItem(map[string]*types.Item{"id": s("1"), "name": s("a"), "ss": {SS: []*string{&n, &n}}})
+	err = checkPut(newTable, map[string]*types.Item{"id": s("1"), "name": s("a"), "ss": {SS: []*string{&n, &n}}})
 	c.Error(err)
 	c.Contains(err.Error(), "duplicate")
 
-	err = newTable.ValidateDeleteKey(map[string]*types.Item{"id": s("1"), "name": {SS: []*string{&n, &n}}})
+	err = checkDel(newTable, map[string]*types.Item{"id": s("1"), "name": {SS: []*string{&n, &n}}})
 	c.Error(err)
 
 	// the key of a secondary index
@@ -2342,8 +2355,8 @@ func TestValidatePutItemAndDeleteKey(t *testing.T) {
 		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
 	}}))
 
-	c.NoError(idx.ValidatePutItem(map[string]*types.Item{"pk": s("1"), "g": s("x")}))
-	c.Error(idx.ValidatePutItem(map[string]*types.Item{"pk": s("1"), "g": {N: &n}}))
+	c.NoError(checkPut(idx, map[string]*types.Item{"pk": s("1"), "g": s("x")}))
+	c.Error(checkPut(idx, map[string]*types.Item{"pk": s("1"), "g": {N: &n}}))
 	c.Empty(idx.Data)
 }
 
@@ -2366,7 +2379,7 @@ func TestValidateBatchWrite(t *testing.T) {
 	}
 
 	valid := WriteRequest{Put: map[string]*types.Item{"id": s("1"), "name": s("a")}}
-	validDelete := WriteRequest{Delete: map[string]*types.Item{"id": s("1"), "name": s("a")}}
+	validDelete := WriteRequest{Delete: map[string]*types.Item{"id": s("2"), "name": s("a")}}
 	emptyKey := WriteRequest{Put: map[string]*types.Item{"id": s(""), "name": s("a")}}
 	missingRange := WriteRequest{Put: map[string]*types.Item{"id": s("1")}}
 	deleteMissingRange := WriteRequest{Delete: map[string]*types.Item{"id": s("1")}}
@@ -2385,7 +2398,6 @@ func TestValidateBatchWrite(t *testing.T) {
 		message string
 	}{
 		{name: "valid", reqs: map[string][]WriteRequest{"pokemons": {valid, validDelete}, "other": {valid}}},
-		{name: "empty", reqs: map[string][]WriteRequest{}},
 		{
 			name: "invalid put", reqs: map[string][]WriteRequest{"pokemons": {valid, emptyKey}},
 			code: "ValidationException", message: emptyMsg,
@@ -2434,4 +2446,173 @@ func TestValidateBatchWrite(t *testing.T) {
 
 	require.Empty(t, pokemons.Data)
 	require.Empty(t, other.Data)
+}
+
+// A batch write that names one key twice is rejected whatever the requests are (#235), with
+// DynamoDB Local's order: each request is validated first, then checked against the keys
+// before it, so the first invalid request or duplicate in the request order wins. Keys are
+// compared as the table stores them, so only the key attributes count and equal numbers match.
+func TestValidateBatchWriteDuplicateKeys(t *testing.T) {
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+	n := func(v string) *types.Item { return &types.Item{N: &v} }
+
+	pokemons, err := createPokemonTable()
+	require.NoError(t, err)
+
+	other, err := createPokemonTable()
+	require.NoError(t, err)
+
+	numbers := NewTable("numbers")
+	numbers.AttributesDef = map[string]string{"id": "N"}
+	numbers.KeySchema = keySchema{"id", "", false}
+
+	tables := map[string]*Table{"pokemons": pokemons, "other": other, "numbers": numbers}
+	lookup := func(name string) (*Table, bool) {
+		table, ok := tables[name]
+
+		return table, ok
+	}
+
+	item := func(id, name string, extra ...string) map[string]*types.Item {
+		m := map[string]*types.Item{"id": s(id), "name": s(name)}
+		for i := 0; i+1 < len(extra); i += 2 {
+			m[extra[i]] = s(extra[i+1])
+		}
+
+		return m
+	}
+	put := func(m map[string]*types.Item) WriteRequest { return WriteRequest{Put: m} }
+	del := func(m map[string]*types.Item) WriteRequest { return WriteRequest{Delete: m} }
+
+	const (
+		dupMsg     = "Provided list of item keys contains duplicates"
+		emptyMsg   = "The AttributeValue for a key attribute cannot contain an empty string value. Key: id"
+		deleteMsg  = "The number of conditions on the keys is invalid"
+		tableMsg   = "Cannot do operations on a non-existent table"
+		missingMsg = "One of the required keys was not given a value"
+	)
+
+	tests := []struct {
+		name    string
+		reqs    map[string][]WriteRequest
+		message string
+	}{
+		{"two puts", map[string][]WriteRequest{"pokemons": {put(item("1", "a")), put(item("1", "a"))}}, dupMsg},
+		{"put then delete", map[string][]WriteRequest{"pokemons": {put(item("1", "a")), del(item("1", "a"))}}, dupMsg},
+		{"delete then put", map[string][]WriteRequest{"pokemons": {del(item("1", "a")), put(item("1", "a"))}}, dupMsg},
+		{"two deletes", map[string][]WriteRequest{"pokemons": {del(item("1", "a")), del(item("1", "a"))}}, dupMsg},
+		{"non-key attributes do not matter", map[string][]WriteRequest{
+			"pokemons": {put(item("1", "a", "x", "1")), put(item("1", "a", "x", "2"))},
+		}, dupMsg},
+		{"not the first request", map[string][]WriteRequest{
+			"pokemons": {put(item("1", "a")), put(item("2", "a")), put(item("3", "a")), put(item("2", "a"))},
+		}, dupMsg},
+		{"equal numbers", map[string][]WriteRequest{
+			"numbers": {put(map[string]*types.Item{"id": n("1")}), put(map[string]*types.Item{"id": n("1.0")})},
+		}, dupMsg},
+		{"different keys", map[string][]WriteRequest{"pokemons": {put(item("1", "a")), put(item("1", "b")), put(item("2", "a"))}}, ""},
+		{"same key in two tables", map[string][]WriteRequest{"pokemons": {put(item("1", "a"))}, "other": {put(item("1", "a"))}}, ""},
+		{"different numbers", map[string][]WriteRequest{
+			"numbers": {put(map[string]*types.Item{"id": n("1")}), put(map[string]*types.Item{"id": n("2")})},
+		}, ""},
+		// each request is validated before it is compared with the earlier ones
+		{"invalid before duplicate", map[string][]WriteRequest{
+			"pokemons": {put(item("", "a")), put(item("1", "a")), put(item("1", "a"))},
+		}, emptyMsg},
+		{"invalid duplicate request", map[string][]WriteRequest{
+			"pokemons": {put(item("", "a")), put(item("", "a"))},
+		}, emptyMsg},
+		{"duplicate before invalid", map[string][]WriteRequest{
+			"pokemons": {put(item("1", "a")), put(item("1", "a")), put(item("", "a"))},
+		}, dupMsg},
+		{"invalid delete of a duplicate key", map[string][]WriteRequest{
+			"pokemons": {put(item("1", "a")), del(item("1", "a", "x", "1"))},
+		}, deleteMsg},
+		{"missing range key", map[string][]WriteRequest{
+			"pokemons": {put(map[string]*types.Item{"id": s("1")}), put(map[string]*types.Item{"id": s("1")})},
+		}, missingMsg},
+		// a duplicate in a table that exists comes before the unknown table, which is reported last
+		{"duplicate and unknown table", map[string][]WriteRequest{
+			"aaa": {put(item("1", "a"))}, "pokemons": {put(item("1", "a")), put(item("1", "a"))},
+		}, dupMsg},
+		{"duplicates in an unknown table", map[string][]WriteRequest{"aaa": {put(item("1", "a")), put(item("1", "a"))}}, tableMsg},
+		// the table names order the tables, as for any other invalid request
+		{"duplicates in two tables", map[string][]WriteRequest{
+			"pokemons": {put(item("1", "a")), put(item("1", "a"))}, "other": {put(item("", "a"))},
+		}, emptyMsg},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateBatchWrite(lookup, tt.reqs)
+			if tt.message == "" {
+				require.NoError(t, err)
+
+				return
+			}
+
+			var typed types.Error
+
+			require.ErrorAs(t, err, &typed)
+			require.Contains(t, typed.Message(), tt.message)
+
+			if tt.message == dupMsg {
+				require.Equal(t, "ValidationException", typed.Code())
+				require.Contains(t, typed.Message(), " | table: ")
+			}
+		})
+	}
+}
+
+// DynamoDB rejects a batch write with no tables, and a table with no requests, before it looks at
+// any request.
+func TestValidateBatchWriteEmptyRequests(t *testing.T) {
+	pokemons, err := createPokemonTable()
+	require.NoError(t, err)
+
+	lookup := func(name string) (*Table, bool) { return pokemons, name == "pokemons" }
+	dup := WriteRequest{Put: map[string]*types.Item{"id": {S: new("1")}, "name": {S: new("a")}}}
+
+	tests := []struct {
+		name    string
+		reqs    map[string][]WriteRequest
+		message string
+	}{
+		{"no tables", map[string][]WriteRequest{}, "BatchWriteItem cannot have a null or no requests set"},
+		{"nil tables", nil, "BatchWriteItem cannot have a null or no requests set"},
+		{"no requests", map[string][]WriteRequest{"pokemons": {}}, "The batch write request list for a table cannot be null or empty: pokemons"},
+		{"no requests in an unknown table", map[string][]WriteRequest{"zzz": nil}, "The batch write request list for a table cannot be null or empty: zzz"},
+		{"before a duplicate", map[string][]WriteRequest{"pokemons": {dup, dup}, "zzz": {}}, "The batch write request list for a table cannot be null or empty: zzz"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var typed types.Error
+
+			require.ErrorAs(t, ValidateBatchWrite(lookup, tt.reqs), &typed)
+			require.Equal(t, "ValidationException", typed.Code())
+			require.Contains(t, typed.Message(), tt.message)
+		})
+	}
+}
+
+// The error of a duplicate names its table and the position of the second request, never a key.
+func TestValidateBatchWriteDuplicateDetail(t *testing.T) {
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+
+	pokemons, err := createPokemonTable()
+	require.NoError(t, err)
+
+	lookup := func(string) (*Table, bool) { return pokemons, true }
+	item := func(id string) map[string]*types.Item { return map[string]*types.Item{"id": s(id), "name": s("n")} }
+
+	err = ValidateBatchWrite(lookup, map[string][]WriteRequest{
+		"pokemons": {{Put: item("secret")}, {Put: item("b")}, {Delete: item("secret")}},
+	})
+
+	var typed types.Error
+
+	require.ErrorAs(t, err, &typed)
+	require.True(t, strings.HasSuffix(typed.Message(), " | table: "+pokemons.Name+"; request: 2"), typed.Message())
+	require.NotContains(t, typed.Message(), "secret")
 }

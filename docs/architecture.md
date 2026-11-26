@@ -147,6 +147,27 @@ ADRs for the layers:
     `#names`), before the key (`Table.GetItem`); a `BatchGetItem` is the
     opposite: every key of a table, then the projection, once per table
     (`Table.BatchGetItem`);
+  - the keys of a `BatchGetItem` (#246), before the tables, the keys' values
+    or any projection (`core.ValidateBatchGetKeys`): no tables, a table with
+    no keys, then each key's numbers (an invalid one is reported before the
+    key is compared) and the key against the keys before it, as the request
+    spells them (so `1` and `1.0` differ; `rawKeyID` builds a length-prefixed
+    identity of the key map, so the scan is linear), then the 100 key count.
+    The front ends run it in the order of `BatchWriteItem` (D13):
+    `ReturnConsumedCapacity`, the emulated failure, then these checks. The
+    count stays with the duplicate check rather than with the front ends'
+    shape checks, because Local reports a duplicate ahead of the limit. An
+    error names the table and the position of the repeated key (`index: 3`),
+    never its value. Local goes through the tables in the order of the wire
+    request, which the SDK marshals from a map, so it is random; minidyn goes
+    by table name, in the duplicate scan and in the per-table reads, so the
+    error is the same on every run (D1 level 3). The parity cases that mix
+    failing tables compare only that the batch is rejected;
+  - the requests of a `BatchWriteItem` (`core.ValidateBatchWrite`): no
+    tables, a table with no requests, then, per table in request order, each
+    request validated and compared by its stored key with the requests
+    before it (#235, a put and a delete included). The error names the table
+    and the position of the repeated request (`request: 3`);
   - the shape and types of a key condition, with BETWEEN bounds checked
     first (same type, then lower <= upper, comparing by type);
   - the `ExclusiveStartKey` of a Query or Scan (`Table.validateStartKey`, #171,
@@ -391,7 +412,8 @@ ADRs for the layers:
   - `BatchWriteItem` validates every request (key shape and values, index
     keys, table existence) before it applies any, so an invalid request
     rejects the whole batch. The orchestration is `core.ValidateBatchWrite`,
-    built on `Table.ValidatePutItem` and `Table.ValidateDeleteKey`. The front
+    built on `Table.CheckedKeyOf` and the put check that returns the storage
+    key (`validatedPutKey`), the same steps Put and Delete run. The front
     ends only map shapes. minidyn reports a missing table only when every
     request of the existing tables is valid, and between two invalid tables
     the first by name, because the request is a map and has no order. Both

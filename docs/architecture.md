@@ -352,9 +352,17 @@ ADRs for the layers:
   - Each front end's `Client` has one `sync.Mutex`. A public operation takes
     it once at the top and calls `core` directly. It does not call other locked
     public methods.
-  - `core.Table` and the interpreter do no locking. The only exception is
-    `interpreter/language_cache.go`: its four expression caches (placeholders,
-    conditions, updates, projections) each have their own mutex.
+  - `core.Table` and the interpreter do no locking. The exceptions are
+    `interpreter/language_cache.go`, whose four expression caches
+    (placeholders, conditions, updates, projections) each have their own
+    mutex, and `interpreter.Native`, whose matcher and updater maps are
+    guarded by its own `RWMutex` (#250). Every table of a client holds the
+    client's `*Native` and `*Language` by pointer, so `AddMatcher`,
+    `AddUpdater` (callable on the object `GetNativeInterpreter` returns) and
+    `ActivateDebug` reach existing and later tables, and registration is safe
+    while operations run (an operation may still see the old or the new
+    matcher). Matchers and updaters run outside that mutex, under the client
+    lock. See [`2026-11-22-share-interpreter-settings-by-pointer-and-lock-native-registration.md`](adr/2026-11-22-share-interpreter-settings-by-pointer-and-lock-native-registration.md).
 - **On `main`:**
   - Every public operation of both front ends takes the lock once at the top
     and holds it for the whole call: the table operations (`CreateTable`,

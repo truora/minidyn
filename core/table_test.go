@@ -1463,7 +1463,6 @@ func TestGSIUpdateMovesSecondaryIndexKey(t *testing.T) {
 	table := NewTable("gsi_move")
 	table.AttributesDef = map[string]string{"id": "S", "seg": "S"}
 	table.KeySchema = keySchema{"id", "", false}
-	table.LangInterpreter = interpreter.Language{}
 
 	idxName := "by_seg"
 	allStr := "ALL"
@@ -1543,7 +1542,6 @@ func newSegIndexTable(t *testing.T) (*Table, func(seg string) []map[string]*type
 	table := NewTable("gsi_seg")
 	table.AttributesDef = map[string]string{"id": "S", "seg": "S"}
 	table.KeySchema = keySchema{"id", "", false}
-	table.LangInterpreter = interpreter.Language{}
 
 	idxName, allStr := "by_seg", "ALL"
 
@@ -1767,7 +1765,6 @@ func TestSearchData_projectionExpressionError(t *testing.T) {
 	table := NewTable("proj_err")
 	table.AttributesDef = map[string]string{"id": "S"}
 	table.KeySchema = keySchema{"id", "", false}
-	table.LangInterpreter = interpreter.Language{}
 
 	_, err := table.Put(&types.PutItemInput{
 		TableName: aws.String("proj_err"),
@@ -1950,7 +1947,6 @@ func TestSearchDataWithProjectionExpression(t *testing.T) {
 	table := NewTable("proj")
 	table.AttributesDef = map[string]string{"id": "S", "foo": "S"}
 	table.KeySchema = keySchema{"id", "", false}
-	table.LangInterpreter = interpreter.Language{}
 
 	_, err := table.Put(&types.PutItemInput{
 		TableName: aws.String("proj"),
@@ -1981,7 +1977,6 @@ func TestSearchData_secondaryIndexProjectionKeysOnlyAndInclude(t *testing.T) {
 	table := NewTable("idxproj")
 	table.BillingMode = aws.String("PAY_PER_REQUEST")
 	table.AttributesDef = map[string]string{"id": "S", "gsi_pk": "S", "title": "S", "extra": "S"}
-	table.LangInterpreter = interpreter.Language{}
 
 	err := table.CreatePrimaryIndex(&types.CreateTableInput{
 		KeySchema: []*types.KeySchemaElement{{AttributeName: "id", KeyType: "HASH"}},

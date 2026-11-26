@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/truora/minidyn/types"
 )
@@ -14,8 +15,11 @@ type UpdaterFunc func(map[string]*types.Item, map[string]*types.Item)
 // MatcherFunc function used to filter data
 type MatcherFunc func(map[string]*types.Item, map[string]*types.Item) bool
 
-// Native simple interpreter using pure go functions
+// Native simple interpreter using pure go functions. A Native is shared by pointer with
+// every table of a client, and its maps are guarded by its own mutex, so registering
+// expressions is safe while operations run. Matchers and updaters run outside that mutex.
 type Native struct {
+	mu                   sync.RWMutex
 	filterExpressions    map[string]MatcherFunc
 	keyExpressions       map[string]MatcherFunc
 	writeCondExpressions map[string]MatcherFunc
@@ -44,7 +48,10 @@ func (ni *Native) Match(input MatchInput) (bool, error) {
 
 // Update change the item with given expression and attributes
 func (ni *Native) Update(input UpdateInput) error {
+	ni.mu.RLock()
 	updater, found := ni.updateExpressions[input.TableName+"|"+hashExpressionKey(input.Expression)]
+	ni.mu.RUnlock()
+
 	if !found {
 		return fmt.Errorf(
 			"%w: updater not found for %q expression in table %q",
@@ -64,6 +71,9 @@ func (ni *Native) getMatcher(tablename, expression string, kind ExpressionType) 
 		matcher MatcherFunc
 		found   bool
 	)
+
+	ni.mu.RLock()
+	defer ni.mu.RUnlock()
 
 	switch kind {
 	case ExpressionTypeKey:
@@ -96,6 +106,9 @@ func hashExpressionKey(s string) string {
 
 // AddUpdater add expression updater to use on key or filter queries
 func (ni *Native) AddUpdater(tablename string, expr string, updater UpdaterFunc) {
+	ni.mu.Lock()
+	defer ni.mu.Unlock()
+
 	ni.updateExpressions[tablename+"|"+hashExpressionKey(expr)] = updater
 }
 
@@ -103,6 +116,9 @@ func (ni *Native) AddUpdater(tablename string, expr string, updater UpdaterFunc)
 func (ni *Native) AddMatcher(tablename string, t ExpressionType, expr string, matcher MatcherFunc) {
 	// TODO validate the expresion(expr)
 	key := hashExpressionKey(expr)
+
+	ni.mu.Lock()
+	defer ni.mu.Unlock()
 
 	switch t {
 	case ExpressionTypeKey:

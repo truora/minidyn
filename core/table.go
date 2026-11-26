@@ -69,8 +69,8 @@ type Table struct {
 	BillingMode           *string
 	ProvisionedThroughput *types.ProvisionedThroughput
 	UseNativeInterpreter  bool
-	NativeInterpreter     interpreter.Native
-	LangInterpreter       interpreter.Language
+	NativeInterpreter     *interpreter.Native
+	LangInterpreter       *interpreter.Language
 	IndexActivationDelay  time.Duration
 }
 
@@ -83,6 +83,8 @@ func NewTable(name string) *Table {
 		SortedKeys:           []string{},
 		Data:                 map[string]map[string]*types.Item{},
 		IndexActivationDelay: defaultIndexActivationDelay,
+		NativeInterpreter:    interpreter.NewNativeInterpreter(),
+		LangInterpreter:      &interpreter.Language{},
 	}
 }
 

@@ -445,6 +445,10 @@ ADRs for the layers:
   - The validation and the writes run under one lock acquisition (D7), so
     the guarantee also holds against another call that changes a table while
     the batch runs.
+  - A request with an empty Item or Key is validated like any other: the
+    front ends keep an empty map non-nil, and core rejects it up front (#309).
+    A request that sets neither Put nor Delete, which is an Item or Key left
+    out of the wire request, is rejected in the pass that checks numbers.
   - The requests are then applied one at a time. DynamoDB does not make a
     batch atomic either.
 - **Why:** a half-applied write leaves the base table and its indexes out of

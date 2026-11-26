@@ -868,9 +868,9 @@ func (fd *Client) validateBatchWriteRequests(requestItems map[string][]types.Wri
 
 			switch {
 			case req.PutRequest != nil:
-				r.Put = mapDynamoToTypesMapItem(req.PutRequest.Item)
+				r.Put = mapBatchWriteItem(req.PutRequest.Item)
 			case req.DeleteRequest != nil:
-				r.Delete = mapDynamoToTypesMapItem(req.DeleteRequest.Key)
+				r.Delete = mapBatchWriteItem(req.DeleteRequest.Key)
 			}
 
 			requests[name] = append(requests[name], r)
@@ -888,6 +888,16 @@ func (fd *Client) validateBatchWriteRequests(requestItems map[string][]types.Wri
 	}
 
 	return nil
+}
+
+// mapBatchWriteItem maps the Item or Key of a batch write request and keeps an empty one as an
+// empty non-nil map, so core validates it instead of taking it for a missing one (#309).
+func mapBatchWriteItem(input map[string]types.AttributeValue) map[string]*mtypes.Item {
+	if input != nil && len(input) == 0 {
+		return map[string]*mtypes.Item{}
+	}
+
+	return mapDynamoToTypesMapItem(input)
 }
 
 // batchWriteTarget describes a put or delete sub-request for billing.

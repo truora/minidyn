@@ -114,6 +114,24 @@ engine's behavior separately:
   item in the transaction" and does not say which a `ConditionCheck` is, so
   minidyn keeps its approximation: 2 x the write units of the key (2). The
   test asserts both numbers.
+- **`UpdateItem` of a local index key to an N or B value under an S key**
+  (`TestE2E_IndexKeyType_LSIUpdateDivergence`). DynamoDB Local stores the item
+  (`SET l = :v` with an N or B value, on a local index whose range key `l` is
+  S), while it rejects the same value in a `PutItem`, in a global index key
+  and any other type (NULL, BOOL, L, M, a set) in a local one, with "Type
+  mismatch for Index Key". minidyn rejects it like those, since an index key
+  attribute must have the type the index declares (see the
+  [GSI guide](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html)
+  and the
+  [`AttributeDefinition`](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_AttributeDefinition.html)
+  reference). The test asserts the rejection on minidyn and the success on
+  Local. Inside a transaction, Local reports every item of the request, not
+  only the first, as `ValidationError` before it runs any (a
+  `TransactionCanceledException` whose reasons are `ValidationError` for the
+  items with an N or B index key under an S key); minidyn reports the first
+  item it meets, so the reasons of a transaction with several invalid items
+  differ, and its order against other items' failed conditions is not
+  verified.
 - **A wrong-typed index key when `UpdateTable` creates an index**
   (`TestE2E_UpdateTableCreateIndexBackfill/WrongTypeIsSkippedByMinidynOnly`).
   DynamoDB Local fills a new index with the items the table already has, skips
@@ -128,8 +146,8 @@ engine's behavior separately:
   index key schema and an empty String or Binary as violations (a key size
   over the limit is the third; minidyn enforces no key size limits). The items
   stay in the table, `DeleteItem` of one succeeds on both engines, and
-  `UpdateItem` of another attribute of one is rejected on both (the wording of
-  the wrong-type rejection differs, see #213 and #239). The test
+  `UpdateItem` of another attribute of one is rejected on both, with the same
+  text. The test
   asserts each engine's index contents. The empty-value case is a parity test
   (`EmptyValueIsSkipped`); the test covers an empty string, not an empty
   binary.

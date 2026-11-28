@@ -228,3 +228,44 @@ func (ks keySchema) emptyKeyAttr(item map[string]*types.Item) (attr, kind string
 
 	return "", ""
 }
+
+// wrongTypeName is the type of it when it differs from the declared type want, and "" when it
+// is the declared one, has no recognizable type or the attribute has no declared type.
+func wrongTypeName(it *types.Item, want string) string {
+	actual := itemTypeName(it)
+	if actual == "" || want == "" || actual == want {
+		return ""
+	}
+
+	return actual
+}
+
+// primaryTypeMismatch reports the first primary key attribute (hash, then range) of item whose
+// type differs from the declared one. A missing attribute is left to GetKey.
+func (ks keySchema) primaryTypeMismatch(attrs map[string]string, item map[string]*types.Item) error {
+	for _, attr := range []string{ks.HashKey, ks.RangeKey} {
+		if attr == "" {
+			continue
+		}
+
+		if actual := wrongTypeName(item[attr], attrs[attr]); actual != "" {
+			return fmt.Errorf("%w%s", ErrKeyTypeMismatch,
+				types.Detail("field", attr, "expected", attrs[attr], "actual", actual))
+		}
+	}
+
+	return nil
+}
+
+// indexKeyTypeError is the error for the index key attribute v, which holds a value of another
+// type than want. DynamoDB words an S, N or B value as a type mismatch and any other type as an
+// invalid attribute value.
+func indexKeyTypeError(v indexKeyViolation, want string) error {
+	cause := ErrInvalidAtrributeValue
+	if isKeyType(v.actual) {
+		cause = ErrIndexKeyTypeMismatch
+	}
+
+	return fmt.Errorf("%w%s", cause,
+		types.Detail("index", v.index, "attribute", v.attr, "expected", want, "actual", v.actual))
+}

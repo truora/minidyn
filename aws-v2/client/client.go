@@ -1566,6 +1566,23 @@ func (fd *Client) runTransactConditionCheck(i, n int, check *types.ConditionChec
 }
 
 func newTransactionCancelledError(i, n int, opErr error) error {
+	// Some validation errors are the cancellation reason of the item, not an error of the request.
+	if code := core.CancellationCodeOf(opErr); code != "" {
+		codes := core.ItemCancellationCodes(i, n, code)
+
+		reasons := make([]types.CancellationReason, n)
+		for j, c := range codes {
+			reasons[j] = types.CancellationReason{Code: aws.String(c)}
+		}
+
+		reasons[i].Message = aws.String(core.CancellationReasonMessage(opErr))
+
+		return &types.TransactionCanceledException{
+			Message:             aws.String(core.TransactionCanceledMessage(codes)),
+			CancellationReasons: reasons,
+		}
+	}
+
 	var ccf *mtypes.ConditionalCheckFailedException
 	if !errors.As(opErr, &ccf) {
 		return mapKnownError(opErr)

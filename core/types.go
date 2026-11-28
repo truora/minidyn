@@ -34,6 +34,13 @@ var (
 	// writes "Type mismatch for key id expected: S actual: N", but DynamoDB Local
 	// stops after "Type mismatch for key", so minidyn's detail goes after " | ".
 	ErrKeyTypeMismatch = errors.New("One or more parameter values were invalid: Type mismatch for key") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
+
+	// ErrIndexKeyTypeMismatch when an index key attribute holds an S, N or B value of another
+	// type than the index declares. DynamoDB Local stops after "Type mismatch for Index Key"
+	// (real DynamoDB adds the attribute, the types and the index), so minidyn's detail goes
+	// after " | ". Any other type of value (NULL, BOOL, L, M, the sets) is
+	// ErrInvalidAtrributeValue.
+	ErrIndexKeyTypeMismatch = errors.New("One or more parameter values were invalid: Type mismatch for Index Key") //nolint:stylecheck,staticcheck,ST1005 // consistent with AWS SDK errors
 )
 
 const (

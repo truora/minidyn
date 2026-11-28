@@ -1449,6 +1449,40 @@ func (t *Table) checkStartKeyCondition(input QueryInput) error {
 	return nil
 }
 
+// msgFilterKeyAttribute is DynamoDB's rejection of a Query FilterExpression naming a key attribute.
+const msgFilterKeyAttribute = "Filter Expression can only contain non-primary key attributes: Primary key attribute: "
+
+// validateFilterKeyAttributes rejects a Query whose FilterExpression names a key attribute of the
+// table, or of the index when it queries one (#255): only the schema being read counts, so on a
+// GSI the table's keys are plain attributes. DynamoDB names the first key attribute in key schema
+// order (hash, then range), wherever it sits in the filter. A Scan has no such rule. It comes
+// after the key condition and the start key, and before the projection checks of #202.
+func (t *Table) validateFilterKeyAttributes(input QueryInput) error {
+	if input.Scan || input.FilterExpression == "" {
+		return nil
+	}
+
+	schema := t.KeySchema
+	if idx, ok := t.Indexes[input.Index]; ok {
+		schema = idx.keySchema
+	}
+
+	used := interpreter.FilterRootAttributes(input.FilterExpression, input.Aliases)
+
+	for _, key := range []string{schema.HashKey, schema.RangeKey} {
+		if key != "" && slices.Contains(used, key) {
+			detail := []string{"attribute", key}
+			if input.Index != "" {
+				detail = []string{"index", input.Index, "attribute", key}
+			}
+
+			return validationError(msgFilterKeyAttribute+key, detail...)
+		}
+	}
+
+	return nil
+}
+
 // validateFilterProjected rejects a Query on an index whose FilterExpression names attributes the
 // index does not project, as DynamoDB does, with the attributes sorted. A Scan has no such rule: its
 // filter reads the stored item.
@@ -1925,6 +1959,11 @@ func (t *Table) validateSearch(input *QueryInput) (*segmentRange, error) {
 	// DynamoDB checks the start key right after the key condition, ahead of the index's projection
 	// and Select.
 	if err := t.validateStartKey(*input); err != nil {
+		return nil, err
+	}
+
+	// DynamoDB rejects a filter on a key attribute before it looks at what the index projects.
+	if err := t.validateFilterKeyAttributes(*input); err != nil {
 		return nil, err
 	}
 

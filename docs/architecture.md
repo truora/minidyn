@@ -197,8 +197,13 @@ ADRs for the layers:
     the walk ends at, which Local rejects but minidyn hands out (#153). An empty map
     counts as none in `core/table.go` (#277);
   - the `ProjectionExpression` of a Query or Scan (its syntax, then undeclared
-    `#names`), before the key condition, and then the attributes of an index
-    Query's `FilterExpression`, which must all be projected by the index
+    `#names`), before the key condition, then a Query's `FilterExpression`,
+    which cannot name a key attribute of the table or index it reads (#255:
+    the first in key schema order, hash then range; on a GSI the table's keys
+    are plain attributes; a Scan has no such rule;
+    `Table.validateFilterKeyAttributes`), after the start key and before
+    everything below, and then the attributes of an index Query's
+    `FilterExpression`, which must all be projected by the index
     (`Table.validateFilterProjected`), after the key condition and before
     `Select`; then a GSI Query or Scan's `ProjectionExpression`, which must
     only name attributes the GSI projects (`Table.validateIndexProjection`);

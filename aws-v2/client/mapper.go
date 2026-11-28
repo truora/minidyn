@@ -307,7 +307,14 @@ func mapDynamoToTypesItem(item dynamodbtypes.AttributeValue) *types.Item {
 
 	itemBS, ok := item.(*dynamodbtypes.AttributeValueMemberBS)
 	if ok {
-		return &types.Item{BS: itemBS.Value}
+		// A nil slice is an empty set on the wire; keep it distinct from an attribute that
+		// is not a set so the empty-set check sees it (#294).
+		bs := itemBS.Value
+		if bs == nil {
+			bs = [][]byte{}
+		}
+
+		return &types.Item{BS: bs}
 	}
 
 	itemS, ok := item.(*dynamodbtypes.AttributeValueMemberS)

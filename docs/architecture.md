@@ -149,6 +149,12 @@ ADRs for the layers:
     first (`core.ValidateWriteValues`), and a batch write every request
     (`core.ValidateBatchWrite`). See
     [`docs/adr/2026-11-22-validate-number-values-on-every-write.md`](adr/2026-11-22-validate-number-values-on-every-write.md);
+  - an empty String, Number or Binary Set (#294), in any item, key or
+    expression value, nested ones included: Local words it per set type ("An
+    string set  may not be empty", with its double space; "Binary sets should
+    not be empty"). The walk meets it in value order, like the numbers and
+    the duplicate members (`types.ValidateItemMap`). A set is empty when its
+    slice is non-nil, so the aws-v2 mapper keeps a nil BS empty, not nil;
   - a list index that is not a literal, such as `l[:i]`, one with a leading
     zero, or one above 2147483647 (#164): DynamoDB reports it while it checks
     the expression, before any placeholder, so it comes ahead of the

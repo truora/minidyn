@@ -66,8 +66,9 @@ func TestValidateItemAttributeValue_stringSet(t *testing.T) {
 			item: &Item{SS: []*string{new("a"), new("b")}},
 		},
 		{
-			name: "empty SS",
-			item: &Item{SS: []*string{}},
+			name:    "empty SS",
+			item:    &Item{SS: []*string{}},
+			wantErr: textEmptyStringSet,
 		},
 		{
 			name: "nil SS slice",
@@ -135,7 +136,7 @@ func TestValidateItemAttributeValue_numberSet(t *testing.T) {
 			wantErr: "One or more parameter values were invalid: Input collection [42, 42] contains duplicates.",
 		},
 		{
-			name: "empty NS",
+			name: "absent NS",
 			item: &Item{NS: nil},
 		},
 	}
@@ -177,8 +178,9 @@ func TestValidateItemAttributeValue_binarySet(t *testing.T) {
 			wantErr: "One or more parameter values were invalid: Input collection [AQID, CQ==, AQID] contains duplicates.",
 		},
 		{
-			name: "empty BS",
-			item: &Item{BS: [][]byte{}},
+			name:    "empty BS",
+			item:    &Item{BS: [][]byte{}},
+			wantErr: textEmptyBinarySet,
 		},
 	}
 

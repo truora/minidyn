@@ -2608,3 +2608,80 @@ func TestValidateBatchWriteDuplicateDetail(t *testing.T) {
 	require.True(t, strings.HasSuffix(typed.Message(), " | table: "+pokemons.Name+"; request: 2"), typed.Message())
 	require.NotContains(t, typed.Message(), "secret")
 }
+
+// A put with an empty Item, a delete with an empty Key and a request that sets neither are
+// rejected before any request is applied (#309), with DynamoDB Local's texts and order. A request
+// with neither Put nor Delete is a missing Item or Key on the wire: Local reports it in the same
+// pass as the numbers, in request order, ahead of every other check of the batch. An empty Item
+// or Key is reported at its position among the checks of the requests of its table, after the
+// numbers.
+func TestValidateBatchWriteEmptyItemOrKey(t *testing.T) {
+	s := func(v string) *types.Item { return &types.Item{S: &v} }
+
+	pokemons, err := createPokemonTable()
+	require.NoError(t, err)
+
+	lookup := func(name string) (*Table, bool) { return pokemons, name == "pokemons" }
+
+	valid := WriteRequest{Put: map[string]*types.Item{"id": s("1"), "name": s("a")}}
+	emptyPut := WriteRequest{Put: map[string]*types.Item{}}
+	emptyDelete := WriteRequest{Delete: map[string]*types.Item{}}
+	neither := WriteRequest{}
+	emptyKey := WriteRequest{Put: map[string]*types.Item{"id": s(""), "name": s("a")}}
+	badNumber := WriteRequest{Put: map[string]*types.Item{
+		"id": s("2"), "name": s("a"), "n": {N: new("1e1000")},
+	}}
+
+	const (
+		putMsg      = "Item to put in PutItem cannot be null"
+		deleteMsg   = "The number of conditions on the keys is invalid"
+		nullMsg     = "The supplied Item contains a null AttributeValue"
+		emptyKeyMsg = "The AttributeValue for a key attribute cannot contain an empty string value. Key: id"
+		numberMsg   = "Number overflow. Attempting to store a number with magnitude larger than supported range"
+		dupMsg      = "Provided list of item keys contains duplicates"
+		tableMsg    = "Cannot do operations on a non-existent table"
+	)
+
+	tests := []struct {
+		name    string
+		reqs    map[string][]WriteRequest
+		message string
+	}{
+		{"empty put", map[string][]WriteRequest{"pokemons": {valid, emptyPut}}, putMsg},
+		{"empty put first", map[string][]WriteRequest{"pokemons": {emptyPut, valid}}, putMsg},
+		{"empty delete", map[string][]WriteRequest{"pokemons": {valid, emptyDelete}}, deleteMsg},
+		{"neither", map[string][]WriteRequest{"pokemons": {valid, neither}}, nullMsg},
+		{"neither alone", map[string][]WriteRequest{"pokemons": {neither}}, nullMsg},
+		{"empty put then an invalid key", map[string][]WriteRequest{"pokemons": {emptyPut, emptyKey}}, putMsg},
+		{"invalid key then an empty put", map[string][]WriteRequest{"pokemons": {emptyKey, emptyPut}}, emptyKeyMsg},
+		{"empty put then a duplicate", map[string][]WriteRequest{"pokemons": {valid, emptyPut, valid}}, putMsg},
+		{"duplicate then an empty put", map[string][]WriteRequest{"pokemons": {valid, valid, emptyPut}}, dupMsg},
+		{"empty delete then a duplicate", map[string][]WriteRequest{"pokemons": {valid, emptyDelete, valid}}, deleteMsg},
+		{"duplicate then an empty delete", map[string][]WriteRequest{"pokemons": {valid, valid, emptyDelete}}, dupMsg},
+		{"neither then a duplicate", map[string][]WriteRequest{"pokemons": {valid, valid, neither}}, nullMsg},
+		{"neither then an invalid key", map[string][]WriteRequest{"pokemons": {neither, emptyKey}}, nullMsg},
+		{"invalid key then neither", map[string][]WriteRequest{"pokemons": {emptyKey, neither}}, nullMsg},
+		{"empty put then a bad number", map[string][]WriteRequest{"pokemons": {emptyPut, badNumber}}, numberMsg},
+		{"bad number then an empty put", map[string][]WriteRequest{"pokemons": {badNumber, emptyPut}}, numberMsg},
+		{"neither then a bad number", map[string][]WriteRequest{"pokemons": {neither, badNumber}}, nullMsg},
+		{"bad number then neither", map[string][]WriteRequest{"pokemons": {badNumber, neither}}, numberMsg},
+		{"neither and an unknown table", map[string][]WriteRequest{"pokemons": {neither}, "zzz": {valid}}, nullMsg},
+		{"empty put and an unknown table", map[string][]WriteRequest{"pokemons": {emptyPut}, "aaa": {valid}}, putMsg},
+		{"unknown table only", map[string][]WriteRequest{"zzz": {valid}}, tableMsg},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var typed types.Error
+
+			require.ErrorAs(t, ValidateBatchWrite(lookup, tt.reqs), &typed)
+			require.Contains(t, typed.Message(), tt.message)
+
+			if tt.message != tableMsg {
+				require.Equal(t, "ValidationException", typed.Code())
+			}
+		})
+	}
+
+	require.Empty(t, pokemons.Data)
+}

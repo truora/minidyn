@@ -256,3 +256,64 @@ func TestServerBatchWriteItemTwoInvalidTablesInNameOrder(t *testing.T) {
 	c.Error(err)
 	c.Contains(err.Error(), "cannot contain an empty string value")
 }
+
+// A put with an empty Item, a delete with an empty Key and a request whose Item or Key is
+// missing are rejected before any request is applied (#309), with DynamoDB Local's texts.
+func TestServerBatchWriteItemRejectsEmptyItemOrKey(t *testing.T) {
+	ctx := context.Background()
+	str := func(v string) *AttributeValue { return &AttributeValue{S: aws.String(v)} }
+	put := func(item map[string]*AttributeValue) WriteRequest {
+		return WriteRequest{PutRequest: &PutRequest{Item: item}}
+	}
+	del := func(key map[string]*AttributeValue) WriteRequest {
+		return WriteRequest{DeleteRequest: &DeleteRequest{Key: key}}
+	}
+	id := func(v string) map[string]*AttributeValue { return map[string]*AttributeValue{"id": str(v)} }
+	valid := put(id("001"))
+	empty := map[string]*AttributeValue{}
+
+	tests := []struct {
+		name    string
+		reqs    []WriteRequest
+		message string
+	}{
+		{"EmptyItem", []WriteRequest{valid, put(empty)}, "Item to put in PutItem cannot be null"},
+		{"EmptyKey", []WriteRequest{valid, del(empty)}, "The number of conditions on the keys is invalid"},
+		{"MissingItem", []WriteRequest{valid, put(nil)}, "The supplied Item contains a null AttributeValue"},
+		{"MissingKey", []WriteRequest{valid, del(nil)}, "The supplied Item contains a null AttributeValue"},
+		{"EmptyItemBeforeInvalidKey", []WriteRequest{put(empty), put(id(""))}, "Item to put in PutItem cannot be null"},
+		{"MissingItemAfterInvalidKey", []WriteRequest{put(id("")), put(nil)}, "The supplied Item contains a null AttributeValue"},
+		{"DuplicateBeforeEmptyItem", []WriteRequest{valid, valid, put(empty)}, "Provided list of item keys contains duplicates"},
+		{"EmptyItemBeforeDuplicate", []WriteRequest{valid, put(empty), valid}, "Item to put in PutItem cannot be null"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := require.New(t)
+			client := NewServer().client
+
+			_, err := client.CreateTable(ctx, &CreateTableInput{
+				TableName: aws.String("pokemons"),
+				KeySchema: []ddbtypes.KeySchemaElement{
+					{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+				},
+				AttributeDefinitions: []ddbtypes.AttributeDefinition{
+					{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+				},
+				BillingMode: ddbtypes.BillingModePayPerRequest,
+			})
+			c.NoError(err)
+
+			_, err = client.BatchWriteItem(ctx, &BatchWriteItemInput{
+				RequestItems: map[string][]WriteRequest{"pokemons": tt.reqs},
+			})
+			c.Error(err)
+			c.Contains(err.Error(), "ValidationException")
+			c.Contains(err.Error(), tt.message)
+
+			out, err := client.GetItem(ctx, &GetItemInput{TableName: aws.String("pokemons"), Key: id("001")})
+			c.NoError(err)
+			c.Empty(out.Item)
+		})
+	}
+}

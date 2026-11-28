@@ -221,3 +221,58 @@ func TestBatchWriteItemTwoInvalidTablesInNameOrder(t *testing.T) {
 	c.Error(err)
 	c.Contains(err.Error(), "One of the required keys was not given a value")
 }
+
+// A put with an empty Item, a delete with an empty Key and a request whose Item or Key is
+// missing are rejected before any request is applied (#309), with DynamoDB Local's texts.
+func TestBatchWriteItemRejectsEmptyItemOrKey(t *testing.T) {
+	str := func(v string) dynamodbtypes.AttributeValue { return &dynamodbtypes.AttributeValueMemberS{Value: v} }
+	put := func(item map[string]dynamodbtypes.AttributeValue) dynamodbtypes.WriteRequest {
+		return dynamodbtypes.WriteRequest{PutRequest: &dynamodbtypes.PutRequest{Item: item}}
+	}
+	del := func(key map[string]dynamodbtypes.AttributeValue) dynamodbtypes.WriteRequest {
+		return dynamodbtypes.WriteRequest{DeleteRequest: &dynamodbtypes.DeleteRequest{Key: key}}
+	}
+	valid := put(map[string]dynamodbtypes.AttributeValue{"id": str("001")})
+	empty := map[string]dynamodbtypes.AttributeValue{}
+
+	tests := []struct {
+		name    string
+		reqs    []dynamodbtypes.WriteRequest
+		message string
+	}{
+		{"EmptyItem", []dynamodbtypes.WriteRequest{valid, put(empty)}, "Item to put in PutItem cannot be null"},
+		{"EmptyKey", []dynamodbtypes.WriteRequest{valid, del(empty)}, "The number of conditions on the keys is invalid"},
+		{"MissingItem", []dynamodbtypes.WriteRequest{valid, put(nil)}, "The supplied Item contains a null AttributeValue"},
+		{"MissingKey", []dynamodbtypes.WriteRequest{valid, del(nil)}, "The supplied Item contains a null AttributeValue"},
+		{
+			"EmptyItemBeforeInvalidKey",
+			[]dynamodbtypes.WriteRequest{put(empty), put(map[string]dynamodbtypes.AttributeValue{"id": str("")})},
+			"Item to put in PutItem cannot be null",
+		},
+		{
+			"MissingItemAfterInvalidKey",
+			[]dynamodbtypes.WriteRequest{put(map[string]dynamodbtypes.AttributeValue{"id": str("")}), put(nil)},
+			"The supplied Item contains a null AttributeValue",
+		},
+		{"DuplicateBeforeEmptyItem", []dynamodbtypes.WriteRequest{valid, valid, put(empty)}, "Provided list of item keys contains duplicates"},
+		{"EmptyItemBeforeDuplicate", []dynamodbtypes.WriteRequest{valid, put(empty), valid}, "Item to put in PutItem cannot be null"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := require.New(t)
+			client := setupClient(tableName)
+
+			c.NoError(ensurePokemonTable(client))
+
+			_, err := client.BatchWriteItem(context.Background(), &dynamodb.BatchWriteItemInput{
+				RequestItems: map[string][]dynamodbtypes.WriteRequest{tableName: tt.reqs},
+			})
+			c.Error(err)
+			c.Contains(err.Error(), "ValidationException")
+			c.Contains(err.Error(), tt.message)
+
+			c.Empty(getPokemon(client, "001"))
+		})
+	}
+}

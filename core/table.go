@@ -28,6 +28,8 @@ const (
 	msgBatchGetTooMany      = "Too many items requested for the BatchGetItem call"
 	msgBatchWriteNoRequests = "BatchWriteItem cannot have a null or no requests set"
 	msgBatchWriteEmptyList  = "The batch write request list for a table cannot be null or empty: %s"
+	msgBatchWriteNullValue  = "The supplied Item contains a null AttributeValue"
+	msgBatchWriteNullItem   = "Item to put in PutItem cannot be null"
 
 	// batchGetKeyLimit is the most keys a BatchGetItem may name, over all its tables.
 	batchGetKeyLimit = 100
@@ -2281,7 +2283,9 @@ func (t *Table) Restore(s TableSnapshot) {
 }
 
 // WriteRequest is one put or delete of a batch write. Exactly one of Put (the whole item) and
-// Delete (the key) is set.
+// Delete (the key) is set. A front end keeps an empty Item or Key as an empty non-nil map, so
+// the request is told apart from one that sets neither, which stands for an Item or Key that is
+// missing from the request.
 type WriteRequest struct {
 	Put    map[string]*types.Item
 	Delete map[string]*types.Item
@@ -2312,14 +2316,19 @@ func ValidateWriteValues(ops []WriteValues) error {
 	return nil
 }
 
-// validateBatchValues rejects an invalid number anywhere in a batch write. DynamoDB Local reports
-// it before any other problem of the batch.
+// validateBatchValues rejects a missing Item or Key (a request that sets neither Put nor Delete)
+// and an invalid number anywhere in a batch write. DynamoDB Local reports them, in request order,
+// before any other problem of the batch.
 func validateBatchValues(names []string, requests map[string][]WriteRequest) error {
 	for _, name := range names {
 		for _, req := range requests[name] {
 			values := req.Put
 			if values == nil {
 				values = req.Delete
+			}
+
+			if values == nil {
+				return validationError(msgBatchWriteNullValue)
 			}
 
 			if err := validateItemValues(values); err != nil {
@@ -2396,16 +2405,15 @@ func (t *Table) validateWriteRequests(requests []WriteRequest) error {
 			err error
 		)
 
-		switch {
-		case req.Put != nil:
+		// validateBatchValues already rejected a request that sets neither Put nor Delete.
+		if req.Put != nil {
+			if len(req.Put) == 0 {
+				return validationError(msgBatchWriteNullItem)
+			}
+
 			key, err = t.validatedPutKey(req.Put)
-		case req.Delete != nil:
+		} else {
 			key, err = t.CheckedKeyOf(req.Delete)
-		default:
-			// A request that is neither a put nor a delete has no key. This branch is
-			// reachable: the front ends map an empty PutRequest.Item or DeleteRequest.Key
-			// to nil, so a request that sets neither reaches here. Tracked in #309.
-			continue
 		}
 
 		if err != nil {

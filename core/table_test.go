@@ -275,10 +275,9 @@ func TestValidateKeyAttributeScalarTypesGSI(t *testing.T) {
 	tbl.AttributesDef = map[string]string{"pk": "S", "gsi_h": "BOOL"}
 	idxName := "by-bool"
 	err := tbl.AddGlobalIndexes([]*types.GlobalSecondaryIndex{{
-		IndexName:             &idxName,
-		KeySchema:             []*types.KeySchemaElement{{AttributeName: "gsi_h", KeyType: "HASH"}},
-		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
-		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+		IndexName:  &idxName,
+		KeySchema:  []*types.KeySchemaElement{{AttributeName: "gsi_h", KeyType: "HASH"}},
+		Projection: &types.Projection{ProjectionType: aws.String("ALL")},
 	}})
 	c.Error(err)
 	c.Contains(err.Error(), "Global Secondary Index ")
@@ -293,8 +292,7 @@ func TestValidateKeyAttributeScalarTypesGSI(t *testing.T) {
 			{AttributeName: "gsi_h", KeyType: "HASH"},
 			{AttributeName: "gsi_r", KeyType: "RANGE"},
 		},
-		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
-		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+		Projection: &types.Projection{ProjectionType: aws.String("ALL")},
 	}})
 	c.Error(err)
 	c.Contains(err.Error(), "gsi_r")
@@ -308,8 +306,7 @@ func TestValidateKeyAttributeScalarTypesGSI(t *testing.T) {
 			{AttributeName: "gsi_h", KeyType: "HASH"},
 			{AttributeName: "gsi_r", KeyType: "RANGE"},
 		},
-		Projection:            &types.Projection{ProjectionType: aws.String("ALL")},
-		ProvisionedThroughput: &types.ProvisionedThroughput{ReadCapacityUnits: 1, WriteCapacityUnits: 1},
+		Projection: &types.Projection{ProjectionType: aws.String("ALL")},
 	}})
 	c.NoError(err)
 }

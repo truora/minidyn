@@ -42,8 +42,44 @@ func mapDynamoToTypesCreateTableInput(input *dynamodb.CreateTableInput) *types.C
 	}
 
 	return &types.CreateTableInput{
-		ProvisionedThroughput: mapDynamoToTypesProvisionedThroughput(input.ProvisionedThroughput),
-		KeySchema:             mapDynamoToTypesKeySchemaElements(input.KeySchema),
+		ProvisionedThroughput:     mapDynamoToTypesProvisionedThroughput(input.ProvisionedThroughput),
+		KeySchema:                 mapDynamoToTypesKeySchemaElements(input.KeySchema),
+		DeletionProtectionEnabled: input.DeletionProtectionEnabled,
+		OnDemandThroughput:        mapDynamoToTypesOnDemandThroughput(input.OnDemandThroughput),
+	}
+}
+
+func mapDynamoToTypesOnDemandThroughput(input *dynamodbtypes.OnDemandThroughput) *types.OnDemandThroughput {
+	if input == nil {
+		return nil
+	}
+
+	return &types.OnDemandThroughput{
+		MaxReadRequestUnits:  input.MaxReadRequestUnits,
+		MaxWriteRequestUnits: input.MaxWriteRequestUnits,
+	}
+}
+
+// mapDynamoToTypesUpdateTableInput maps the part of an UpdateTable request that minidyn models.
+func mapDynamoToTypesUpdateTableInput(input *dynamodb.UpdateTableInput) *types.UpdateTableInput {
+	changes := make([]*types.GlobalSecondaryIndexUpdate, 0, len(input.GlobalSecondaryIndexUpdates))
+	for _, change := range input.GlobalSecondaryIndexUpdates {
+		changes = append(changes, mapDynamoTotypesGlobalSecondaryIndexUpdate(change))
+	}
+
+	var billingMode *string
+	if input.BillingMode != "" {
+		billingMode = aws.String(string(input.BillingMode))
+	}
+
+	return &types.UpdateTableInput{
+		AttributeDefinitions:        mapDynamoToTypesAttributeDefinitionSlice(input.AttributeDefinitions),
+		BillingMode:                 billingMode,
+		DeletionProtectionEnabled:   input.DeletionProtectionEnabled,
+		GlobalSecondaryIndexUpdates: changes,
+		OnDemandThroughput:          mapDynamoToTypesOnDemandThroughput(input.OnDemandThroughput),
+		ProvisionedThroughput:       mapDynamoToTypesProvisionedThroughput(input.ProvisionedThroughput),
+		UnsupportedChanges:          types.HasUnsupportedUpdateTableChanges(input),
 	}
 }
 
@@ -479,6 +515,7 @@ func mapTypesToDynamoTableDescription(input *types.TableDescription) *dynamodbty
 		BillingModeSummary:        mapTypesToDynamoBillingModeSummary(input.BillingModeSummary),
 		ProvisionedThroughput:     mapTypesToDynamoTableThroughput(input.ProvisionedThroughput),
 		DeletionProtectionEnabled: input.DeletionProtectionEnabled,
+		OnDemandThroughput:        mapTypesToDynamoOnDemandThroughput(input.OnDemandThroughput),
 		ItemCount:                 aws.Int64(input.ItemCount),
 		KeySchema:                 mapTypesToDynamoKeySchemaElements(input.KeySchema),
 		GlobalSecondaryIndexes:    mapTypesToDynamoTypesGlobalSecondaryIndexes(input.GlobalSecondaryIndexes),
@@ -588,7 +625,7 @@ func mapTypesToDynamoProjection(input *types.Projection) *dynamodbtypes.Projecti
 }
 
 // mapTypesToDynamoTableThroughput maps the table-level capacity, which DynamoDB reports with
-// the number of decreases made today (always 0: minidyn does not support UpdateTable throughput).
+// the number of decreases made today (always 0: minidyn does not count capacity decreases).
 func mapTypesToDynamoTableThroughput(input *types.ProvisionedThroughput) *dynamodbtypes.ProvisionedThroughputDescription {
 	output := mapTypesToDynamoProvisionedThroughput(input)
 	if output != nil {

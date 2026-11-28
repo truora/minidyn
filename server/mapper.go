@@ -209,6 +209,17 @@ func mapProvisionedThroughput(input *ddbtypes.ProvisionedThroughput) *types.Prov
 	}
 }
 
+func mapOnDemandThroughput(input *ddbtypes.OnDemandThroughput) *types.OnDemandThroughput {
+	if input == nil {
+		return nil
+	}
+
+	return &types.OnDemandThroughput{
+		MaxReadRequestUnits:  input.MaxReadRequestUnits,
+		MaxWriteRequestUnits: input.MaxWriteRequestUnits,
+	}
+}
+
 func mapGSI(input []ddbtypes.GlobalSecondaryIndex) []*types.GlobalSecondaryIndex {
 	if len(input) == 0 {
 		return nil
@@ -329,6 +340,7 @@ func mapTableDescriptionToDDB(td *types.TableDescription) *ddbtypes.TableDescrip
 		BillingModeSummary:        mapTypesBillingModeSummary(td.BillingModeSummary),
 		ProvisionedThroughput:     mapTypesTableThroughput(td.ProvisionedThroughput),
 		DeletionProtectionEnabled: td.DeletionProtectionEnabled,
+		OnDemandThroughput:        mapTypesOnDemandThroughput(td.OnDemandThroughput),
 		ItemCount:                 aws.Int64(td.ItemCount),
 		KeySchema:                 mapTypesKeySchema(td.KeySchema),
 		GlobalSecondaryIndexes:    mapTypesGSI(td.GlobalSecondaryIndexes),
@@ -361,7 +373,7 @@ func mapTypesBillingModeSummary(in *types.BillingModeSummary) *ddbtypes.BillingM
 }
 
 // mapTypesTableThroughput maps the table-level capacity, which DynamoDB reports with the
-// number of decreases made today (always 0: minidyn does not support UpdateTable throughput).
+// number of decreases made today (always 0: minidyn does not count capacity decreases).
 func mapTypesTableThroughput(in *types.ProvisionedThroughput) *ddbtypes.ProvisionedThroughputDescription {
 	out := mapTypesProvisionedThroughput(in)
 	if out != nil {

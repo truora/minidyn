@@ -514,8 +514,10 @@ func TestUpdateTable(t *testing.T) {
 		},
 		TableName: aws.String(tableName),
 	}
+	// the table is on demand, so there is no capacity to change (#199)
 	_, err = client.UpdateTable(context.Background(), input)
-	c.NoError(err)
+	c.Error(err)
+	c.Contains(err.Error(), "ProvisionedThroughput should not be specified for index: newIndex")
 
 	input = &dynamodb.UpdateTableInput{
 		GlobalSecondaryIndexUpdates: []dynamodbtypes.GlobalSecondaryIndexUpdate{

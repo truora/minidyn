@@ -13,6 +13,7 @@ import (
 
 const (
 	msgInvalidGSIName     = "Invalid global secondary index name"
+	msgNotAGlobalIndex    = "Cannot delete an index that is not a GlobalSecondaryIndex"
 	msgInvalidIndexName   = "Invalid table/index name.  Table/index names must be between 3 and 255 characters long, and may contain only the characters a-z, A-Z, 0-9, '_', '-', and '.'"
 	msgNoProjection       = "Indexes must have a projection specified"
 	msgNoKeySchema        = "No defined key schema.  A key schema containing at least a hash key must be defined for all tables"
@@ -25,6 +26,26 @@ const (
 	msgNoSuchIndex        = "The table does not have the specified index: "
 	msgGSIConsistentRead  = "Consistent reads are not supported on global secondary indexes"
 	msgIndexLimit         = "Subscriber limit exceeded: Only 1 online index can be created or deleted simultaneously per table"
+)
+
+// The billing modes of a table.
+const (
+	billingProvisioned   = "PROVISIONED"
+	billingPayPerRequest = "PAY_PER_REQUEST"
+)
+
+// The messages of the table settings (#199), as DynamoDB Local words them.
+const (
+	msgNothingToUpdate   = "Nothing to update"
+	msgSameThroughput    = "The requested throughput value equals the current value"
+	msgTableThroughput   = "Table read and write throughput must be at least 1, and cannot be null"
+	msgGSIThroughput     = "Global Secondary Index's read and write throughput must be at least 1, and cannot be null"
+	msgNoTableThroughput = "No provisioned throughput specified for the table"
+	msgNoGSIThroughput   = "No provisioned throughput specified for the global secondary index"
+	msgDeletionProtected = "Resource cannot be deleted as it is currently protected against deletion. Disable deletion protection first."
+	msgLimitOutsideRange = "One or more parameter values were invalid: Requested %s for OnDemandThroughput for table is outside of valid range"
+	msgBadBillingMode    = "1 validation error detected: Value '%s' at 'billingMode' failed to satisfy constraint: Member must satisfy enum value set: [PROVISIONED, PAY_PER_REQUEST]"
+	msgIndexOnDemand     = "One or more parameter values were invalid: ProvisionedThroughput should not be specified for index: %s when BillingMode is PAY_PER_REQUEST"
 )
 
 // validateIndexName checks the name of an index sent to CreateTable.

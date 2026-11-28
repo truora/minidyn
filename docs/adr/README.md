@@ -16,7 +16,10 @@ Write an ADR, in the same pull request as the code, when a change:
 - adds, changes or reverses a decision in `docs/architecture.md` (D1, D2, …);
 - adds a package, a layer or a front end;
 - adds a runtime dependency (a `require` that is not test-only);
-- changes the public API in a way that breaks callers;
+- changes the public API in a way that breaks callers ("public API" means the
+  front-end packages `aws-v2/client` and `server`; `core` and the other packages
+  are not supported API, see
+  [`2026-11-23-treat-core-and-internal-packages-as-unsupported-api.md`](2026-11-23-treat-core-and-internal-packages-as-unsupported-api.md));
 - deliberately diverges from DynamoDB's documented behavior.
 
 A bug fix or a feature that follows the existing decisions does not need one.
